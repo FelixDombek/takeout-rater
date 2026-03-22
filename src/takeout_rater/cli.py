@@ -112,6 +112,26 @@ def build_parser() -> argparse.ArgumentParser:
     # Placeholders – implementation comes in later iterations
     sub.add_parser("export", help="(Iteration 3) Copy selected assets to an export folder")
 
+    # serve – launcher-friendly variant of browse that reads config for the path
+    serve_parser = sub.add_parser(
+        "serve",
+        help=(
+            "Launch the web UI (reads Takeout path from config; "
+            "shows setup page when not yet configured)"
+        ),
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="TCP port to listen on (default: 8765).",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host/IP to bind to (default: 127.0.0.1).",
+    )
+
     return parser
 
 
@@ -378,6 +398,58 @@ def _cmd_browse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Execute the ``serve`` sub-command.
+
+    Unlike ``browse``, this command reads the Takeout library path from the
+    local config file and starts the server even when no library has been
+    configured yet.  In that case the UI shows a setup page that lets the user
+    select the folder from their browser.
+    """
+    try:
+        import uvicorn  # noqa: PLC0415
+    except ImportError:
+        print(
+            "error: uvicorn is required for the serve command.\n"
+            "       Install it with: pip install 'takeout-rater[web]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    from takeout_rater.config import get_takeout_path  # noqa: PLC0415
+    from takeout_rater.ui.app import create_app  # noqa: PLC0415
+
+    library_root = get_takeout_path()
+    conn = None
+
+    if library_root is not None:
+        from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
+
+        db_path = library_db_path(library_root)
+        if db_path.exists():
+            conn = open_library_db(library_root)
+        else:
+            print(
+                f"note: library database not found at {db_path}\n"
+                "      Run 'takeout-rater index <library_root>' to index your Takeout folder.\n"
+                "      The UI will remind you.",
+            )
+
+    app = create_app(library_root, conn)
+
+    url = f"http://{args.host}:{args.port}/"
+    if conn is not None:
+        print(f"Starting takeout-rater UI at {url}assets")
+    else:
+        print(f"Starting takeout-rater UI at {url}setup")
+    print("Press Ctrl+C to stop.")
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    if conn is not None:
+        conn.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -394,6 +466,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "browse":
         return _cmd_browse(args)
+
+    if args.command == "serve":
+        return _cmd_serve(args)
 
     print(f"Command '{args.command}' is not yet implemented (see roadmap in README).")
     return 1
