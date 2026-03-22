@@ -212,7 +212,11 @@ def _bool_to_int(v: bool | None) -> int | None:
 def _cmd_index(args: argparse.Namespace) -> int:
     """Execute the ``index`` sub-command."""
     from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
-    from takeout_rater.indexing.scanner import scan_takeout  # noqa: PLC0415
+    from takeout_rater.indexing.scanner import (  # noqa: PLC0415
+        GOOGLE_PHOTOS_DIR_NAMES,
+        find_google_photos_root,
+        scan_takeout,
+    )
     from takeout_rater.indexing.sidecar import parse_sidecar  # noqa: PLC0415
     from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
         generate_thumbnail,
@@ -226,8 +230,12 @@ def _cmd_index(args: argparse.Namespace) -> int:
         print(f"error: library root does not exist: {library_root}", file=sys.stderr)
         return 1
     if not takeout_dir.exists():
-        # Accept the user passing the Takeout/ dir directly
-        if (library_root / "Photos from").exists() or list(library_root.glob("Photos from *")):
+        # Accept the user passing the Takeout/ dir directly.
+        # Recognise the old format (Photos from YYYY/ dirs) and the newer format
+        # where albums are nested under a localized "Google Photos" subdirectory.
+        if list(library_root.glob("Photos from *")) or any(
+            (library_root / name).is_dir() for name in GOOGLE_PHOTOS_DIR_NAMES
+        ):
             takeout_dir = library_root
             library_root = library_root.parent
         else:
@@ -238,8 +246,12 @@ def _cmd_index(args: argparse.Namespace) -> int:
             )
             return 1
 
-    print(f"Scanning {takeout_dir} …")
-    assets = scan_takeout(takeout_dir)
+    # Narrow the scan to the Google Photos albums root within takeout_dir.
+    # This avoids accidentally indexing images from other Google products
+    # (Drive, Chat, etc.) that may be present in the same Takeout archive.
+    photos_root = find_google_photos_root(takeout_dir)
+    print(f"Scanning {photos_root} …")
+    assets = scan_takeout(photos_root)
     print(f"Found {len(assets)} image file(s).")
 
     if not assets:
@@ -271,7 +283,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
             "size_bytes": asset_file.size_bytes,
             "mime": asset_file.mime,
             "sidecar_relpath": (
-                str(asset_file.sidecar_path.relative_to(takeout_dir))
+                str(asset_file.sidecar_path.relative_to(photos_root))
                 if asset_file.sidecar_path
                 else None
             ),
@@ -536,7 +548,10 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
     conn = open_library_db(library_root)
     state_dir = library_state_dir(library_root)
-    takeout_root = library_root / "Takeout"
+
+    from takeout_rater.indexing.scanner import find_google_photos_root  # noqa: PLC0415
+
+    takeout_root = find_google_photos_root(library_root / "Takeout")
 
     export_dir = Path(args.out).resolve() if args.out else state_dir / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)

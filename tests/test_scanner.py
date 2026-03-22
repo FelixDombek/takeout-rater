@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 
 from takeout_rater.indexing.scanner import (
+    GOOGLE_PHOTOS_DIR_NAMES,
     IMAGE_EXTENSIONS,
     SIDECAR_SUFFIX,
     AssetFile,
+    find_google_photos_root,
     scan_takeout,
 )
 
@@ -169,3 +171,72 @@ def test_scan_dir_associates_sidecar_fallback(tmp_path: Path) -> None:
 def test_scan_missing_dir_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         scan_takeout(tmp_path / "nonexistent")
+
+
+# ── find_google_photos_root ───────────────────────────────────────────────────
+
+
+def test_find_google_photos_root_returns_dir_unchanged_when_no_subdir(
+    tmp_path: Path,
+) -> None:
+    """When no known localized subdir exists, the input dir is returned as-is."""
+    (tmp_path / "Photos from 2023").mkdir()
+    assert find_google_photos_root(tmp_path) == tmp_path
+
+
+def test_find_google_photos_root_finds_google_photos_subdir(tmp_path: Path) -> None:
+    """English 'Google Photos' subdirectory is detected."""
+    subdir = tmp_path / "Google Photos"
+    subdir.mkdir()
+    assert find_google_photos_root(tmp_path) == subdir
+
+
+def test_find_google_photos_root_finds_google_fotos_subdir(tmp_path: Path) -> None:
+    """German/Spanish/Portuguese 'Google Fotos' subdirectory is detected."""
+    subdir = tmp_path / "Google Fotos"
+    subdir.mkdir()
+    assert find_google_photos_root(tmp_path) == subdir
+
+
+def test_find_google_photos_root_finds_google_foto_subdir(tmp_path: Path) -> None:
+    """Italian 'Google Foto' subdirectory is detected."""
+    subdir = tmp_path / "Google Foto"
+    subdir.mkdir()
+    assert find_google_photos_root(tmp_path) == subdir
+
+
+def test_find_google_photos_root_empty_dir(tmp_path: Path) -> None:
+    """An empty directory returns itself (no crash)."""
+    assert find_google_photos_root(tmp_path) == tmp_path
+
+
+def test_find_google_photos_root_ignores_file_with_same_name(tmp_path: Path) -> None:
+    """A *file* named 'Google Photos' is not treated as the photos root."""
+    (tmp_path / "Google Photos").write_text("not a dir", encoding="utf-8")
+    assert find_google_photos_root(tmp_path) == tmp_path
+
+
+def test_google_photos_dir_names_constant_is_non_empty() -> None:
+    assert len(GOOGLE_PHOTOS_DIR_NAMES) > 0
+
+
+def test_scan_skips_non_photos_sibling_when_google_photos_subdir_present(
+    tmp_path: Path,
+) -> None:
+    """Images outside the Google Photos subdir are not returned when that subdir exists."""
+    google_photos = tmp_path / "Google Photos"
+    google_photos.mkdir()
+    (google_photos / "album").mkdir()
+    (google_photos / "album" / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+
+    # A sibling directory simulating another Google product (e.g. Drive)
+    drive = tmp_path / "Google Drive"
+    drive.mkdir()
+    (drive / "file.jpg").write_bytes(b"\xff\xd8\xff")
+
+    photos_root = find_google_photos_root(tmp_path)
+    result = scan_takeout(photos_root)
+
+    relpaths = [a.relpath for a in result]
+    assert any("photo.jpg" in r for r in relpaths), "expected photo from Google Photos"
+    assert not any("Google Drive" in r for r in relpaths), "Drive image must be excluded"

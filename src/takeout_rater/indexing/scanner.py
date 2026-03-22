@@ -14,6 +14,43 @@ IMAGE_EXTENSIONS: frozenset[str] = frozenset(
 # Sidecar suffix used by Google Photos Takeout
 SIDECAR_SUFFIX = ".supplemental-metadata.json"
 
+# Known localized names for the Google Photos subdirectory inside a Takeout export.
+# Google Takeout sometimes nests all photo albums under one of these subdirectories
+# instead of placing them directly inside ``Takeout/``.  Scanning only this
+# subdirectory avoids accidentally indexing images from other Google products
+# (Drive, Chat, etc.) that may also be present in the same Takeout archive.
+GOOGLE_PHOTOS_DIR_NAMES: tuple[str, ...] = (
+    "Google Photos",  # English
+    "Google Fotos",  # German, Spanish, Portuguese
+    "Google Foto",  # Italian
+)
+
+
+def find_google_photos_root(takeout_dir: Path) -> Path:
+    """Return the directory that contains the Google Photos album folders.
+
+    A Google Takeout export may place all photo albums directly inside the
+    ``Takeout/`` directory (old format with ``Photos from YYYY/`` subdirs), or
+    it may nest them inside a localized subdirectory such as ``Google Photos/``
+    (English) or ``Google Fotos/`` (German).  Scanning the entire ``Takeout/``
+    tree would incorrectly include images from other Google products like Drive
+    or Chat.  This function finds the narrowest root that covers only Google
+    Photos content.
+
+    Args:
+        takeout_dir: The ``Takeout/`` directory (or the top-level scan root).
+
+    Returns:
+        The subdirectory to pass to :func:`scan_takeout`.  Returns a known
+        localized Google Photos subdirectory when one exists, otherwise returns
+        *takeout_dir* unchanged (for old-format exports).
+    """
+    for name in GOOGLE_PHOTOS_DIR_NAMES:
+        candidate = takeout_dir / name
+        if candidate.is_dir():
+            return candidate
+    return takeout_dir
+
 
 @dataclass(frozen=True)
 class AssetFile:
