@@ -159,14 +159,13 @@ def _print_summary(result: dict[str, Any]) -> None:
     inp = result["input"]
     schema = result["schema"]
 
-    print(f"Takeout sidecar schema inference")
+    print("Takeout sidecar schema inference")
     print(f"  Root      : {inp['root']}")
     print(f"  Pattern   : {inp['pattern']}")
     print(f"  Processed : {inp['files_processed']} files  (ok={inp['ok']}, failed={inp['failed']})")
     print()
 
     required = schema.get("required", [])
-    optional = schema.get("optional", [])
     props = schema.get("properties", {})
 
     print(f"Top-level properties ({len(props)} total):")
@@ -183,7 +182,7 @@ def main() -> int:
         description=(
             "Infer a schema from Google Photos Takeout sidecar JSON files and print a summary.\n\n"
             "On Windows, when .py files are associated with an editor, invoke via:\n"
-            "  python tests\\test_infer_takeout_sidecar_schema.py \"H:\\Takeout\""
+            '  python tests\\test_infer_takeout_sidecar_schema.py "H:\\Takeout"'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

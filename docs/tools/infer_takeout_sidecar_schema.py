@@ -58,10 +58,10 @@ class SchemaNode:
 
     kinds: set[str] = field(default_factory=set)
     scalar_types: set[str] = field(default_factory=set)
-    properties: dict[str, "SchemaNode"] = field(default_factory=dict)
+    properties: dict[str, SchemaNode] = field(default_factory=dict)
     required_count: dict[str, int] = field(default_factory=dict)
     object_instances: int = 0
-    item_schema: "SchemaNode | None" = None
+    item_schema: SchemaNode | None = None
     array_instances: int = 0
     array_lengths: dict[str, int] = field(default_factory=dict)
     seen: int = 0
@@ -74,7 +74,7 @@ class SchemaNode:
             self.kinds.add("object")
             self.object_instances += 1
             assert isinstance(value, dict)
-            for k in value.keys():
+            for k in value:
                 self.required_count[k] = self.required_count.get(k, 0) + 1
             for k, v in value.items():
                 if k not in self.properties:

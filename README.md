@@ -1,35 +1,96 @@
 # takeout-rater
-Aesthetics scoring orchestrator for Google Fotos Takeout folders.
+
+Aesthetics scoring orchestrator for Google Photos Takeout folders.
+
+Point it at the directory containing your `Takeout/` export and it will build
+a sibling `takeout-rater/` directory with a SQLite library, thumbnail cache,
+and exports — without ever modifying the original archive.
+
+---
+
+## What it does
+
+- **Indexes** your Google Photos Takeout in place (read-only)
+- **Scores** photos using pluggable scorers (aesthetic quality, perceptual hash, …)
+- **Browses** your library via a local web UI with filters and sorting
+- **Exports** your best photos (top-N, or best-of-cluster) to a folder
+
+See [`docs/design.md`](docs/design.md) for the full architecture overview.
+
+---
+
+## Roadmap
+
+| Iteration | Scope |
+|---|---|
+| **0** *(this branch)* | Repo foundation: design docs, ADRs, agent docs, scorer interface, CI |
+| **1** | Indexing, DB, thumbnail cache, minimal browse UI |
+| **2** | Scorer pipeline end-to-end + 1–2 real scorers (aesthetic) |
+| **3** | Clustering, cluster view, best-of-cluster export |
+
+---
+
+## Development setup
+
+**Requirements:** Python 3.12+, pip
+
+```bash
+# Clone
+git clone https://github.com/FelixDombek/takeout-rater.git
+cd takeout-rater
+
+# Install in editable mode with dev dependencies
+pip install -e ".[dev]"
+
+# (Optional) install optional scorer dependencies
+pip install -e ".[aesthetic]"   # PyTorch-based aesthetic scorer
+pip install -e ".[heic]"        # HEIC image support via pillow-heif
+```
+
+---
+
+## Running lint and tests
+
+```bash
+# Format check
+ruff format --check src/ tests/
+
+# Lint
+ruff check src/ tests/
+
+# Tests
+pytest
+```
+
+---
+
+## CLI
+
+```bash
+# Show help
+python -m takeout_rater --help
+# or, after installing:
+takeout-rater --help
+```
+
+Sub-commands (`index`, `score`, `browse`, `export`) are implemented in later iterations.
+
+---
 
 ## Tools
 
-### Infer Takeout sidecar schema
+See [`docs/tools/README.md`](docs/tools/README.md).
 
-`docs/tools/infer_takeout_sidecar_schema.py` walks a Google Photos Takeout
-folder, reads every `*.supplemental-metadata.json` file, and infers an
-aggregate schema (which fields are present / required / optional).
+---
 
-**Run the test script as a standalone summary tool:**
+## Contributing
 
-```bash
-# Linux / macOS
-python tests/test_infer_takeout_sidecar_schema.py /path/to/Takeout
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) and the agent enablement docs in
+[`docs/agents/`](docs/agents/).
 
-# Windows (PowerShell or cmd) – use python explicitly so the .py association
-# to an editor (e.g. VS Code) is bypassed
-python tests\test_infer_takeout_sidecar_schema.py "H:\Takeout"
-```
+---
 
-**Run the underlying inference script directly (outputs raw JSON):**
+## License
 
-```bash
-python docs/tools/infer_takeout_sidecar_schema.py "H:\Takeout"
-python docs/tools/infer_takeout_sidecar_schema.py "H:\Takeout" --out schema.json
-python docs/tools/infer_takeout_sidecar_schema.py "H:\Takeout" --show-progress
-```
-
-> **Windows tip:** On Windows, double-clicking or running `.\script.py` in
-> PowerShell uses the registered file association for `.py` files, which is
-> often an editor (VS Code, IDLE, …).  Always prefix with `python` to run the
-> script with the interpreter instead.
+GPL-3.0-only — see [`LICENSE`](LICENSE).
 
