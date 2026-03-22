@@ -26,8 +26,14 @@ _PAGE_SIZE = 50
 
 
 def _get_conn(request: Request) -> sqlite3.Connection:
-    """Dependency: retrieve the DB connection from the app state."""
-    return request.app.state.db_conn
+    """Dependency: retrieve the DB connection from the app state.
+
+    Redirects to the setup page if the library has not been configured yet.
+    """
+    conn = request.app.state.db_conn
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
+    return conn
 
 
 def _get_takeout_root(request: Request) -> Path:
@@ -37,7 +43,10 @@ def _get_takeout_root(request: Request) -> Path:
 
 def _get_thumbs_dir(request: Request) -> Path:
     """Dependency: retrieve the thumbs directory path from the app state."""
-    return request.app.state.thumbs_dir
+    thumbs_dir = request.app.state.thumbs_dir
+    if thumbs_dir is None:
+        raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
+    return thumbs_dir
 
 
 def _parse_sort_by(sort_by: str | None) -> tuple[str, str] | None:
@@ -77,12 +86,16 @@ def browse_assets(
     fav_filter: bool | None = True if favorited == "1" else None
 
     sort_parsed = _parse_sort_by(sort_by)
+    # Normalize sort_by: use the canonical form when valid, None when malformed.
+    # This prevents untrusted query text from being propagated into template links.
+    canonical_sort_by: str | None = None
 
     # Score map: asset_id → score value (populated when sorting by score)
     score_map: dict[int, float] = {}
 
     if sort_parsed is not None:
         scorer_id, metric_key = sort_parsed
+        canonical_sort_by = f"{scorer_id}:{metric_key}"
         asset_score_pairs = list_assets_by_score(
             conn,
             scorer_id,

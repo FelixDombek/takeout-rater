@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+# takeout-rater launcher for macOS / Linux
+# Usage: ./run  (from the repository root)
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Prefer python3; fall back to python
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+    PYTHON=python
+else
+    echo "Error: Python not found.  Install Python 3.12+ from https://www.python.org/downloads/" >&2
+    exit 1
+fi
+
+exec "$PYTHON" "$SCRIPT_DIR/scripts/launcher.py" "$@"

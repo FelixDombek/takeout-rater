@@ -414,17 +414,17 @@ def list_assets_by_score(
     Returns:
         List of ``(AssetRow, score_value)`` tuples.
     """
+    if not metric_key:
+        raise ValueError("metric_key must be a non-empty string")
+
     run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
     if run_id is None:
         return []
 
     order = "DESC" if descending else "ASC"
-    conditions: list[str] = ["s.scorer_run_id = ?"]
-    params: list[Any] = [run_id]
+    conditions: list[str] = ["s.scorer_run_id = ?", "s.metric_key = ?"]
+    params: list[Any] = [run_id, metric_key]
 
-    if metric_key:
-        conditions.append("s.metric_key = ?")
-        params.append(metric_key)
     if favorited is not None:
         conditions.append("a.favorited = ?")
         params.append(1 if favorited else 0)

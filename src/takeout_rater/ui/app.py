@@ -6,12 +6,13 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from takeout_rater.api.assets import router as assets_router
 from takeout_rater.api.clusters import router as clusters_router
+from takeout_rater.api.config_routes import router as config_router
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -56,14 +57,16 @@ def _make_templates(templates_dir: Path) -> Environment:
 
 
 def create_app(
-    library_root: Path,
-    db_conn: sqlite3.Connection,
+    library_root: Path | None,
+    db_conn: sqlite3.Connection | None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
-        library_root: The directory containing the ``Takeout/`` folder.
-        db_conn: An open SQLite connection to the library database.
+        library_root: The directory containing the ``Takeout/`` folder, or
+            *None* when the library path has not been configured yet.
+        db_conn: An open SQLite connection to the library database, or *None*
+            when the library is not available yet.
 
     Returns:
         A configured :class:`FastAPI` application instance.
@@ -76,17 +79,35 @@ def create_app(
         redoc_url=None,
     )
 
-    # Attach shared state
+    # Attach shared state (may be None when not yet configured)
     app.state.db_conn = db_conn
+    app.state.library_root = library_root
     app.state.takeout_root = library_root
-    app.state.thumbs_dir = library_root / "takeout-rater" / "thumbs"
+    app.state.thumbs_dir = library_root / "takeout-rater" / "thumbs" if library_root else None
     app.state.templates = _make_templates(_TEMPLATES_DIR)
 
+    # Config / health routes always available (no DB required)
+    app.include_router(config_router)
+
+    # Asset browsing routes (require a DB connection)
     app.include_router(assets_router)
     app.include_router(clusters_router)
 
     @app.get("/")
-    def redirect_to_browse() -> RedirectResponse:
+    def redirect_to_browse(request: Request) -> RedirectResponse:
+        if request.app.state.db_conn is None:
+            return RedirectResponse(url="/setup")
         return RedirectResponse(url="/assets")
+
+    @app.get("/setup", response_class=HTMLResponse)
+    def setup_page(request: Request) -> HTMLResponse:
+        from takeout_rater.config import get_takeout_path  # noqa: PLC0415
+
+        current = get_takeout_path()
+        templates = request.app.state.templates
+        return templates.TemplateResponse(
+            "setup.html",
+            {"request": request, "current_path": str(current) if current else None},
+        )
 
     return app

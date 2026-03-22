@@ -1,7 +1,8 @@
-"""Blur / sharpness scorer: measures image focus using Laplacian variance.
+"""Blur / sharpness scorer: measures image focus using edge-filter variance.
 
-The ``sharpness`` metric is derived from the variance of the Laplacian of the
-greyscale image.  A higher value means the image is sharper (more in-focus).
+The ``sharpness`` metric is derived from the variance of the output of the
+Pillow ``FIND_EDGES`` filter applied to the greyscale image.  A higher value
+means the image is sharper (more in-focus).
 The raw variance is mapped to a 0–100 scale by clamping at ``_MAX_RAW_VAR``
 so that the output is bounded and comparable across images.
 
@@ -15,13 +16,13 @@ from pathlib import Path
 
 from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
 
-# Raw Laplacian variance corresponding to a "100" sharpness score.
+# Raw edge-filter variance corresponding to a "100" sharpness score.
 # Values above this threshold are clamped to 100.
 _MAX_RAW_VAR: float = 2000.0
 
 
 class BlurScorer(BaseScorer):
-    """Measures image sharpness via Laplacian variance (PIL-based)."""
+    """Measures image sharpness via edge-filter variance (PIL-based)."""
 
     @classmethod
     def spec(cls) -> ScorerSpec:
@@ -29,7 +30,7 @@ class BlurScorer(BaseScorer):
             scorer_id="blur",
             display_name="Blur / Sharpness",
             description=(
-                "Estimates image focus using the variance of the Laplacian edge filter.  "
+                "Estimates image focus using the variance of the FIND_EDGES filter output.  "
                 "Higher sharpness means the image is more in-focus."
             ),
             metrics=(
@@ -37,7 +38,7 @@ class BlurScorer(BaseScorer):
                     key="sharpness",
                     display_name="Sharpness",
                     description=(
-                        "Laplacian variance normalised to 0–100.  "
+                        "Edge-filter variance normalised to 0–100.  "
                         "Higher values indicate sharper, more in-focus images."
                     ),
                     min_value=0.0,
@@ -49,7 +50,7 @@ class BlurScorer(BaseScorer):
                 VariantSpec(
                     variant_id="default",
                     display_name="Default",
-                    description="Laplacian variance via Pillow (no ML model).",
+                    description="Edge-filter variance via Pillow (no ML model).",
                 ),
             ),
             default_variant_id="default",

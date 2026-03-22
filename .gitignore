@@ -32,3 +32,6 @@ Thumbs.db
 
 # App runtime (never commit library data)
 takeout-rater/
+
+# Local launcher config (stores user-specific paths)
+.takeout-rater.json
