@@ -34,7 +34,11 @@ takeout-rater/
 | `scorers/registry.py` | Explicit scorer class list + `list_scorers()` |
 | `scorers/heuristics/` | Lightweight heuristic scorers (no ML model needed) |
 | `scorers/heuristics/dummy.py` | Trivial constant scorer — used in tests |
+| `scorers/heuristics/blur.py` | Laplacian variance sharpness scorer (Pillow-based) |
 | `scorers/adapters/` | ML/external-tool scorer wrappers (optional deps) |
+| `scoring/` | Scoring pipeline and pHash computation |
+| `scoring/pipeline.py` | `run_scorer()` — runs a scorer, writes to `scorer_runs` + `asset_scores` |
+| `scoring/phash.py` | `compute_dhash()`, `compute_phash_all()` — pHash via dhash algorithm |
 | `indexing/` | Takeout scanner, sidecar parser, and thumbnail generator |
 | `indexing/scanner.py` | `scan_takeout()` — walk Takeout tree, enumerate `AssetFile` objects |
 | `indexing/sidecar.py` | `parse_sidecar()` — parse `*.supplemental-metadata.json` → `SidecarData` |
@@ -42,7 +46,7 @@ takeout-rater/
 | `db/` | SQLite schema, migrations, and query helpers |
 | `db/schema.py` | Migration runner (`migrate()`) |
 | `db/connection.py` | `open_library_db()` — open / create the library database |
-| `db/queries.py` | `upsert_asset()`, `list_assets()`, `count_assets()`, `get_asset_by_id()` |
+| `db/queries.py` | `upsert_asset()`, `list_assets()`, `count_assets()`, scoring helpers, pHash helpers |
 | `db/migrations/` | Numbered SQL migration files |
 | `api/` | FastAPI routers |
 | `api/assets.py` | Routes: `GET /assets`, `GET /assets/{id}`, `GET /thumbs/{id}` |
@@ -62,6 +66,7 @@ takeout-rater/
 | New API route | `src/takeout_rater/api/<router>.py` |
 | New Jinja2 template | `src/takeout_rater/ui/templates/<name>.html` |
 | New DB migration | `src/takeout_rater/db/migrations/<NNNN>_<slug>.sql` + entry in `schema.py` |
+| New pipeline step | `src/takeout_rater/scoring/<step>.py` |
 | New ADR | `docs/decisions/ADR-NNNN-<slug>.md` |
 | New agent doc | `docs/agents/<topic>.md` |
 | New test | `tests/test_<module>.py` |

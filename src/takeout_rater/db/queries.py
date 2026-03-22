@@ -244,3 +244,345 @@ def count_assets(
 def asset_relpath_to_path(asset: AssetRow, takeout_root: Path) -> Path:
     """Return the absolute path to an asset given its database row and the takeout root."""
     return takeout_root / asset.relpath
+
+
+# ---------------------------------------------------------------------------
+# Scorer-run helpers
+# ---------------------------------------------------------------------------
+
+
+def insert_scorer_run(
+    conn: sqlite3.Connection,
+    scorer_id: str,
+    variant_id: str,
+    *,
+    scorer_version: str | None = None,
+    params_json: str | None = None,
+    params_hash: str | None = None,
+) -> int:
+    """Insert a new scorer-run record and return its ID.
+
+    The ``started_at`` timestamp is set to the current Unix time.  Call
+    :func:`finish_scorer_run` once scoring is complete.
+
+    Args:
+        conn: Open database connection.
+        scorer_id: Stable scorer identifier (e.g. ``"blur"``).
+        variant_id: Variant identifier (e.g. ``"default"``).
+        scorer_version: Optional version string stored for auditability.
+        params_json: Optional JSON-serialised scorer parameters.
+        params_hash: Optional hash of ``params_json`` for deduplication.
+
+    Returns:
+        The integer primary key of the new ``scorer_runs`` row.
+    """
+    row = conn.execute(
+        "INSERT INTO scorer_runs (scorer_id, variant_id, scorer_version, params_json, params_hash, started_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)"
+        " RETURNING id",
+        (scorer_id, variant_id, scorer_version, params_json, params_hash, int(time.time())),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def finish_scorer_run(conn: sqlite3.Connection, run_id: int) -> None:
+    """Mark a scorer run as finished by setting its ``finished_at`` timestamp.
+
+    Args:
+        conn: Open database connection.
+        run_id: The ``id`` of the ``scorer_runs`` row to update.
+    """
+    conn.execute(
+        "UPDATE scorer_runs SET finished_at = ? WHERE id = ?",
+        (int(time.time()), run_id),
+    )
+    conn.commit()
+
+
+def bulk_insert_asset_scores(
+    conn: sqlite3.Connection,
+    run_id: int,
+    scores: list[tuple[int, str, float]],
+) -> None:
+    """Insert multiple ``asset_scores`` rows in a single transaction.
+
+    Rows with duplicate ``(asset_id, scorer_run_id, metric_key)`` are ignored
+    (``INSERT OR IGNORE``).
+
+    Args:
+        conn: Open database connection.
+        run_id: Foreign key into ``scorer_runs``.
+        scores: Iterable of ``(asset_id, metric_key, value)`` triples.
+    """
+    conn.executemany(
+        "INSERT OR IGNORE INTO asset_scores (asset_id, scorer_run_id, metric_key, value)"
+        " VALUES (?, ?, ?, ?)",
+        [(asset_id, run_id, metric_key, value) for asset_id, metric_key, value in scores],
+    )
+    conn.commit()
+
+
+def get_asset_scores(
+    conn: sqlite3.Connection,
+    asset_id: int,
+) -> list[dict[str, Any]]:
+    """Return all scores for a single asset, across all scorer runs.
+
+    Args:
+        conn: Open database connection.
+        asset_id: The asset to look up.
+
+    Returns:
+        List of dicts with keys ``scorer_id``, ``variant_id``, ``metric_key``,
+        ``value``, and ``finished_at``.  Ordered by ``finished_at DESC``.
+    """
+    rows = conn.execute(
+        "SELECT r.scorer_id, r.variant_id, s.metric_key, s.value, r.finished_at"
+        " FROM asset_scores s"
+        " JOIN scorer_runs r ON r.id = s.scorer_run_id"
+        " WHERE s.asset_id = ? AND r.finished_at IS NOT NULL"
+        " ORDER BY r.finished_at DESC",
+        (asset_id,),
+    ).fetchall()
+    return [
+        {
+            "scorer_id": row["scorer_id"],
+            "variant_id": row["variant_id"],
+            "metric_key": row["metric_key"],
+            "value": row["value"],
+            "finished_at": row["finished_at"],
+        }
+        for row in rows
+    ]
+
+
+def get_latest_scorer_run_id(
+    conn: sqlite3.Connection,
+    scorer_id: str,
+    variant_id: str,
+) -> int | None:
+    """Return the ID of the most recently *finished* run for a scorer+variant.
+
+    Args:
+        conn: Open database connection.
+        scorer_id: Scorer identifier.
+        variant_id: Variant identifier.
+
+    Returns:
+        Integer run ID, or ``None`` if no finished run exists.
+    """
+    row = conn.execute(
+        "SELECT id FROM scorer_runs"
+        " WHERE scorer_id = ? AND variant_id = ? AND finished_at IS NOT NULL"
+        " ORDER BY finished_at DESC, id DESC LIMIT 1",
+        (scorer_id, variant_id),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def list_assets_by_score(
+    conn: sqlite3.Connection,
+    scorer_id: str,
+    metric_key: str,
+    variant_id: str = "default",
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    descending: bool = True,
+    favorited: bool | None = None,
+    trashed: bool | None = None,
+) -> list[tuple[AssetRow, float]]:
+    """Return assets that have been scored, sorted by score value.
+
+    Only assets with a score from the *latest finished* run for the given
+    ``scorer_id`` + ``variant_id`` are returned.  Assets without a score are
+    excluded (per the design: "only scored" view when a primary sort metric is
+    active).
+
+    Args:
+        conn: Open database connection.
+        scorer_id: Scorer whose scores to sort by.
+        metric_key: Metric key to sort by.
+        variant_id: Variant ID (default ``"default"``).
+        limit: Maximum number of rows.
+        offset: Rows to skip (for pagination).
+        descending: ``True`` (default) → highest score first.
+        favorited: Optional favorited filter.
+        trashed: Optional trashed filter.
+
+    Returns:
+        List of ``(AssetRow, score_value)`` tuples.
+    """
+    run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
+    if run_id is None:
+        return []
+
+    order = "DESC" if descending else "ASC"
+    conditions: list[str] = ["s.scorer_run_id = ?"]
+    params: list[Any] = [run_id]
+
+    if metric_key:
+        conditions.append("s.metric_key = ?")
+        params.append(metric_key)
+    if favorited is not None:
+        conditions.append("a.favorited = ?")
+        params.append(1 if favorited else 0)
+    if trashed is not None:
+        conditions.append("a.trashed = ?")
+        params.append(1 if trashed else 0)
+
+    where = "WHERE " + " AND ".join(conditions)
+    # order is a code-controlled literal, not user input  # noqa: S608
+    sql = (
+        f"SELECT a.*, s.value AS score_value"  # noqa: S608
+        f" FROM assets a"
+        f" JOIN asset_scores s ON s.asset_id = a.id"
+        f" {where}"
+        f" ORDER BY s.value {order}"
+        f" LIMIT ? OFFSET ?"
+    )
+    params.extend([limit, offset])
+    rows = conn.execute(sql, params).fetchall()
+    return [(_row_to_asset(row), row["score_value"]) for row in rows]
+
+
+def count_assets_with_score(
+    conn: sqlite3.Connection,
+    scorer_id: str,
+    metric_key: str,
+    variant_id: str = "default",
+    *,
+    favorited: bool | None = None,
+    trashed: bool | None = None,
+) -> int:
+    """Count assets that have a score from the latest run for scorer+variant.
+
+    Args:
+        conn: Open database connection.
+        scorer_id: Scorer ID.
+        metric_key: Metric key.
+        variant_id: Variant ID.
+        favorited: Optional favorited filter.
+        trashed: Optional trashed filter.
+
+    Returns:
+        Integer count.
+    """
+    run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
+    if run_id is None:
+        return 0
+
+    conditions: list[str] = ["s.scorer_run_id = ?", "s.metric_key = ?"]
+    params: list[Any] = [run_id, metric_key]
+
+    if favorited is not None:
+        conditions.append("a.favorited = ?")
+        params.append(1 if favorited else 0)
+    if trashed is not None:
+        conditions.append("a.trashed = ?")
+        params.append(1 if trashed else 0)
+
+    where = "WHERE " + " AND ".join(conditions)
+    sql = f"SELECT COUNT(*) FROM assets a JOIN asset_scores s ON s.asset_id = a.id {where}"  # noqa: S608
+    return conn.execute(sql, params).fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
+# pHash helpers
+# ---------------------------------------------------------------------------
+
+
+def upsert_phash(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    phash_hex: str,
+    algo: str = "dhash",
+) -> None:
+    """Insert or update the perceptual hash for an asset.
+
+    Args:
+        conn: Open database connection.
+        asset_id: Foreign key into ``assets``.
+        phash_hex: Hex-encoded hash string.
+        algo: Hash algorithm name (default ``"dhash"``).
+    """
+    conn.execute(
+        "INSERT INTO phash (asset_id, phash_hex, algo, computed_at)"
+        " VALUES (?, ?, ?, ?)"
+        " ON CONFLICT(asset_id) DO UPDATE SET phash_hex = excluded.phash_hex,"
+        "   algo = excluded.algo, computed_at = excluded.computed_at",
+        (asset_id, phash_hex, algo, int(time.time())),
+    )
+    conn.commit()
+
+
+def get_phash(conn: sqlite3.Connection, asset_id: int) -> dict[str, Any] | None:
+    """Return the stored perceptual hash for an asset, or ``None``.
+
+    Args:
+        conn: Open database connection.
+        asset_id: The asset to look up.
+
+    Returns:
+        Dict with keys ``phash_hex``, ``algo``, ``computed_at``, or ``None``.
+    """
+    row = conn.execute(
+        "SELECT phash_hex, algo, computed_at FROM phash WHERE asset_id = ?",
+        (asset_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"phash_hex": row["phash_hex"], "algo": row["algo"], "computed_at": row["computed_at"]}
+
+
+def list_asset_ids_without_phash(conn: sqlite3.Connection) -> list[int]:
+    """Return IDs of assets that do not yet have a stored pHash.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of integer asset IDs.
+    """
+    rows = conn.execute(
+        "SELECT a.id FROM assets a"
+        " LEFT JOIN phash p ON p.asset_id = a.id"
+        " WHERE p.asset_id IS NULL"
+        " ORDER BY a.id",
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def list_asset_ids_without_score(
+    conn: sqlite3.Connection,
+    scorer_id: str,
+    variant_id: str,
+    metric_key: str,
+) -> list[int]:
+    """Return IDs of assets that have no score for the given scorer run.
+
+    More precisely: assets that have never appeared in *any* finished run for
+    the given ``scorer_id`` + ``variant_id`` + ``metric_key``.
+
+    Args:
+        conn: Open database connection.
+        scorer_id: Scorer ID.
+        variant_id: Variant ID.
+        metric_key: Metric key.
+
+    Returns:
+        List of integer asset IDs ordered by ``assets.id``.
+    """
+    rows = conn.execute(
+        "SELECT a.id FROM assets a"
+        " WHERE a.id NOT IN ("
+        "   SELECT s.asset_id FROM asset_scores s"
+        "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
+        "   WHERE r.scorer_id = ? AND r.variant_id = ? AND s.metric_key = ?"
+        "     AND r.finished_at IS NOT NULL"
+        " )"
+        " ORDER BY a.id",
+        (scorer_id, variant_id, metric_key),
+    ).fetchall()
+    return [row[0] for row in rows]

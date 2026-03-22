@@ -79,6 +79,24 @@
       <tr><td>Asset ID</td><td>{{ asset.id }}</td></tr>
       <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
     </table>
+
+    {% if scores %}
+    <h2 style="font-size:1rem; margin-top:1.25rem; margin-bottom:0.5rem; color:#444;">Scores</h2>
+    <table>
+      <tr>
+        <th style="text-align:left; padding:0.3rem 0.5rem; color:#666; font-weight:normal;">Scorer</th>
+        <th style="text-align:left; padding:0.3rem 0.5rem; color:#666; font-weight:normal;">Metric</th>
+        <th style="text-align:right; padding:0.3rem 0.5rem; color:#666; font-weight:normal;">Value</th>
+      </tr>
+      {% for score in scores %}
+      <tr>
+        <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="muted">({{ score.variant_id }})</span>{% endif %}</td>
+        <td>{{ score.metric_key }}</td>
+        <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

@@ -5,7 +5,7 @@ Run ``python -m takeout_rater --help`` or ``takeout-rater --help``
 
 Sub-commands:
 - ``index``   – scan a Takeout directory and build the library DB + thumbnail cache
-- ``score``   – run scorer(s) over indexed assets  *(Iteration 2)*
+- ``score``   – run scorer(s) over indexed assets
 - ``browse``  – launch the local web UI
 - ``export``  – copy selected assets to an export folder  *(Iteration 3)*
 """
@@ -73,8 +73,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Host/IP to bind to (default: 127.0.0.1).",
     )
 
+    # score
+    score_parser = sub.add_parser("score", help="Run scorer(s) over indexed assets")
+    score_parser.add_argument(
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder (same as used with 'index').",
+    )
+    score_parser.add_argument(
+        "--scorer",
+        metavar="SCORER_ID",
+        default=None,
+        help=(
+            "ID of the scorer to run (e.g. 'blur').  "
+            "If not specified, all available scorers are run."
+        ),
+    )
+    score_parser.add_argument(
+        "--phash",
+        action="store_true",
+        default=False,
+        help="Compute perceptual hashes (dhash) for all assets and store in the phash table.",
+    )
+    score_parser.add_argument(
+        "--rerun",
+        action="store_true",
+        default=False,
+        help="Re-score even if scores already exist (creates a new scorer_run).",
+    )
+    score_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        metavar="N",
+        help="Number of images per scoring batch (default: 32).",
+    )
+
     # Placeholders – implementation comes in later iterations
-    sub.add_parser("score", help="(Iteration 2) Run scorer(s) over indexed assets")
     sub.add_parser("export", help="(Iteration 3) Copy selected assets to an export folder")
 
     return parser
@@ -209,6 +244,97 @@ def _cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_score(args: argparse.Namespace) -> int:
+    """Execute the ``score`` sub-command."""
+    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
+    from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
+
+    library_root = Path(args.library_root).resolve()
+    db_path = library_root / "takeout-rater" / "library.sqlite"
+
+    if not db_path.exists():
+        print(
+            f"error: no library database found at {db_path}\n"
+            "       Run 'takeout-rater index <library_root>' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    conn = open_library_db(library_root)
+    thumbs_dir = library_state_dir(library_root) / "thumbs"
+
+    exit_code = 0
+
+    # -- pHash computation ---------------------------------------------------
+    if args.phash:
+        from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
+
+        print("Computing perceptual hashes (dhash) …")
+
+        def _phash_progress(done: int, total: int) -> None:
+            print(f"  phash: {done}/{total}", end="\r", flush=True)
+
+        count = compute_phash_all(conn, thumbs_dir, on_progress=_phash_progress)
+        print(f"\nStored {count} perceptual hash(es).")
+
+    # -- Scorer runs ---------------------------------------------------------
+    scorer_id: str | None = args.scorer
+
+    if scorer_id is not None:
+        # Run the named scorer only
+        scorer_classes = [cls for cls in list_scorers() if cls.spec().scorer_id == scorer_id]
+        if not scorer_classes:
+            print(f"error: unknown scorer id '{scorer_id}'.", file=sys.stderr)
+            print(
+                "       Available scorers: "
+                + ", ".join(cls.spec().scorer_id for cls in list_scorers()),
+                file=sys.stderr,
+            )
+            conn.close()
+            return 1
+        scorer_classes_to_run = scorer_classes
+    else:
+        # Run all available scorers (skip unavailable ones with a warning)
+        scorer_classes_to_run = list_scorers(available_only=True)
+        if not scorer_classes_to_run:
+            print("No available scorers found.  Nothing to do.")
+            conn.close()
+            return 0
+
+    for cls in scorer_classes_to_run:
+        spec = cls.spec()
+        if not cls.is_available():
+            print(
+                f"  skipping {spec.scorer_id!r}: not available "
+                f"(install extras: {', '.join(spec.requires_extras) or 'none'})"
+            )
+            exit_code = 1
+            continue
+
+        scorer = cls.create()
+        print(f"Running scorer '{spec.display_name}' ({spec.scorer_id}) …")
+
+        from takeout_rater.scoring.pipeline import run_scorer  # noqa: PLC0415
+
+        scorer_id_label = spec.scorer_id  # bind to avoid B023 (loop variable in closure)
+
+        def _score_progress(done: int, total: int, _label: str = scorer_id_label) -> None:
+            print(f"  {_label}: {done}/{total}", end="\r", flush=True)
+
+        run_id = run_scorer(
+            conn,
+            scorer,
+            thumbs_dir,
+            batch_size=args.batch_size,
+            skip_existing=not args.rerun,
+            on_progress=_score_progress,
+        )
+        print(f"\n  Done (scorer_run id={run_id}).")
+
+    conn.close()
+    return exit_code
+
+
 def _cmd_browse(args: argparse.Namespace) -> int:
     """Execute the ``browse`` sub-command."""
     try:
@@ -257,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "index":
         return _cmd_index(args)
+
+    if args.command == "score":
+        return _cmd_score(args)
 
     if args.command == "browse":
         return _cmd_browse(args)

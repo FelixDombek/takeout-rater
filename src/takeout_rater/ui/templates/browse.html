@@ -53,6 +53,29 @@
     text-overflow: ellipsis;
   }
   .fav-badge { color: gold; margin-left: 2px; }
+  .score-badge {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 4px;
+    background: #1a5cdb;
+    color: #fff;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sort-form {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .sort-form label { font-size: 0.875rem; color: #555; }
+  .sort-form select {
+    font-size: 0.875rem;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
 
   .pagination {
     display: flex;
@@ -89,12 +112,27 @@
       {{ total }} photos
     {% endif %}
     {% if favorited == "1" %}&nbsp;(favorites only){% endif %}
+    {% if sort_by %}&nbsp;· sorted by score{% endif %}
   </span>
 
   {% if favorited == "1" %}
-    <a class="btn" href="/assets?page=1">All photos</a>
+    <a class="btn" href="/assets?page=1{% if sort_by %}&sort_by={{ sort_by }}{% endif %}">All photos</a>
   {% else %}
-    <a class="btn" href="/assets?favorited=1&page=1">⭐ Favorites only</a>
+    <a class="btn" href="/assets?favorited=1&page=1{% if sort_by %}&sort_by={{ sort_by }}{% endif %}">⭐ Favorites only</a>
+  {% endif %}
+
+  {% if sort_options %}
+  <form class="sort-form" method="get" action="/assets">
+    {% if favorited %}<input type="hidden" name="favorited" value="{{ favorited }}">{% endif %}
+    <input type="hidden" name="page" value="1">
+    <label for="sort_by_sel">Sort by:</label>
+    <select id="sort_by_sel" name="sort_by" onchange="this.form.submit()">
+      <option value="">— date taken —</option>
+      {% for value, label in sort_options %}
+      <option value="{{ value }}"{% if sort_by == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
   {% endif %}
 </div>
 
@@ -113,6 +151,9 @@
         <div class="card-thumb-placeholder" style="display:none">🖼</div>
         <div class="card-body">
           {{ asset.filename }}{% if asset.favorited %}<span class="fav-badge">⭐</span>{% endif %}
+          {% if score_map and asset.id in score_map %}
+          <span class="score-badge">{{ "%.1f"|format(score_map[asset.id]) }}</span>
+          {% endif %}
         </div>
       </a>
     </div>
@@ -121,23 +162,27 @@
 {% else %}
   <div class="empty-state">
     <h2>No photos found</h2>
+    {% if sort_by %}
+    <p>No photos have been scored yet. Run <code>takeout-rater score &lt;path&gt;</code> first.</p>
+    {% else %}
     <p>
       Run <code>takeout-rater index &lt;path&gt;</code> to index your Takeout folder,
       then refresh this page.
     </p>
+    {% endif %}
   </div>
 {% endif %}
 
 {% if total_pages > 1 %}
 <nav class="pagination" aria-label="Pagination">
   {% if page > 1 %}
-    <a class="btn" href="/assets?page={{ page - 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}">← Prev</a>
+    <a class="btn" href="/assets?page={{ page - 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}">← Prev</a>
   {% endif %}
 
   <span class="current-page">{{ page }} / {{ total_pages }}</span>
 
   {% if page < total_pages %}
-    <a class="btn" href="/assets?page={{ page + 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}">Next →</a>
+    <a class="btn" href="/assets?page={{ page + 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by }}{% endif %}">Next →</a>
   {% endif %}
 </nav>
 {% endif %}

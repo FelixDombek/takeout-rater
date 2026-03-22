@@ -15,12 +15,14 @@ from takeout_rater.scorers.base import BaseScorer, ScorerSpec
 # Explicit scorer class list
 # Add your scorer class here after creating it.
 # ---------------------------------------------------------------------------
+from takeout_rater.scorers.heuristics.blur import BlurScorer
 from takeout_rater.scorers.heuristics.dummy import DummyScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
     DummyScorer,
+    BlurScorer,
     # Add more scorers here, e.g.:
-    # from takeout_rater.scorers.aesthetic.laion import LaionAestheticScorer
+    # from takeout_rater.scorers.adapters.laion import LaionAestheticScorer
     # LaionAestheticScorer,
 ]
 
