@@ -77,6 +77,12 @@ Sub-commands (`index`, `score`, `browse`, `export`) are implemented in later ite
 
 ---
 
+## Tools
+
+See [`docs/tools/README.md`](docs/tools/README.md).
+
+---
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) and the agent enablement docs in

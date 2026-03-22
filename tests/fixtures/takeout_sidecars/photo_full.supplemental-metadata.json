@@ -1,0 +1,33 @@
+{
+  "title": "IMG_20230615_142301.jpg",
+  "description": "",
+  "imageViews": "42",
+  "creationTime": {
+    "timestamp": "1686836581",
+    "formatted": "15 Jun 2023, 14:23:01 UTC"
+  },
+  "photoTakenTime": {
+    "timestamp": "1686836381",
+    "formatted": "15 Jun 2023, 14:19:41 UTC"
+  },
+  "geoData": {
+    "latitude": 48.0,
+    "longitude": 11.0,
+    "altitude": 520.0,
+    "latitudeSpan": 0.001,
+    "longitudeSpan": 0.001
+  },
+  "geoDataExif": {
+    "latitude": 48.0,
+    "longitude": 11.0,
+    "altitude": 520.0,
+    "latitudeSpan": 0.001,
+    "longitudeSpan": 0.001
+  },
+  "url": "https://example.invalid/photo/EXAMPLE",
+  "googlePhotosOrigin": {
+    "mobileUpload": {
+      "deviceType": "ANDROID_PHONE"
+    }
+  }
+}

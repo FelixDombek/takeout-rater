@@ -44,23 +44,42 @@
 
 ```sql
 CREATE TABLE assets (
-    id                  INTEGER PRIMARY KEY,
-    relpath             TEXT NOT NULL UNIQUE,
-    filename            TEXT NOT NULL,
-    ext                 TEXT NOT NULL,
-    size_bytes          INTEGER,
-    sha256              TEXT,
-    taken_at            INTEGER,       -- Unix timestamp, from sidecar
-    width               INTEGER,
-    height              INTEGER,
-    geo_lat             REAL,
-    geo_lon             REAL,
-    geo_alt             REAL,
-    google_photos_url   TEXT,
-    origin_device_type  TEXT,
-    sidecar_relpath     TEXT,
-    mime                TEXT,
-    indexed_at          INTEGER NOT NULL
+    id                      INTEGER PRIMARY KEY,
+    relpath                 TEXT NOT NULL UNIQUE,   -- path relative to takeout root
+    filename                TEXT NOT NULL,
+    ext                     TEXT NOT NULL,
+    size_bytes              INTEGER,
+    sha256                  TEXT,                  -- nullable, computed lazily
+    taken_at                INTEGER,               -- Unix ts from photoTakenTime.timestamp
+    created_at_sidecar      INTEGER,               -- Unix ts from creationTime.timestamp
+    width                   INTEGER,               -- nullable until image is decoded
+    height                  INTEGER,
+    -- Geo from geoData (always present in sidecar; 0.0/0.0 when unknown)
+    geo_lat                 REAL,
+    geo_lon                 REAL,
+    geo_alt                 REAL,
+    -- Geo from geoDataExif (optional; present in ~51 % of sidecars)
+    geo_exif_lat            REAL,
+    geo_exif_lon            REAL,
+    geo_exif_alt            REAL,
+    -- Sidecar scalar fields
+    title                   TEXT,                  -- sidecar title (often == filename)
+    description             TEXT,                  -- user description (often empty)
+    image_views             INTEGER,               -- imageViews as int (sidecar stores str)
+    google_photos_url       TEXT,                  -- url field from sidecar
+    -- Google-Photos-specific flags (optional booleans in sidecar)
+    favorited               INTEGER,               -- 0/1, NULL when absent
+    archived                INTEGER,               -- 0/1, NULL when absent
+    trashed                 INTEGER,               -- 0/1, NULL when absent
+    -- Upload / origin info (from googlePhotosOrigin, optional)
+    origin_type             TEXT,                  -- 'mobileUpload'|'driveSync'|'fromPartnerSharing'|'fromSharedAlbum'|'webUpload'|'composition'|NULL
+    origin_device_type      TEXT,                  -- e.g. 'ANDROID_PHONE' (mobileUpload only)
+    origin_device_folder    TEXT,                  -- localFolderName (mobileUpload only)
+    app_source_package      TEXT,                  -- appSource.androidPackageName (optional)
+    -- Indexing metadata
+    sidecar_relpath         TEXT,                  -- path to *.supplemental-metadata.json
+    mime                    TEXT,                  -- e.g. 'image/jpeg', 'image/heic'
+    indexed_at              INTEGER NOT NULL
 );
 
 CREATE TABLE scorer_runs (

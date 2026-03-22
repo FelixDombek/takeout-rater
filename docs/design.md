@@ -84,7 +84,7 @@ See [ADR-0004](decisions/ADR-0004-library-state-location.md).
 ### Core tables (conceptual)
 
 **assets** — one row per image file in the takeout  
-`id, relpath (unique), filename, ext, size_bytes, sha256 (nullable), taken_at, width, height, sidecar_json_relpath, google_photos_url, geo_lat, geo_lon, mime`
+`id, relpath (unique), filename, ext, size_bytes, sha256 (nullable), taken_at, created_at_sidecar, width, height, title, description, image_views, google_photos_url, favorited, archived, trashed, geo_lat, geo_lon, geo_alt, geo_exif_lat, geo_exif_lon, geo_exif_alt, origin_type, origin_device_type, origin_device_folder, app_source_package, sidecar_relpath, mime, indexed_at`
 
 **albums** + **album_assets** — many-to-many album membership
 
@@ -103,11 +103,33 @@ Unique on `(asset_id, scorer_run_id, metric_key)`.
 
 ### Sidecar fields stored
 
-From `*.supplemental-metadata.json`:
-- `photoTakenTime.timestamp` → `taken_at` (preferred over `creationTime`)
-- `geoData.latitude/longitude/altitude` → `geo_lat`, `geo_lon`, `geo_alt`
-- `url` → `google_photos_url`
-- `googlePhotosOrigin.*.deviceType` → `origin_device_type`
+`*.supplemental-metadata.json` is the **primary metadata source**.
+Fields are mapped to `assets` columns as follows:
+
+| Sidecar path | Column | Notes |
+|---|---|---|
+| `photoTakenTime.timestamp` | `taken_at` | Preferred timestamp; stored as Unix int |
+| `creationTime.timestamp` | `created_at_sidecar` | Upload/creation time; fallback if `taken_at` missing |
+| `title` | `title` | Usually equals the filename |
+| `description` | `description` | Often empty string |
+| `imageViews` | `image_views` | Stored as int (sidecar encodes as string) |
+| `url` | `google_photos_url` | Deep link back to Google Photos |
+| `geoData.latitude` | `geo_lat` | Always present; 0.0 when no location |
+| `geoData.longitude` | `geo_lon` | Always present; 0.0 when no location |
+| `geoData.altitude` | `geo_alt` | Always present; 0.0 when unknown |
+| `geoDataExif.latitude` | `geo_exif_lat` | Present in ~51 % of sidecars |
+| `geoDataExif.longitude` | `geo_exif_lon` | Present in ~51 % of sidecars |
+| `geoDataExif.altitude` | `geo_exif_alt` | Present in ~51 % of sidecars |
+| `favorited` | `favorited` | Optional bool; stored as 0/1 INTEGER |
+| `archived` | `archived` | Optional bool; stored as 0/1 INTEGER |
+| `trashed` | `trashed` | Optional bool; stored as 0/1 INTEGER |
+| `googlePhotosOrigin` (key) | `origin_type` | First key present: `mobileUpload`, `driveSync`, `fromPartnerSharing`, `fromSharedAlbum`, `webUpload`, `composition` |
+| `googlePhotosOrigin.mobileUpload.deviceType` | `origin_device_type` | e.g. `ANDROID_PHONE` |
+| `googlePhotosOrigin.mobileUpload.deviceFolder.localFolderName` | `origin_device_folder` | Often empty |
+| `appSource.androidPackageName` | `app_source_package` | Present in ~13 % of sidecars |
+
+Fields not mapped to columns (`removeResultReason`, `sharedAlbumComments`) are not
+currently stored; they can be added in a later migration if needed.
 
 ---
 

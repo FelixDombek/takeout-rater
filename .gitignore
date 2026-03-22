@@ -1,6 +1,7 @@
 # Python build artifacts
 __pycache__/
 *.py[cod]
+*.pyo
 *.egg-info/
 *.egg
 dist/

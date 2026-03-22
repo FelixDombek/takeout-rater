@@ -1,0 +1,22 @@
+{
+  "title": "video_20220301.mp4",
+  "description": "Family video",
+  "imageViews": "0",
+  "creationTime": {
+    "timestamp": "1646136000",
+    "formatted": "01 Mar 2022, 12:00:00 UTC"
+  },
+  "geoData": {
+    "latitude": 51.0,
+    "longitude": -0.1,
+    "altitude": 15.0,
+    "latitudeSpan": 0.002,
+    "longitudeSpan": 0.002
+  },
+  "url": "https://example.invalid/photo/EXAMPLE",
+  "googlePhotosOrigin": {
+    "webUpload": {
+      "computerUpload": {}
+    }
+  }
+}
