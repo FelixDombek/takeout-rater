@@ -31,6 +31,15 @@ def library_state_dir(library_root: Path) -> Path:
     return state_dir
 
 
+def library_db_path(library_root: Path) -> Path:
+    """Return the path to the library SQLite database without creating any directories.
+
+    Use this for existence checks.  To open the database, use
+    :func:`open_library_db` instead.
+    """
+    return library_root / _STATE_DIR / _DB_FILENAME
+
+
 def open_library_db(library_root: Path) -> sqlite3.Connection:
     """Open (or create) the library SQLite database for *library_root*.
 

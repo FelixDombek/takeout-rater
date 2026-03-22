@@ -77,12 +77,16 @@ def browse_assets(
     fav_filter: bool | None = True if favorited == "1" else None
 
     sort_parsed = _parse_sort_by(sort_by)
+    # Normalize sort_by: use the canonical form when valid, None when malformed.
+    # This prevents untrusted query text from being propagated into template links.
+    canonical_sort_by: str | None = None
 
     # Score map: asset_id → score value (populated when sorting by score)
     score_map: dict[int, float] = {}
 
     if sort_parsed is not None:
         scorer_id, metric_key = sort_parsed
+        canonical_sort_by = f"{scorer_id}:{metric_key}"
         asset_score_pairs = list_assets_by_score(
             conn,
             scorer_id,
@@ -118,7 +122,7 @@ def browse_assets(
             "total_pages": total_pages,
             "total": total,
             "favorited": favorited,
-            "sort_by": sort_by,
+            "sort_by": canonical_sort_by,
             "sort_options": sort_options,
             "score_map": score_map,
         },
