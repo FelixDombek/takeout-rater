@@ -133,8 +133,6 @@ def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
     fake_mlp = MagicMock()
     fake_mlp.return_value = torch.tensor([[7.5]])
 
-    import torch  # noqa: PLC0415, F811
-
     device = torch.device("cpu")
     scorer._clip_model = fake_clip
     scorer._preprocess = fake_preprocess
@@ -146,7 +144,7 @@ def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
     """score_batch must return exactly one result per input path."""
@@ -166,7 +164,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_batch_returns_aesthetic_key(tmp_path: Path) -> None:
     """Each result dict must contain the 'aesthetic' key."""
@@ -184,7 +182,7 @@ def test_score_batch_returns_aesthetic_key(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_batch_score_in_range(tmp_path: Path) -> None:
     """Score must be in [0, 10]."""
@@ -201,7 +199,7 @@ def test_score_batch_score_in_range(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_batch_mock_returns_expected_value(tmp_path: Path) -> None:
     """The mocked scorer should return the value injected by the fake MLP (7.5)."""
@@ -218,7 +216,7 @@ def test_score_batch_mock_returns_expected_value(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
     """A missing image file should yield aesthetic = 0.0, not raise."""
@@ -232,7 +230,7 @@ def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_batch_clamps_above_ten(tmp_path: Path) -> None:
     """Scores above 10 must be clamped to 10.0."""
@@ -252,7 +250,7 @@ def test_score_batch_clamps_above_ten(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_batch_clamps_below_zero(tmp_path: Path) -> None:
     """Scores below 0 must be clamped to 0.0."""
@@ -277,7 +275,7 @@ def test_score_batch_clamps_below_zero(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_score_one(tmp_path: Path) -> None:
     """score_one must return a dict with 'aesthetic' in [0, 10]."""
@@ -300,7 +298,7 @@ def test_score_one(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip) not installed",
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
 )
 def test_build_mlp_output_shape() -> None:
     """_build_mlp(768) must map a (1, 768) tensor to a (1, 1) output."""

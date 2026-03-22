@@ -156,9 +156,11 @@ class AestheticScorer(BaseScorer):
 
     @classmethod
     def is_available(cls) -> bool:
-        """Return ``True`` when ``torch`` and ``open_clip`` are importable."""
+        """Return ``True`` when required runtime dependencies are importable."""
         try:
+            import huggingface_hub  # noqa: F401
             import open_clip  # noqa: F401
+            import PIL  # noqa: F401
             import torch  # noqa: F401
 
             return True
@@ -177,31 +179,38 @@ class AestheticScorer(BaseScorer):
         - CLIP weights → ``~/.cache/torch/hub`` (managed by ``open_clip``)
         - MLP weights  → ``~/.cache/huggingface`` (managed by ``huggingface_hub``)
         """
-        if self._clip_model is not None:
+        if (
+            self._clip_model is not None
+            and self._preprocess is not None
+            and self._mlp is not None
+            and self._device is not None
+        ):
             return  # already loaded
 
         import open_clip  # noqa: PLC0415
         import torch  # noqa: PLC0415
         from huggingface_hub import hf_hub_download  # noqa: PLC0415
 
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Load CLIP ViT-L/14 backbone
         clip_model, _, preprocess = open_clip.create_model_and_transforms(
             _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED
         )
         clip_model.eval()
-        clip_model.to(self._device)
-        self._clip_model = clip_model
-        self._preprocess = preprocess
+        clip_model.to(device)
 
         # Download and load the aesthetic MLP weights
         weights_path = hf_hub_download(repo_id=_HF_REPO, filename=_HF_FILENAME)
         mlp = _build_mlp(_EMBEDDING_DIM)
-        state_dict = torch.load(weights_path, map_location=self._device, weights_only=True)
+        state_dict = torch.load(weights_path, map_location=device, weights_only=True)
         mlp.load_state_dict(state_dict)
         mlp.eval()
-        mlp.to(self._device)
+        mlp.to(device)
+
+        self._device = device
+        self._clip_model = clip_model
+        self._preprocess = preprocess
         self._mlp = mlp
 
     # ------------------------------------------------------------------
