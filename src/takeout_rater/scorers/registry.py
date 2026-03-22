@@ -14,6 +14,7 @@ from __future__ import annotations
 # Add your scorer class here after creating it.
 # ---------------------------------------------------------------------------
 from takeout_rater.scorers.adapters.laion import AestheticScorer
+from takeout_rater.scorers.adapters.nsfw import NSFWScorer
 from takeout_rater.scorers.base import BaseScorer, ScorerSpec
 from takeout_rater.scorers.heuristics.blur import BlurScorer
 from takeout_rater.scorers.heuristics.dummy import DummyScorer
@@ -22,6 +23,7 @@ _SCORER_CLASSES: list[type[BaseScorer]] = [
     DummyScorer,
     BlurScorer,
     AestheticScorer,
+    NSFWScorer,
 ]
 
 

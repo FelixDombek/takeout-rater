@@ -392,6 +392,8 @@ def list_assets_by_score(
     descending: bool = True,
     favorited: bool | None = None,
     trashed: bool | None = None,
+    min_score: float | None = None,
+    max_score: float | None = None,
 ) -> list[tuple[AssetRow, float]]:
     """Return assets that have been scored, sorted by score value.
 
@@ -410,6 +412,8 @@ def list_assets_by_score(
         descending: ``True`` (default) → highest score first.
         favorited: Optional favorited filter.
         trashed: Optional trashed filter.
+        min_score: Optional inclusive lower bound on the score value.
+        max_score: Optional inclusive upper bound on the score value.
 
     Returns:
         List of ``(AssetRow, score_value)`` tuples.
@@ -431,6 +435,12 @@ def list_assets_by_score(
     if trashed is not None:
         conditions.append("a.trashed = ?")
         params.append(1 if trashed else 0)
+    if min_score is not None:
+        conditions.append("s.value >= ?")
+        params.append(min_score)
+    if max_score is not None:
+        conditions.append("s.value <= ?")
+        params.append(max_score)
 
     where = "WHERE " + " AND ".join(conditions)
     # order is a code-controlled literal, not user input  # noqa: S608
@@ -455,6 +465,8 @@ def count_assets_with_score(
     *,
     favorited: bool | None = None,
     trashed: bool | None = None,
+    min_score: float | None = None,
+    max_score: float | None = None,
 ) -> int:
     """Count assets that have a score from the latest run for scorer+variant.
 
@@ -465,6 +477,8 @@ def count_assets_with_score(
         variant_id: Variant ID.
         favorited: Optional favorited filter.
         trashed: Optional trashed filter.
+        min_score: Optional inclusive lower bound on the score value.
+        max_score: Optional inclusive upper bound on the score value.
 
     Returns:
         Integer count.
@@ -482,6 +496,12 @@ def count_assets_with_score(
     if trashed is not None:
         conditions.append("a.trashed = ?")
         params.append(1 if trashed else 0)
+    if min_score is not None:
+        conditions.append("s.value >= ?")
+        params.append(min_score)
+    if max_score is not None:
+        conditions.append("s.value <= ?")
+        params.append(max_score)
 
     where = "WHERE " + " AND ".join(conditions)
     sql = f"SELECT COUNT(*) FROM assets a JOIN asset_scores s ON s.asset_id = a.id {where}"  # noqa: S608
@@ -772,3 +792,127 @@ def list_asset_ids_without_score(
         (scorer_id, variant_id, metric_key),
     ).fetchall()
     return [row[0] for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# View preset helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ViewPreset:
+    """One saved view preset (filter + sort combination)."""
+
+    id: int
+    name: str
+    sort_by: str | None
+    favorited: int | None
+    min_score: float | None
+    max_score: float | None
+    created_at: int
+    updated_at: int
+
+
+def _row_to_preset(row: sqlite3.Row) -> ViewPreset:
+    """Convert a ``view_presets`` row to a :class:`ViewPreset`."""
+    return ViewPreset(
+        id=row["id"],
+        name=row["name"],
+        sort_by=row["sort_by"],
+        favorited=row["favorited"],
+        min_score=row["min_score"],
+        max_score=row["max_score"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def list_view_presets(conn: sqlite3.Connection) -> list[ViewPreset]:
+    """Return all view presets ordered by name.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of :class:`ViewPreset` objects.
+    """
+    rows = conn.execute(
+        "SELECT id, name, sort_by, favorited, min_score, max_score, created_at, updated_at"
+        " FROM view_presets ORDER BY name"
+    ).fetchall()
+    return [_row_to_preset(row) for row in rows]
+
+
+def get_view_preset(conn: sqlite3.Connection, preset_id: int) -> ViewPreset | None:
+    """Return the view preset with the given ID, or ``None`` if not found.
+
+    Args:
+        conn: Open database connection.
+        preset_id: Primary key of the preset.
+
+    Returns:
+        :class:`ViewPreset` or ``None``.
+    """
+    row = conn.execute(
+        "SELECT id, name, sort_by, favorited, min_score, max_score, created_at, updated_at"
+        " FROM view_presets WHERE id = ?",
+        (preset_id,),
+    ).fetchone()
+    return _row_to_preset(row) if row else None
+
+
+def upsert_view_preset(
+    conn: sqlite3.Connection,
+    name: str,
+    sort_by: str | None = None,
+    favorited: int | None = None,
+    min_score: float | None = None,
+    max_score: float | None = None,
+) -> int:
+    """Insert or update a view preset identified by *name*.
+
+    If a preset with the given *name* already exists its fields are updated;
+    otherwise a new row is inserted.
+
+    Args:
+        conn: Open database connection.
+        name: Unique human-readable name for the preset.
+        sort_by: ``"scorer_id:metric_key"`` or ``None`` (date order).
+        favorited: ``1`` to filter favourites only, ``None`` for no filter.
+        min_score: Inclusive lower bound on the sort-metric score, or ``None``.
+        max_score: Inclusive upper bound on the sort-metric score, or ``None``.
+
+    Returns:
+        The integer primary key of the inserted or updated row.
+    """
+    now = int(time.time())
+    row = conn.execute(
+        "INSERT INTO view_presets (name, sort_by, favorited, min_score, max_score,"
+        "   created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(name) DO UPDATE SET"
+        "   sort_by = excluded.sort_by,"
+        "   favorited = excluded.favorited,"
+        "   min_score = excluded.min_score,"
+        "   max_score = excluded.max_score,"
+        "   updated_at = excluded.updated_at"
+        " RETURNING id",
+        (name, sort_by, favorited, min_score, max_score, now, now),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def delete_view_preset(conn: sqlite3.Connection, preset_id: int) -> bool:
+    """Delete the view preset with the given ID.
+
+    Args:
+        conn: Open database connection.
+        preset_id: Primary key of the preset to delete.
+
+    Returns:
+        ``True`` if a row was deleted, ``False`` if the preset did not exist.
+    """
+    cursor = conn.execute("DELETE FROM view_presets WHERE id = ?", (preset_id,))
+    conn.commit()
+    return cursor.rowcount > 0

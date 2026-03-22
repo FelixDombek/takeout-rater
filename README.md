@@ -95,6 +95,7 @@ takeout-rater browse /path/to/folder-containing-Takeout
 | **2** | Scorer pipeline end-to-end + BlurScorer + pHash | ✅ Done |
 | **3** | Clustering, cluster view, best-of-cluster export | ✅ Done |
 | **4** | Aesthetic scorer (ONNX/Torch), sort by aesthetic in UI | ✅ Done |
+| **5** | NSFW detector scorer, filter-by-score range, view presets | ✅ Done |
 
 ---
 
@@ -111,7 +112,8 @@ cd takeout-rater
 pip install -e ".[dev]"
 
 # (Optional) install optional scorer dependencies
-pip install -e ".[aesthetic]"   # PyTorch-based aesthetic scorer
+pip install -e ".[aesthetic]"   # PyTorch-based aesthetic scorer (LAION v2)
+pip install -e ".[nsfw]"        # NSFW detector scorer (Falconsai ViT)
 pip install -e ".[heic]"        # HEIC image support via pillow-heif
 ```
 

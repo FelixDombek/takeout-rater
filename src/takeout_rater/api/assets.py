@@ -16,6 +16,7 @@ from takeout_rater.db.queries import (
     get_asset_scores,
     list_assets,
     list_assets_by_score,
+    list_view_presets,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 from takeout_rater.scorers.registry import list_specs
@@ -72,6 +73,8 @@ def browse_assets(
     page: int = 1,
     favorited: str | None = None,
     sort_by: str | None = None,
+    min_score: float | None = None,
+    max_score: float | None = None,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
     """Render the browse page with paginated asset thumbnails.
@@ -81,6 +84,10 @@ def browse_assets(
     - ``favorited``: ``"1"`` to show only favorited assets.
     - ``sort_by``: ``"scorer_id:metric_key"`` to sort by a score metric
       (e.g. ``"blur:sharpness"``).  Only scored assets are shown.
+    - ``min_score``: Inclusive lower bound on the score value (requires
+      ``sort_by``).
+    - ``max_score``: Inclusive upper bound on the score value (requires
+      ``sort_by``).
     """
     offset = max(0, (page - 1) * _PAGE_SIZE)
     fav_filter: bool | None = True if favorited == "1" else None
@@ -93,6 +100,10 @@ def browse_assets(
     # Score map: asset_id → score value (populated when sorting by score)
     score_map: dict[int, float] = {}
 
+    # Score range is only meaningful when sorting by score
+    eff_min = min_score if sort_parsed else None
+    eff_max = max_score if sort_parsed else None
+
     if sort_parsed is not None:
         scorer_id, metric_key = sort_parsed
         canonical_sort_by = f"{scorer_id}:{metric_key}"
@@ -103,10 +114,19 @@ def browse_assets(
             limit=_PAGE_SIZE,
             offset=offset,
             favorited=fav_filter,
+            min_score=eff_min,
+            max_score=eff_max,
         )
         assets = [a for a, _ in asset_score_pairs]
         score_map = {a.id: s for a, s in asset_score_pairs}
-        total = count_assets_with_score(conn, scorer_id, metric_key, favorited=fav_filter)
+        total = count_assets_with_score(
+            conn,
+            scorer_id,
+            metric_key,
+            favorited=fav_filter,
+            min_score=eff_min,
+            max_score=eff_max,
+        )
     else:
         assets = list_assets(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
         total = count_assets(conn, favorited=fav_filter)
@@ -121,8 +141,8 @@ def browse_assets(
         if spec.scorer_id != "dummy"
     ]
 
-    # Build a canonical (validated) version of sort_by for use in URLs/templates
-    canonical_sort_by = f"{sort_parsed[0]}:{sort_parsed[1]}" if sort_parsed else None
+    # Load saved presets for the toolbar
+    presets = list_view_presets(conn)
 
     templates = request.app.state.templates
     return templates.TemplateResponse(
@@ -137,6 +157,9 @@ def browse_assets(
             "sort_by": canonical_sort_by,
             "sort_options": sort_options,
             "score_map": score_map,
+            "min_score": eff_min,
+            "max_score": eff_max,
+            "presets": presets,
         },
     )
 

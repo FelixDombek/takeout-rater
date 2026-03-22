@@ -31,6 +31,11 @@ aesthetic = [
     "Pillow>=10.0",
     "huggingface-hub>=0.20",
 ]
+nsfw = [
+    "torch>=2.2",
+    "transformers>=4.35",
+    "Pillow>=10.0",
+]
 heic = [
     "pillow-heif>=0.16",
 ]

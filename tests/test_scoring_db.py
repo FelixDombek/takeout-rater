@@ -268,6 +268,90 @@ def test_count_assets_with_score_correct() -> None:
     assert count_assets_with_score(conn, "blur", "sharpness") == 4
 
 
+def test_count_assets_with_score_min_filter() -> None:
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
+    run_id = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    # scores: 0, 10, 20, 30, 40 — only those >= 20 pass
+    assert count_assets_with_score(conn, "blur", "sharpness", min_score=20.0) == 3
+
+
+def test_count_assets_with_score_max_filter() -> None:
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
+    run_id = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    # scores: 0, 10, 20, 30, 40 — only those <= 20 pass
+    assert count_assets_with_score(conn, "blur", "sharpness", max_score=20.0) == 3
+
+
+def test_count_assets_with_score_min_max_range() -> None:
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
+    run_id = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    # scores: 0, 10, 20, 30, 40 — only 10, 20, 30 fall in [10, 30]
+    assert count_assets_with_score(conn, "blur", "sharpness", min_score=10.0, max_score=30.0) == 3
+
+
+# ── list_assets_by_score min/max ──────────────────────────────────────────────
+
+
+def test_list_assets_by_score_min_filter() -> None:
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(4)]
+    run_id = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    # scores: 0, 20, 40, 60 — min_score=40 keeps 40 and 60
+    pairs = list_assets_by_score(conn, "blur", "sharpness", min_score=40.0)
+    scores = [s for _, s in pairs]
+    assert all(s >= 40.0 for s in scores)
+    assert len(scores) == 2
+
+
+def test_list_assets_by_score_max_filter() -> None:
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(4)]
+    run_id = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    # scores: 0, 20, 40, 60 — max_score=20 keeps 0 and 20
+    pairs = list_assets_by_score(conn, "blur", "sharpness", max_score=20.0)
+    scores = [s for _, s in pairs]
+    assert all(s <= 20.0 for s in scores)
+    assert len(scores) == 2
+
+
+def test_list_assets_by_score_range_filter() -> None:
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
+    run_id = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    # scores: 0, 10, 20, 30, 40 — range [10, 30] keeps 10, 20, 30
+    pairs = list_assets_by_score(conn, "blur", "sharpness", min_score=10.0, max_score=30.0)
+    scores = [s for _, s in pairs]
+    assert len(scores) == 3
+    assert all(10.0 <= s <= 30.0 for s in scores)
+
+
 # ── upsert_phash / get_phash ──────────────────────────────────────────────────
 
 
