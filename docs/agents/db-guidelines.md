@@ -1,6 +1,8 @@
 # Database guidelines
 
-> **Status:** Iteration 0 — schema and migration tooling are TBD.  This document captures the conventions to follow once they are implemented in Iteration 1.
+> **Status:** Iteration 1 — schema and migrations are implemented in
+> `src/takeout_rater/db/`.  This document captures the conventions to follow
+> when extending the database in future iterations.
 
 ---
 

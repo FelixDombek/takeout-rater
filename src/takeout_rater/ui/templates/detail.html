@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}{{ asset.filename }} – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .detail-layout {
+    display: grid;
+    grid-template-columns: minmax(200px, 512px) 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+  @media (max-width: 700px) {
+    .detail-layout { grid-template-columns: 1fr; }
+  }
+  .detail-img {
+    width: 100%;
+    max-width: 512px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    background: #ddd;
+  }
+  .detail-meta { font-size: 0.9rem; }
+  .detail-meta h1 { font-size: 1.25rem; margin-bottom: 0.75rem; overflow-wrap: break-word; }
+  .detail-meta table { border-collapse: collapse; width: 100%; }
+  .detail-meta td { padding: 0.3rem 0.5rem; vertical-align: top; }
+  .detail-meta td:first-child { color: #666; white-space: nowrap; padding-right: 1rem; }
+  .detail-meta tr:nth-child(even) td { background: #f9f9f9; }
+  .back-link { margin-bottom: 1rem; display: inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a class="btn back-link" href="javascript:history.back()">← Back</a>
+
+<div class="detail-layout">
+  <div>
+    <img
+      class="detail-img"
+      src="/thumbs/{{ asset.id }}"
+      alt="{{ asset.title or asset.filename }}"
+      onerror="this.style.background='#e0e0e0'"
+    >
+  </div>
+
+  <div class="detail-meta">
+    <h1>{{ asset.title or asset.filename }}</h1>
+    {% if asset.description %}
+      <p style="margin-bottom:0.75rem; color:#555">{{ asset.description }}</p>
+    {% endif %}
+
+    <table>
+      <tr><td>Filename</td><td>{{ asset.filename }}</td></tr>
+      <tr><td>Type</td><td>{{ asset.mime or asset.ext }}</td></tr>
+      {% if asset.taken_at %}
+      <tr><td>Taken</td><td>{{ asset.taken_at | timestamp_fmt }}</td></tr>
+      {% endif %}
+      {% if asset.size_bytes %}
+      <tr><td>Size</td><td>{{ asset.size_bytes | filesizeformat }}</td></tr>
+      {% endif %}
+      {% if asset.width and asset.height %}
+      <tr><td>Dimensions</td><td>{{ asset.width }} × {{ asset.height }}</td></tr>
+      {% endif %}
+      {% if asset.geo_lat is not none and (asset.geo_lat != 0 or asset.geo_lon != 0) %}
+      <tr>
+        <td>Location</td>
+        <td>{{ "%.5f"|format(asset.geo_lat) }}, {{ "%.5f"|format(asset.geo_lon) }}</td>
+      </tr>
+      {% endif %}
+      {% if asset.favorited %}
+      <tr><td>Favorited</td><td>⭐ Yes</td></tr>
+      {% endif %}
+      {% if asset.origin_type %}
+      <tr><td>Origin</td><td>{{ asset.origin_type }}{% if asset.origin_device_type %} ({{ asset.origin_device_type }}){% endif %}</td></tr>
+      {% endif %}
+      {% if asset.google_photos_url %}
+      <tr><td>Google Photos</td><td><a href="{{ asset.google_photos_url }}" target="_blank" rel="noopener">Open ↗</a></td></tr>
+      {% endif %}
+      <tr><td>Asset ID</td><td>{{ asset.id }}</td></tr>
+      <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
+    </table>
+  </div>
+</div>
+{% endblock %}

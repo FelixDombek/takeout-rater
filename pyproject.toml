@@ -12,6 +12,17 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
+# Core image handling (required for thumbnail generation during indexing)
+index = [
+    "Pillow>=10.0",
+]
+# Web UI dependencies (required for the browse command)
+web = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.27",
+    "jinja2>=3.1",
+    "aiofiles>=23.0",
+]
 # Heavyweight ML scorer dependencies (installed per scorer family)
 aesthetic = [
     "torch>=2.2",
@@ -25,6 +36,11 @@ heic = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
+    "httpx>=0.26",
+    "Pillow>=10.0",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.27",
+    "jinja2>=3.1",
 ]
 
 [project.scripts]

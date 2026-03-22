@@ -197,7 +197,7 @@ If a HEIC loader is unavailable, the asset is indexed but marked `unsupported/sk
 
 | Iteration | Scope |
 |---|---|
-| **0** (this PR) | Repo foundation: design docs, ADRs, agent docs, pyproject, scorer interface + registry, CI, skeleton modules |
-| **1** | Indexing: takeout scanner, sidecar parser, asset DB, thumbnail cache, minimal browse UI (FastAPI + HTMX) |
+| **0** ✅ | Repo foundation: design docs, ADRs, agent docs, pyproject, scorer interface + registry, CI, skeleton modules |
+| **1** ✅ | Indexing: takeout scanner, sidecar parser, asset DB, thumbnail cache, minimal browse UI (FastAPI + HTMX) |
 | **2** | Scorer framework end-to-end: scoring pipeline, DummyScorer wired to DB, 1–2 real scorers (aesthetic) |
 | **3** | Clustering: pHash computation, cluster persistence, cluster view, best-of-cluster export |

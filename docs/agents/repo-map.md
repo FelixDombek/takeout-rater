@@ -35,10 +35,20 @@ takeout-rater/
 | `scorers/heuristics/` | Lightweight heuristic scorers (no ML model needed) |
 | `scorers/heuristics/dummy.py` | Trivial constant scorer — used in tests |
 | `scorers/adapters/` | ML/external-tool scorer wrappers (optional deps) |
-| `indexing/` | *(Iteration 1)* Takeout scanner, sidecar parser, thumbnail generator |
-| `db/` | *(Iteration 1)* SQLite schema, migrations, query helpers |
-| `api/` | *(Iteration 1)* FastAPI routes |
-| `ui/` | *(Iteration 1)* Jinja2 templates + static assets |
+| `indexing/` | Takeout scanner, sidecar parser, and thumbnail generator |
+| `indexing/scanner.py` | `scan_takeout()` — walk Takeout tree, enumerate `AssetFile` objects |
+| `indexing/sidecar.py` | `parse_sidecar()` — parse `*.supplemental-metadata.json` → `SidecarData` |
+| `indexing/thumbnailer.py` | `generate_thumbnail()` — 512 px JPEG thumbnail cache |
+| `db/` | SQLite schema, migrations, and query helpers |
+| `db/schema.py` | Migration runner (`migrate()`) |
+| `db/connection.py` | `open_library_db()` — open / create the library database |
+| `db/queries.py` | `upsert_asset()`, `list_assets()`, `count_assets()`, `get_asset_by_id()` |
+| `db/migrations/` | Numbered SQL migration files |
+| `api/` | FastAPI routers |
+| `api/assets.py` | Routes: `GET /assets`, `GET /assets/{id}`, `GET /thumbs/{id}` |
+| `ui/` | Jinja2 application factory + HTML templates |
+| `ui/app.py` | `create_app()` — FastAPI + Jinja2 setup |
+| `ui/templates/` | `base.html`, `browse.html`, `detail.html` |
 
 ---
 
@@ -49,8 +59,9 @@ takeout-rater/
 | New heuristic scorer | `src/takeout_rater/scorers/heuristics/<name>.py` + entry in `registry.py` |
 | New ML/adapter scorer | `src/takeout_rater/scorers/adapters/<name>/` + entry in `registry.py` |
 | New CLI sub-command | `src/takeout_rater/cli.py` |
-| New API route | `src/takeout_rater/api/<router>.py` (Iteration 1+) |
-| New DB migration | `src/takeout_rater/db/migrations/` (Iteration 1+) |
+| New API route | `src/takeout_rater/api/<router>.py` |
+| New Jinja2 template | `src/takeout_rater/ui/templates/<name>.html` |
+| New DB migration | `src/takeout_rater/db/migrations/<NNNN>_<slug>.sql` + entry in `schema.py` |
 | New ADR | `docs/decisions/ADR-NNNN-<slug>.md` |
 | New agent doc | `docs/agents/<topic>.md` |
 | New test | `tests/test_<module>.py` |

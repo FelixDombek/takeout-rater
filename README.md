@@ -19,14 +19,30 @@ See [`docs/design.md`](docs/design.md) for the full architecture overview.
 
 ---
 
+## Quick start
+
+```bash
+# Install
+pip install -e ".[index,web]"
+
+# Index your Takeout folder (generates DB + thumbnail cache)
+takeout-rater index /path/to/folder-containing-Takeout
+
+# Launch the local web UI
+takeout-rater browse /path/to/folder-containing-Takeout
+# → open http://127.0.0.1:8765/assets in your browser
+```
+
+---
+
 ## Roadmap
 
-| Iteration | Scope |
-|---|---|
-| **0** *(this branch)* | Repo foundation: design docs, ADRs, agent docs, scorer interface, CI |
-| **1** | Indexing, DB, thumbnail cache, minimal browse UI |
-| **2** | Scorer pipeline end-to-end + 1–2 real scorers (aesthetic) |
-| **3** | Clustering, cluster view, best-of-cluster export |
+| Iteration | Scope | Status |
+|---|---|---|
+| **0** | Repo foundation: design docs, ADRs, agent docs, scorer interface, CI | ✅ Done |
+| **1** | Indexing, DB, thumbnail cache, minimal browse UI | ✅ Done |
+| **2** | Scorer pipeline end-to-end + 1–2 real scorers (aesthetic) | Planned |
+| **3** | Clustering, cluster view, best-of-cluster export | Planned |
 
 ---
 
@@ -71,9 +87,13 @@ pytest
 python -m takeout_rater --help
 # or, after installing:
 takeout-rater --help
-```
 
-Sub-commands (`index`, `score`, `browse`, `export`) are implemented in later iterations.
+# Index a Takeout folder
+takeout-rater index /path/to/library-root
+
+# Browse the indexed library in a local web UI
+takeout-rater browse /path/to/library-root [--port 8765]
+```
 
 ---
 
