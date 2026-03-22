@@ -3,13 +3,24 @@ Tests for docs/tools/infer_takeout_sidecar_schema.py
 
 Runs the script in-process against the fixture files in
 tests/fixtures/takeout_sidecars/ and validates the output shape.
+
+Can also be run as a standalone script to inspect a real Takeout folder:
+
+  python tests/test_infer_takeout_sidecar_schema.py <TAKEOUT_DIR>
+
+On Windows, when .py files are associated with an editor, use:
+
+  python tests\\test_infer_takeout_sidecar_schema.py "H:\\Takeout"
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import io
 import json
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -35,9 +46,6 @@ def _load_script() -> ModuleType:
 
 def _run_against_fixtures() -> dict[str, Any]:
     """Execute main() against the fixture directory, capture stdout as JSON."""
-    import io
-    from contextlib import redirect_stdout
-
     mod = _load_script()
 
     # Patch sys.argv so argparse picks up our fixture path
@@ -141,3 +149,79 @@ def test_creation_time_is_required() -> None:
     assert "creationTime" in schema["required"], (
         "creationTime should be required (present in all fixtures)"
     )
+
+
+# ── standalone entrypoint ─────────────────────────────────────────────────────
+
+
+def _print_summary(result: dict[str, Any]) -> None:
+    """Print a concise human-readable summary of the inference result."""
+    inp = result["input"]
+    schema = result["schema"]
+
+    print(f"Takeout sidecar schema inference")
+    print(f"  Root      : {inp['root']}")
+    print(f"  Pattern   : {inp['pattern']}")
+    print(f"  Processed : {inp['files_processed']} files  (ok={inp['ok']}, failed={inp['failed']})")
+    print()
+
+    required = schema.get("required", [])
+    optional = schema.get("optional", [])
+    props = schema.get("properties", {})
+
+    print(f"Top-level properties ({len(props)} total):")
+    for name in sorted(props.keys()):
+        flag = "required" if name in required else "optional"
+        kinds = ", ".join(props[name].get("kinds", []))
+        print(f"  {name:<30} [{flag}]  kinds={kinds}")
+
+
+def main() -> int:
+    """Standalone entrypoint: infer schema from a real Takeout folder and print a summary."""
+    ap = argparse.ArgumentParser(
+        prog="test_infer_takeout_sidecar_schema.py",
+        description=(
+            "Infer a schema from Google Photos Takeout sidecar JSON files and print a summary.\n\n"
+            "On Windows, when .py files are associated with an editor, invoke via:\n"
+            "  python tests\\test_infer_takeout_sidecar_schema.py \"H:\\Takeout\""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "takeout_dir",
+        metavar="TAKEOUT_DIR",
+        help="Root directory of the Takeout folder to scan.",
+    )
+    args = ap.parse_args()
+
+    takeout_path = Path(args.takeout_dir)
+    if not takeout_path.exists():
+        print(f"error: path does not exist: {takeout_path}", file=sys.stderr)
+        return 1
+    if not takeout_path.is_dir():
+        print(f"error: path is not a directory: {takeout_path}", file=sys.stderr)
+        return 1
+
+    mod = _load_script()
+
+    original_argv = sys.argv
+    sys.argv = ["infer_takeout_sidecar_schema.py", str(takeout_path)]
+
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            ret = mod.main()
+    finally:
+        sys.argv = original_argv
+
+    if ret != 0:
+        print("error: inference failed (no sidecar files found?)", file=sys.stderr)
+        return ret
+
+    result = json.loads(buf.getvalue())
+    _print_summary(result)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
