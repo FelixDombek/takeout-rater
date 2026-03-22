@@ -21,8 +21,9 @@ _ORIGIN_KEYS = (
 class SidecarData:
     """Parsed fields from a ``*.supplemental-metadata.json`` sidecar file.
 
-    All fields correspond directly to columns in the ``assets`` table.
-    Optional fields are ``None`` when absent or not applicable.
+    These fields map conceptually to columns in the ``assets`` table, but some
+    require transformation before database insertion (e.g. booleans → 0/1
+    integers; see :func:`~takeout_rater.cli._cmd_index`).
     """
 
     title: str

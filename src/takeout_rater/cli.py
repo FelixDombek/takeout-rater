@@ -80,6 +80,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _bool_to_int(v: bool | None) -> int | None:
+    """Convert an optional bool to the 0/1 integer stored in SQLite."""
+    if v is None:
+        return None
+    return 1 if v else 0
+
+
 def _cmd_index(args: argparse.Namespace) -> int:
     """Execute the ``index`` sub-command."""
     from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
@@ -164,15 +171,9 @@ def _cmd_index(args: argparse.Namespace) -> int:
                     "geo_exif_lat": sidecar.geo_exif_lat,
                     "geo_exif_lon": sidecar.geo_exif_lon,
                     "geo_exif_alt": sidecar.geo_exif_alt,
-                    "favorited": (
-                        1 if sidecar.favorited else 0 if sidecar.favorited is not None else None
-                    ),
-                    "archived": (
-                        1 if sidecar.archived else 0 if sidecar.archived is not None else None
-                    ),
-                    "trashed": (
-                        1 if sidecar.trashed else 0 if sidecar.trashed is not None else None
-                    ),
+                    "favorited": _bool_to_int(sidecar.favorited),
+                    "archived": _bool_to_int(sidecar.archived),
+                    "trashed": _bool_to_int(sidecar.trashed),
                     "origin_type": sidecar.origin_type,
                     "origin_device_type": sidecar.origin_device_type,
                     "origin_device_folder": sidecar.origin_device_folder,
