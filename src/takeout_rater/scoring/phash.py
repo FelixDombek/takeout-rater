@@ -49,16 +49,17 @@ def compute_dhash(image_path: Path, *, hash_size: int = _HASH_SIZE) -> str:
     """
     from PIL import Image  # noqa: PLC0415
 
-    img = Image.open(image_path).convert("L").resize((hash_size + 1, hash_size))
-    px = img.load()
-    bits = 0
-    for idx in range(hash_size * hash_size):
-        row = idx // hash_size
-        col = idx % hash_size
-        left = px[col, row]  # type: ignore[index]
-        right = px[col + 1, row]  # type: ignore[index]
-        if left > right:
-            bits |= 1 << idx
+    with Image.open(image_path) as raw:
+        img = raw.convert("L").resize((hash_size + 1, hash_size))
+        px = img.load()
+        bits = 0
+        for idx in range(hash_size * hash_size):
+            row = idx // hash_size
+            col = idx % hash_size
+            left = px[col, row]  # type: ignore[index]
+            right = px[col + 1, row]  # type: ignore[index]
+            if left > right:
+                bits |= 1 << idx
     hex_chars = hash_size * hash_size // 4
     return f"{bits:0{hex_chars}x}"
 
@@ -116,7 +117,7 @@ def compute_phash_all(
                 phash_hex = compute_dhash(thumb)
                 upsert_phash(conn, aid, phash_hex, algo=_DHASH_ALGO)
                 written += 1
-            except (OSError, ImportError):
+            except OSError:
                 pass
 
         if on_progress is not None:

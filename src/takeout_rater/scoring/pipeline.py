@@ -24,6 +24,7 @@ from takeout_rater.db.queries import (
     bulk_insert_asset_scores,
     finish_scorer_run,
     insert_scorer_run,
+    list_all_asset_ids,
     list_asset_ids_without_score,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
@@ -57,7 +58,10 @@ def run_scorer(
             are scored.
         batch_size: Number of images per ``score_batch()`` call (default 32).
         skip_existing: When ``True`` (default) and ``asset_ids`` is ``None``,
-            skip assets that already have a score for this scorer.
+            skip assets that already have a score for this scorer.  When
+            ``False``, all asset IDs are loaded into memory at once; for very
+            large libraries (100k+ assets) this is still practical since only
+            integer IDs are fetched (no pixel data).
         on_progress: Optional callback invoked after each batch with
             ``(scored_so_far, total)`` integers.
 
@@ -75,9 +79,7 @@ def run_scorer(
             asset_ids = list_asset_ids_without_score(conn, scorer_id, variant_id, first_metric)
         else:
             # Score all assets
-            from takeout_rater.db.queries import list_assets  # noqa: PLC0415
-
-            asset_ids = [a.id for a in list_assets(conn, limit=10_000_000)]
+            asset_ids = list_all_asset_ids(conn)
 
     # Create scorer run record
     run_id = insert_scorer_run(conn, scorer_id, variant_id)

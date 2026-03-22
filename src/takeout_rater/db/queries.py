@@ -554,6 +554,22 @@ def list_asset_ids_without_phash(conn: sqlite3.Connection) -> list[int]:
     return [row[0] for row in rows]
 
 
+def list_all_asset_ids(conn: sqlite3.Connection) -> list[int]:
+    """Return the IDs of all assets ordered by ID.
+
+    This is a lightweight alternative to :func:`list_assets` when only the
+    IDs are needed (e.g. in the scoring pipeline when re-scoring all assets).
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of integer asset IDs.
+    """
+    rows = conn.execute("SELECT id FROM assets ORDER BY id").fetchall()
+    return [row[0] for row in rows]
+
+
 def list_all_phashes(conn: sqlite3.Connection) -> list[tuple[int, str]]:
     """Return all stored perceptual hashes as ``(asset_id, phash_hex)`` pairs.
 

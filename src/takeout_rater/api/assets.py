@@ -108,6 +108,9 @@ def browse_assets(
         if spec.scorer_id != "dummy"
     ]
 
+    # Build a canonical (validated) version of sort_by for use in URLs/templates
+    canonical_sort_by = f"{sort_parsed[0]}:{sort_parsed[1]}" if sort_parsed else None
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "browse.html",
@@ -118,7 +121,7 @@ def browse_assets(
             "total_pages": total_pages,
             "total": total,
             "favorited": favorited,
-            "sort_by": sort_by,
+            "sort_by": canonical_sort_by,
             "sort_options": sort_options,
             "score_map": score_map,
         },
