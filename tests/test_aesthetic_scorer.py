@@ -7,8 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.laion import AestheticScorer, _build_mlp, _EMBEDDING_DIM
-
+from takeout_rater.scorers.adapters.laion import _EMBEDDING_DIM, AestheticScorer, _build_mlp
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed

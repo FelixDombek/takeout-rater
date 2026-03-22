@@ -55,7 +55,7 @@ _EMBEDDING_DIM = 768
 # ---------------------------------------------------------------------------
 
 
-def _build_mlp(input_dim: int) -> "torch.nn.Module":
+def _build_mlp(input_dim: int) -> torch.nn.Module:
     """Return the MLP architecture used by the LAION aesthetic predictor.
 
     The architecture is a 5-layer MLP with dropout, matching the checkpoint
