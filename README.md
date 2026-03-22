@@ -41,8 +41,9 @@ takeout-rater browse /path/to/folder-containing-Takeout
 |---|---|---|
 | **0** | Repo foundation: design docs, ADRs, agent docs, scorer interface, CI | ✅ Done |
 | **1** | Indexing, DB, thumbnail cache, minimal browse UI | ✅ Done |
-| **2** | Scorer pipeline end-to-end + 1–2 real scorers (aesthetic) | Planned |
-| **3** | Clustering, cluster view, best-of-cluster export | Planned |
+| **2** | Scorer pipeline end-to-end + BlurScorer + pHash | ✅ Done |
+| **3** | Clustering, cluster view, best-of-cluster export | ✅ Done |
+| **4** | Aesthetic scorer (ONNX/Torch), sort by aesthetic in UI | Planned |
 
 ---
 

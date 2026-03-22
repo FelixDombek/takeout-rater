@@ -28,8 +28,37 @@ def test_score_subcommand_default_batch_size() -> None:
     assert args.batch_size == 32
 
 
-def test_unimplemented_command_export_returns_nonzero() -> None:
-    assert main(["export"]) == 1
+def test_export_subcommand_is_registered() -> None:
+    """The export sub-command must be listed in the parser."""
+    parser = build_parser()
+    args = parser.parse_args(["export", "/tmp/fake"])
+    assert args.command == "export"
+
+
+def test_cluster_subcommand_is_registered() -> None:
+    """The cluster sub-command must be listed in the parser."""
+    parser = build_parser()
+    args = parser.parse_args(["cluster", "/tmp/fake"])
+    assert args.command == "cluster"
+
+
+def test_cluster_subcommand_default_threshold() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["cluster", "/tmp/fake"])
+    assert args.threshold == 10
+
+
+def test_cluster_subcommand_default_window() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["cluster", "/tmp/fake"])
+    assert args.window == 200
+
+
+def test_cluster_subcommand_custom_params() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["cluster", "--threshold", "5", "--window", "50", "/tmp/fake"])
+    assert args.threshold == 5
+    assert args.window == 50
 
 
 def test_index_subcommand_is_registered() -> None:

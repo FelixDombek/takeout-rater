@@ -563,9 +563,7 @@ def list_all_phashes(conn: sqlite3.Connection) -> list[tuple[int, str]]:
     Returns:
         List of ``(asset_id, phash_hex)`` tuples ordered by ``asset_id``.
     """
-    rows = conn.execute(
-        "SELECT asset_id, phash_hex FROM phash ORDER BY asset_id"
-    ).fetchall()
+    rows = conn.execute("SELECT asset_id, phash_hex FROM phash ORDER BY asset_id").fetchall()
     return [(row[0], row[1]) for row in rows]
 
 
@@ -633,14 +631,13 @@ def delete_clusters_by_method_params(
     ).fetchall()
     cluster_ids = [row[0] for row in rows]
     if cluster_ids:
-        placeholders = ",".join("?" * len(cluster_ids))
-        conn.execute(
-            f"DELETE FROM cluster_members WHERE cluster_id IN ({placeholders})",  # noqa: S608
-            cluster_ids,
+        conn.executemany(
+            "DELETE FROM cluster_members WHERE cluster_id = ?",
+            [(cid,) for cid in cluster_ids],
         )
-        conn.execute(
-            f"DELETE FROM clusters WHERE id IN ({placeholders})",  # noqa: S608
-            cluster_ids,
+        conn.executemany(
+            "DELETE FROM clusters WHERE id = ?",
+            [(cid,) for cid in cluster_ids],
         )
         conn.commit()
     return len(cluster_ids)

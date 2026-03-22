@@ -109,8 +109,75 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of images per scoring batch (default: 32).",
     )
 
-    # Placeholders – implementation comes in later iterations
-    sub.add_parser("export", help="(Iteration 3) Copy selected assets to an export folder")
+    # cluster
+    cluster_parser = sub.add_parser(
+        "cluster", help="Group near-duplicate photos by perceptual hash"
+    )
+    cluster_parser.add_argument(
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder (same as used with 'index').",
+    )
+    cluster_parser.add_argument(
+        "--threshold",
+        type=int,
+        default=10,
+        metavar="T",
+        help=(
+            "Maximum Hamming distance (out of 64 bits) to consider two images near-duplicates"
+            " (default: 10)."
+        ),
+    )
+    cluster_parser.add_argument(
+        "--window",
+        type=int,
+        default=200,
+        metavar="W",
+        help=(
+            "Sliding-window size over sorted hashes; larger values find more pairs at higher"
+            " CPU cost (default: 200)."
+        ),
+    )
+    cluster_parser.add_argument(
+        "--min-size",
+        type=int,
+        default=2,
+        metavar="N",
+        help="Minimum cluster size to store (default: 2; singletons are discarded).",
+    )
+
+    # export
+    export_parser = sub.add_parser("export", help="Copy best-of-cluster photos to an export folder")
+    export_parser.add_argument(
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder.",
+    )
+    export_parser.add_argument(
+        "--scorer",
+        metavar="SCORER_ID",
+        default=None,
+        help=(
+            "Scorer ID to rank cluster members by (e.g. 'blur').  "
+            "The representative with the highest score is exported."
+            "  If omitted, the cluster representative (lowest asset ID) is used."
+        ),
+    )
+    export_parser.add_argument(
+        "--metric",
+        metavar="METRIC_KEY",
+        default=None,
+        help="Metric key to use for ranking (required when --scorer is given).",
+    )
+    export_parser.add_argument(
+        "--out",
+        metavar="DIR",
+        default=None,
+        help=(
+            "Destination directory for exported files.  "
+            "Defaults to <library_root>/takeout-rater/exports/."
+        ),
+    )
 
     return parser
 
@@ -373,6 +440,153 @@ def _cmd_browse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_cluster(args: argparse.Namespace) -> int:
+    """Execute the ``cluster`` sub-command."""
+    from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
+    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+
+    library_root = Path(args.library_root).resolve()
+    db_path = library_root / "takeout-rater" / "library.sqlite"
+
+    if not db_path.exists():
+        print(
+            f"error: no library database found at {db_path}\n"
+            "       Run 'takeout-rater index <library_root>' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    conn = open_library_db(library_root)
+
+    print(f"Building clusters (threshold={args.threshold} bits, window={args.window}) …")
+
+    def _progress(done: int, total: int) -> None:
+        print(f"  {done}/{total}", end="\r", flush=True)
+
+    n_clusters = build_clusters(
+        conn,
+        threshold=args.threshold,
+        window=args.window,
+        min_cluster_size=args.min_size,
+        on_progress=_progress,
+    )
+    print(f"\nFound {n_clusters} cluster(s).")
+    conn.close()
+    return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Execute the ``export`` sub-command.
+
+    Copies the best representative from each cluster to the export directory.
+    When no scorer is specified, uses the cluster representative (lowest asset ID).
+    """
+    import shutil  # noqa: PLC0415
+
+    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.queries import (  # noqa: PLC0415
+        get_asset_by_id,
+        get_asset_scores,
+        get_cluster_members,
+        list_clusters_with_representatives,
+    )
+
+    library_root = Path(args.library_root).resolve()
+    db_path = library_root / "takeout-rater" / "library.sqlite"
+
+    if not db_path.exists():
+        print(
+            f"error: no library database found at {db_path}\n"
+            "       Run 'takeout-rater index <library_root>' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.scorer and not args.metric:
+        print(
+            "error: --metric is required when --scorer is specified.",
+            file=sys.stderr,
+        )
+        return 1
+
+    conn = open_library_db(library_root)
+    state_dir = library_state_dir(library_root)
+    takeout_root = library_root / "Takeout"
+
+    export_dir = Path(args.out).resolve() if args.out else state_dir / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check there are any clusters before iterating
+    from takeout_rater.db.queries import count_clusters  # noqa: PLC0415
+
+    if count_clusters(conn) == 0:
+        print("No clusters found.  Run 'takeout-rater cluster <library_root>' first.")
+        conn.close()
+        return 0
+
+    copied = 0
+    skipped = 0
+    _EXPORT_BATCH = 200
+
+    offset = 0
+    while True:
+        clusters = list_clusters_with_representatives(conn, limit=_EXPORT_BATCH, offset=offset)
+        if not clusters:
+            break
+        offset += len(clusters)
+
+        for cluster_info in clusters:
+            cluster_id = cluster_info["cluster_id"]
+            members = get_cluster_members(conn, cluster_id)
+
+            if args.scorer and args.metric:
+                # Pick member with highest score for the given scorer+metric
+                best_asset_id: int | None = None
+                best_score: float = float("-inf")
+                for asset, _dist, _is_rep in members:
+                    scores = get_asset_scores(conn, asset.id)
+                    for s in scores:
+                        if s["scorer_id"] == args.scorer and s["metric_key"] == args.metric:
+                            if s["value"] > best_score:
+                                best_score = s["value"]
+                                best_asset_id = asset.id
+                            break
+                if best_asset_id is None:
+                    # Fall back to representative if no scores available
+                    best_asset_id = next(
+                        (a.id for a, _d, is_rep in members if is_rep),
+                        members[0][0].id if members else None,
+                    )
+            else:
+                # Use representative (first is_rep=True member)
+                best_asset_id = next(
+                    (a.id for a, _d, is_rep in members if is_rep),
+                    members[0][0].id if members else None,
+                )
+
+            if best_asset_id is None:
+                continue
+
+            asset = get_asset_by_id(conn, best_asset_id)
+            if asset is None:
+                continue
+
+            src = takeout_root / asset.relpath
+            if not src.exists():
+                skipped += 1
+                continue
+
+            dest = export_dir / f"cluster{cluster_id:06d}_{asset.filename}"
+            shutil.copy2(src, dest)
+            copied += 1
+
+    conn.close()
+    print(f"Exported {copied} file(s) to {export_dir}")
+    if skipped:
+        print(f"  ({skipped} file(s) skipped — originals not found)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -389,6 +603,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "browse":
         return _cmd_browse(args)
+
+    if args.command == "cluster":
+        return _cmd_cluster(args)
+
+    if args.command == "export":
+        return _cmd_export(args)
 
     print(f"Command '{args.command}' is not yet implemented (see roadmap in README).")
     return 1
