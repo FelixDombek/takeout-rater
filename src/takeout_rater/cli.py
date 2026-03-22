@@ -246,11 +246,15 @@ def _cmd_index(args: argparse.Namespace) -> int:
 
 def _cmd_score(args: argparse.Namespace) -> int:
     """Execute the ``score`` sub-command."""
-    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import (  # noqa: PLC0415
+        library_db_path,
+        library_state_dir,
+        open_library_db,
+    )
     from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
 
     library_root = Path(args.library_root).resolve()
-    db_path = library_root / "takeout-rater" / "library.sqlite"
+    db_path = library_db_path(library_root)
 
     if not db_path.exists():
         print(
@@ -348,7 +352,9 @@ def _cmd_browse(args: argparse.Namespace) -> int:
         return 1
 
     library_root = Path(args.library_root).resolve()
-    db_path = library_root / "takeout-rater" / "library.sqlite"
+    from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
+
+    db_path = library_db_path(library_root)
 
     if not db_path.exists():
         print(
@@ -358,7 +364,6 @@ def _cmd_browse(args: argparse.Namespace) -> int:
         )
         return 1
 
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
     from takeout_rater.ui.app import create_app  # noqa: PLC0415
 
     conn = open_library_db(library_root)

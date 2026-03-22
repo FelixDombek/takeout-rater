@@ -49,16 +49,17 @@ def compute_dhash(image_path: Path, *, hash_size: int = _HASH_SIZE) -> str:
     """
     from PIL import Image  # noqa: PLC0415
 
-    img = Image.open(image_path).convert("L").resize((hash_size + 1, hash_size))
-    px = img.load()
-    bits = 0
-    for idx in range(hash_size * hash_size):
-        row = idx // hash_size
-        col = idx % hash_size
-        left = px[col, row]  # type: ignore[index]
-        right = px[col + 1, row]  # type: ignore[index]
-        if left > right:
-            bits |= 1 << idx
+    with Image.open(image_path) as img:
+        img = img.convert("L").resize((hash_size + 1, hash_size))
+        px = img.load()
+        bits = 0
+        for idx in range(hash_size * hash_size):
+            row = idx // hash_size
+            col = idx % hash_size
+            left = px[col, row]  # type: ignore[index]
+            right = px[col + 1, row]  # type: ignore[index]
+            if left > right:
+                bits |= 1 << idx
     hex_chars = hash_size * hash_size // 4
     return f"{bits:0{hex_chars}x}"
 
@@ -99,9 +100,26 @@ def compute_phash_all(
 
     Returns:
         Number of hashes successfully written.
+
+    Raises:
+        ImportError: If Pillow is not installed.
     """
+    # Verify Pillow is available up-front so callers get a clear error message
+    # rather than silently writing 0 hashes.
+    try:
+        from PIL import Image  # noqa: F401, PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "Pillow is required for perceptual hash computation. "
+            "Install it with: pip install Pillow"
+        ) from exc
+
     if asset_ids is None:
         asset_ids = list_asset_ids_without_phash(conn)
+
+    import logging  # noqa: PLC0415
+
+    logger = logging.getLogger(__name__)
 
     total = len(asset_ids)
     written = 0
@@ -116,8 +134,8 @@ def compute_phash_all(
                 phash_hex = compute_dhash(thumb)
                 upsert_phash(conn, aid, phash_hex, algo=_DHASH_ALGO)
                 written += 1
-            except (OSError, ImportError):
-                pass
+            except OSError as exc:
+                logger.warning("Could not compute dhash for asset %d (%s): %s", aid, thumb, exc)
 
         if on_progress is not None:
             on_progress(min(batch_start + batch_size, total), total)
