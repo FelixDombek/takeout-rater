@@ -1,6 +1,6 @@
 # Design: takeout-rater
 
-*Last updated: 2026-03 (Iteration 4 complete)*
+*Last updated: 2026-03 (Iteration 5 complete)*
 
 ---
 
@@ -204,4 +204,4 @@ If a HEIC loader is unavailable, the asset is indexed but marked `unsupported/sk
 | **2** ✅ | Scorer framework end-to-end: scoring pipeline, BlurScorer + DummyScorer wired to DB, pHash computation, `score` CLI command, score display in UI |
 | **3** ✅ | Clustering: pHash-based cluster builder, cluster persistence, cluster view in UI, best-of-cluster `export` CLI command |
 | **4** ✅ | Aesthetic scorer: LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP) as optional scorer, `aesthetic` metric (0–10), sort-by-aesthetic in UI via `aesthetic` extra |
-| **5** | NSFW / quality filter: NSFW detector wired as an optional scorer, filter-by-score range in UI, view presets saved to DB |
+| **5** ✅ | NSFW / quality filter: NSFW detector wired as an optional scorer, filter-by-score range in UI, view presets saved to DB |

@@ -68,13 +68,43 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    flex-wrap: wrap;
   }
   .sort-form label { font-size: 0.875rem; color: #555; }
-  .sort-form select {
+  .sort-form select, .sort-form input[type="number"] {
     font-size: 0.875rem;
     padding: 0.25rem 0.4rem;
     border: 1px solid #ccc;
     border-radius: 4px;
+  }
+  .sort-form input[type="number"] { width: 5.5rem; }
+
+  .presets-form {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .presets-form label { font-size: 0.875rem; color: #555; }
+  .presets-form select {
+    font-size: 0.875rem;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+
+  .save-preset-form {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .save-preset-form input[type="text"] {
+    font-size: 0.875rem;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 9rem;
   }
 
   .pagination {
@@ -113,12 +143,13 @@
     {% endif %}
     {% if favorited == "1" %}&nbsp;(favorites only){% endif %}
     {% if sort_by %}&nbsp;· sorted by score{% endif %}
+    {% if min_score is not none or max_score is not none %}&nbsp;· filtered by range{% endif %}
   </span>
 
   {% if favorited == "1" %}
-    <a class="btn" href="/assets?page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}">All photos</a>
+    <a class="btn" href="/assets?page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">All photos</a>
   {% else %}
-    <a class="btn" href="/assets?favorited=1&page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}">⭐ Favorites only</a>
+    <a class="btn" href="/assets?favorited=1&page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">⭐ Favorites only</a>
   {% endif %}
 
   {% if sort_options %}
@@ -132,6 +163,42 @@
       <option value="{{ value }}"{% if sort_by == value %} selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
+    {% if sort_by %}
+    <label for="min_score_in">Min:</label>
+    <input type="number" id="min_score_in" name="min_score" step="any"
+           placeholder="—" value="{{ min_score if min_score is not none else '' }}">
+    <label for="max_score_in">Max:</label>
+    <input type="number" id="max_score_in" name="max_score" step="any"
+           placeholder="—" value="{{ max_score if max_score is not none else '' }}">
+    <button type="submit" class="btn">Apply</button>
+    {% endif %}
+  </form>
+  {% endif %}
+</div>
+
+{# ── Preset toolbar ──────────────────────────────────────────────────────── #}
+<div class="toolbar" style="margin-top:-0.75rem; margin-bottom:1rem;">
+  {% if presets %}
+  <form class="presets-form" method="get" action="/assets" id="load-preset-form">
+    <label for="preset_sel">📂 Preset:</label>
+    <select id="preset_sel" onchange="loadPreset(this)">
+      <option value="">— load preset —</option>
+      {% for p in presets %}
+      <option value="{{ p.id }}"
+              data-sort-by="{{ p.sort_by or '' }}"
+              data-favorited="{{ p.favorited or '' }}"
+              data-min-score="{{ p.min_score if p.min_score is not none else '' }}"
+              data-max-score="{{ p.max_score if p.max_score is not none else '' }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  {% endif %}
+
+  {% if sort_by %}
+  <form class="save-preset-form" id="save-preset-form">
+    <label for="preset_name_in">💾 Save as:</label>
+    <input type="text" id="preset_name_in" placeholder="Preset name" maxlength="80">
+    <button type="button" class="btn" onclick="savePreset()">Save</button>
   </form>
   {% endif %}
 </div>
@@ -176,14 +243,56 @@
 {% if total_pages > 1 %}
 <nav class="pagination" aria-label="Pagination">
   {% if page > 1 %}
-    <a class="btn" href="/assets?page={{ page - 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}">← Prev</a>
+    <a class="btn" href="/assets?page={{ page - 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">← Prev</a>
   {% endif %}
 
   <span class="current-page">{{ page }} / {{ total_pages }}</span>
 
   {% if page < total_pages %}
-    <a class="btn" href="/assets?page={{ page + 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}">Next →</a>
+    <a class="btn" href="/assets?page={{ page + 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">Next →</a>
   {% endif %}
 </nav>
 {% endif %}
+
+<script>
+function loadPreset(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt.value) return;
+  const params = new URLSearchParams();
+  params.set("page", "1");
+  const sortBy = opt.dataset.sortBy;
+  if (sortBy) params.set("sort_by", sortBy);
+  const fav = opt.dataset.favorited;
+  if (fav) params.set("favorited", fav);
+  const minS = opt.dataset.minScore;
+  if (minS !== "") params.set("min_score", minS);
+  const maxS = opt.dataset.maxScore;
+  if (maxS !== "") params.set("max_score", maxS);
+  window.location.href = "/assets?" + params.toString();
+}
+
+function savePreset() {
+  const nameEl = document.getElementById("preset_name_in");
+  const name = nameEl ? nameEl.value.trim() : "";
+  if (!name) { alert("Please enter a preset name."); return; }
+  const body = {
+    name: name,
+    sort_by: {{ (sort_by | tojson) if sort_by else "null" }},
+    favorited: {{ "1" if favorited == "1" else "null" }},
+    min_score: {{ min_score | tojson if min_score is not none else "null" }},
+    max_score: {{ max_score | tojson if max_score is not none else "null" }},
+  };
+  fetch("/api/presets", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  }).then(r => {
+    if (r.ok) {
+      window.location.reload();
+    } else {
+      r.json().then(d => alert("Error: " + (d.detail || r.status)));
+    }
+  }).catch(e => alert("Error: " + e));
+}
+</script>
 {% endblock %}

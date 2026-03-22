@@ -36,6 +36,8 @@ takeout-rater/
 | `scorers/heuristics/dummy.py` | Trivial constant scorer — used in tests |
 | `scorers/heuristics/blur.py` | Laplacian variance sharpness scorer (Pillow-based) |
 | `scorers/adapters/` | ML/external-tool scorer wrappers (optional deps) |
+| `scorers/adapters/laion.py` | LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP, 0–10 scale) |
+| `scorers/adapters/nsfw.py` | NSFW detector (Falconsai ViT classifier, 0–1 probability) |
 | `scoring/` | Scoring pipeline and pHash computation |
 | `scoring/pipeline.py` | `run_scorer()` — runs a scorer, writes to `scorer_runs` + `asset_scores` |
 | `scoring/phash.py` | `compute_dhash()`, `compute_phash_all()` — pHash via dhash algorithm |
@@ -46,13 +48,15 @@ takeout-rater/
 | `db/` | SQLite schema, migrations, and query helpers |
 | `db/schema.py` | Migration runner (`migrate()`) |
 | `db/connection.py` | `open_library_db()` — open / create the library database |
-| `db/queries.py` | `upsert_asset()`, `list_assets()`, `count_assets()`, scoring helpers, pHash helpers |
+| `db/queries.py` | `upsert_asset()`, `list_assets()`, `count_assets()`, scoring helpers, pHash helpers, preset helpers |
 | `db/migrations/` | Numbered SQL migration files |
 | `api/` | FastAPI routers |
 | `api/assets.py` | Routes: `GET /assets`, `GET /assets/{id}`, `GET /thumbs/{id}` |
+| `api/clusters.py` | Routes: `GET /clusters`, `GET /clusters/{id}` |
+| `api/presets.py` | Routes: `GET/POST /api/presets`, `DELETE /api/presets/{id}` |
 | `ui/` | Jinja2 application factory + HTML templates |
 | `ui/app.py` | `create_app()` — FastAPI + Jinja2 setup |
-| `ui/templates/` | `base.html`, `browse.html`, `detail.html` |
+| `ui/templates/` | `base.html`, `browse.html`, `detail.html`, `clusters.html`, `cluster_detail.html` |
 
 ---
 
@@ -61,7 +65,7 @@ takeout-rater/
 | Task | Location |
 |---|---|
 | New heuristic scorer | `src/takeout_rater/scorers/heuristics/<name>.py` + entry in `registry.py` |
-| New ML/adapter scorer | `src/takeout_rater/scorers/adapters/<name>/` + entry in `registry.py` |
+| New ML/adapter scorer | `src/takeout_rater/scorers/adapters/<name>.py` + entry in `registry.py` |
 | New CLI sub-command | `src/takeout_rater/cli.py` |
 | New API route | `src/takeout_rater/api/<router>.py` |
 | New Jinja2 template | `src/takeout_rater/ui/templates/<name>.html` |

@@ -213,3 +213,120 @@ def test_cluster_detail_shows_rep_badge(client_with_clusters: TestClient) -> Non
 def test_browse_page_has_clusters_nav_link(client: TestClient) -> None:
     resp = client.get("/assets")
     assert "/clusters" in resp.text
+
+
+# ── score range filter ────────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def client_with_scores(tmp_path: Path) -> TestClient:
+    from takeout_rater.db.queries import (  # noqa: PLC0415
+        bulk_insert_asset_scores,
+        finish_scorer_run,
+        insert_scorer_run,
+    )
+
+    conn = _make_db()
+    ids = [_add_asset(conn, f"Photos/img{i}.jpg") for i in range(5)]
+    run_id = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    app = create_app(tmp_path, conn)
+    return TestClient(app, follow_redirects=True)
+
+
+def test_browse_with_sort_by_score_returns_200(client_with_scores: TestClient) -> None:
+    resp = client_with_scores.get("/assets?sort_by=blur:sharpness")
+    assert resp.status_code == 200
+
+
+def test_browse_min_score_filter_reduces_count(client_with_scores: TestClient) -> None:
+    client_with_scores.get("/assets?sort_by=blur:sharpness")
+    resp_filtered = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=40")
+    # Page with min_score should mention fewer photos
+    assert resp_filtered.status_code == 200
+    # Check that the filtered page doesn't have the full count
+    assert "5 photos" not in resp_filtered.text
+
+
+def test_browse_max_score_filter_reduces_count(client_with_scores: TestClient) -> None:
+    resp_filtered = client_with_scores.get("/assets?sort_by=blur:sharpness&max_score=20")
+    assert resp_filtered.status_code == 200
+    assert "5 photos" not in resp_filtered.text
+
+
+def test_browse_score_range_shows_filter_indicator(client_with_scores: TestClient) -> None:
+    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=40")
+    assert "filtered by range" in resp.text
+
+
+# ── preset API ────────────────────────────────────────────────────────────────
+
+
+def test_api_presets_list_empty(client: TestClient) -> None:
+    resp = client.get("/api/presets")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_api_presets_create(client: TestClient) -> None:
+    resp = client.post(
+        "/api/presets",
+        json={"name": "High Aesthetic", "sort_by": "aesthetic:aesthetic", "min_score": 7.0},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "High Aesthetic"
+    assert data["sort_by"] == "aesthetic:aesthetic"
+    assert data["min_score"] == pytest.approx(7.0)
+    assert "id" in data
+
+
+def test_api_presets_list_after_create(client: TestClient) -> None:
+    client.post("/api/presets", json={"name": "P1"})
+    client.post("/api/presets", json={"name": "P2"})
+    resp = client.get("/api/presets")
+    names = [p["name"] for p in resp.json()]
+    assert "P1" in names
+    assert "P2" in names
+
+
+def test_api_presets_upsert_updates_existing(client: TestClient) -> None:
+    r1 = client.post("/api/presets", json={"name": "X", "sort_by": "blur:sharpness"})
+    r2 = client.post("/api/presets", json={"name": "X", "sort_by": "aesthetic:aesthetic"})
+    assert r1.json()["id"] == r2.json()["id"]
+    assert r2.json()["sort_by"] == "aesthetic:aesthetic"
+
+
+def test_api_presets_delete(client: TestClient) -> None:
+    create_resp = client.post("/api/presets", json={"name": "To Delete"})
+    preset_id = create_resp.json()["id"]
+    del_resp = client.delete(f"/api/presets/{preset_id}")
+    assert del_resp.status_code == 204
+    list_resp = client.get("/api/presets")
+    assert all(p["id"] != preset_id for p in list_resp.json())
+
+
+def test_api_presets_delete_not_found(client: TestClient) -> None:
+    resp = client.delete("/api/presets/99999")
+    assert resp.status_code == 404
+
+
+def test_api_presets_blank_name_rejected(client: TestClient) -> None:
+    resp = client.post("/api/presets", json={"name": "   "})
+    assert resp.status_code == 422
+
+
+def test_browse_shows_preset_dropdown_when_presets_exist(client: TestClient) -> None:
+    client.post("/api/presets", json={"name": "My Preset", "sort_by": "blur:sharpness"})
+    resp = client.get("/assets")
+    assert "My Preset" in resp.text
+
+
+def test_browse_shows_save_preset_button_when_sort_active(
+    client_with_scores: TestClient,
+) -> None:
+    resp = client_with_scores.get("/assets?sort_by=blur:sharpness")
+    assert "Save as" in resp.text
