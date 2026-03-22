@@ -33,8 +33,10 @@ There is no good local tool to:
 
 ```
 Takeout/                          ← immutable Google Photos archive
-  Albums/
-  Photos from YYYY/
+  Google Photos/                  ← localized app name (new format; may also be
+    Albums/                          "Google Fotos", "Google Foto", etc.)
+    Photos from YYYY/
+  Photos from YYYY/               ← old format: album dirs directly in Takeout/
   *.supplemental-metadata.json
 
 takeout-rater/                    ← sibling directory, all mutable state
