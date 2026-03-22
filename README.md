@@ -8,6 +8,51 @@ and exports — without ever modifying the original archive.
 
 ---
 
+## Quickstart (one command)
+
+```bash
+git clone https://github.com/FelixDombek/takeout-rater.git
+cd takeout-rater
+
+# macOS / Linux
+./run
+
+# Windows
+run.bat
+```
+
+The launcher will:
+1. Create a local Python virtual environment (`.venv/`) and install dependencies on first run.
+2. Start the local web server.
+3. Open your browser automatically.
+
+**First time:** the browser will show a setup page.
+Click **Browse…** (or type the path) to select the directory that *contains*
+your `Takeout/` folder, then click **Save & continue**.
+
+After indexing (see below), the browser shows your full photo library.
+
+### Indexing your Takeout folder
+
+The launcher starts the UI but does not index your photos automatically.
+Run this once after setting the Takeout path:
+
+```bash
+# macOS / Linux  (uses the venv Python)
+.venv/bin/python -m takeout_rater index /path/to/folder-containing-Takeout
+
+# Windows
+.venv\Scripts\python -m takeout_rater index C:\path\to\folder-containing-Takeout
+```
+
+### Changing the Takeout folder path
+
+Open the browser and navigate to **http://127.0.0.1:8765/setup**,
+or click the ⚙ setup link in the header when present.
+Enter the new path and click **Save & continue**.
+
+---
+
 ## What it does
 
 - **Indexes** your Google Photos Takeout in place (read-only)
@@ -19,7 +64,7 @@ See [`docs/design.md`](docs/design.md) for the full architecture overview.
 
 ---
 
-## Quick start
+## Developer quick start (manual install)
 
 ```bash
 # Install

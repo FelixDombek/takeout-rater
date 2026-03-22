@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block title %}Setup – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .setup-card {
+    max-width: 600px;
+    margin: 3rem auto;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.1);
+    padding: 2rem 2.5rem;
+  }
+  .setup-card h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+  .setup-card p  { color: #555; margin-bottom: 1.25rem; line-height: 1.6; }
+
+  .path-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .path-row input[type=text] {
+    flex: 1;
+    padding: 0.45rem 0.65rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    font-family: monospace;
+  }
+  .path-row input[type=text]:focus {
+    outline: none;
+    border-color: #1a5cdb;
+    box-shadow: 0 0 0 2px rgba(26,92,219,.2);
+  }
+
+  .hint { font-size: 0.82rem; color: #888; margin-bottom: 1.25rem; }
+
+  .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
+
+  #status-msg {
+    margin-top: 1rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    display: none;
+  }
+  #status-msg.ok    { background: #e6f4ea; color: #1e7e34; display: block; }
+  #status-msg.error { background: #fde8e8; color: #c0392b; display: block; }
+
+  .change-section {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid #eee;
+  }
+  .change-section h2 { font-size: 1rem; color: #444; margin-bottom: 0.5rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="setup-card">
+  <h1>📁 Select your Takeout folder</h1>
+  <p>
+    takeout-rater needs to know where your Google Photos Takeout export lives.<br>
+    Point it at the directory that <strong>contains</strong> the <code>Takeout/</code> folder
+    (not the <code>Takeout/</code> folder itself).
+  </p>
+
+  <div class="path-row">
+    <input
+      type="text"
+      id="path-input"
+      placeholder="/Users/you/Downloads/takeout-export"
+      value="{{ current_path or '' }}"
+      autocomplete="off"
+      spellcheck="false"
+    >
+    <button class="btn" id="btn-pick" title="Open folder browser">Browse…</button>
+  </div>
+  <p class="hint">
+    Example: if your archive lives at <code>/Users/you/takeout/Takeout/Photos from 2023/…</code>
+    then enter <code>/Users/you/takeout</code>.
+  </p>
+
+  <div class="actions">
+    <button class="btn btn-primary" id="btn-save">Save &amp; continue</button>
+    {% if current_path %}
+    <a class="btn" href="/assets">← Back to library</a>
+    {% endif %}
+  </div>
+
+  <div id="status-msg"></div>
+
+  {% if current_path %}
+  <div class="change-section">
+    <h2>Current folder</h2>
+    <p style="font-family:monospace; font-size:0.9rem; color:#333; word-break:break-all;">
+      {{ current_path }}
+    </p>
+    <p style="font-size:0.85rem; color:#666;">
+      You can change the folder at any time by entering a new path above and clicking
+      <em>Save &amp; continue</em>.
+    </p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  var btnPick  = document.getElementById('btn-pick');
+  var btnSave  = document.getElementById('btn-save');
+  var pathInput = document.getElementById('path-input');
+  var statusMsg = document.getElementById('status-msg');
+
+  function showStatus(msg, isError) {
+    statusMsg.textContent = msg;
+    statusMsg.className = isError ? 'error' : 'ok';
+  }
+
+  // Native folder picker (Tkinter on host)
+  btnPick.addEventListener('click', function () {
+    btnPick.disabled = true;
+    btnPick.textContent = 'Opening…';
+    fetch('/api/config/open-picker', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.path) {
+          pathInput.value = data.path;
+          showStatus('Folder selected: ' + data.path, false);
+        } else if (data.detail) {
+          // Tkinter unavailable — just let the user type
+          showStatus('Native picker unavailable: ' + data.detail + '  Please type the path below.', true);
+        }
+      })
+      .catch(function () {
+        showStatus('Could not open folder picker. Please type the path manually.', true);
+      })
+      .finally(function () {
+        btnPick.disabled = false;
+        btnPick.textContent = 'Browse…';
+      });
+  });
+
+  // Save path
+  btnSave.addEventListener('click', function () {
+    var path = pathInput.value.trim();
+    if (!path) {
+      showStatus('Please enter or select a folder path first.', true);
+      return;
+    }
+    btnSave.disabled = true;
+    fetch('/api/config/takeout-path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path })
+    })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (d) { throw new Error(d.detail || r.statusText); });
+        }
+        return r.json();
+      })
+      .then(function (data) {
+        showStatus('✓ Folder saved! Redirecting…', false);
+        // Wait 1.2 s so the user can read the confirmation, then go to the library.
+        setTimeout(function () { window.location.href = '/'; }, 1200);
+      })
+      .catch(function (err) {
+        showStatus('Error: ' + err.message, true);
+      })
+      .finally(function () {
+        btnSave.disabled = false;
+      });
+  });
+
+  // Allow pressing Enter in the text field to trigger Save
+  pathInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { btnSave.click(); }
+  });
+})();
+</script>
+{% endblock %}
