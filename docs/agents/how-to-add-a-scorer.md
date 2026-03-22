@@ -129,3 +129,5 @@ See `docs/agents/definition-of-done.md` before opening a PR.
 - `scorer_id` must be **stable** — it is stored in the DB.  Changing it will orphan existing scores.
 - `variant_id` is also stored per `scorer_run`.  Add a new variant rather than renaming an existing one when upgrading a model.
 - Multi-metric scorers should document what each metric measures in the `MetricSpec.description`.
+- Scorers are run via the scoring pipeline (`takeout_rater.scoring.pipeline.run_scorer`).  They do not need to know about DB internals.
+- See `tests/test_blur_scorer.py` for a complete example of scorer tests using a real PIL image.

@@ -15,8 +15,17 @@ def test_no_command_returns_zero() -> None:
     assert main([]) == 0
 
 
-def test_unimplemented_command_score_returns_nonzero() -> None:
-    assert main(["score"]) == 1
+def test_score_subcommand_is_registered() -> None:
+    """The score sub-command must be listed in the parser."""
+    parser = build_parser()
+    args = parser.parse_args(["score", "/tmp/fake"])
+    assert args.command == "score"
+
+
+def test_score_subcommand_default_batch_size() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["score", "/tmp/fake"])
+    assert args.batch_size == 32
 
 
 def test_unimplemented_command_export_returns_nonzero() -> None:
