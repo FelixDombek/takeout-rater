@@ -27,6 +27,7 @@ web = [
 aesthetic = [
     "torch>=2.2",
     "torchvision>=0.17",
+    "open-clip-torch>=2.24",
     "Pillow>=10.0",
     "huggingface-hub>=0.20",
 ]

@@ -94,7 +94,7 @@ takeout-rater browse /path/to/folder-containing-Takeout
 | **1** | Indexing, DB, thumbnail cache, minimal browse UI | ✅ Done |
 | **2** | Scorer pipeline end-to-end + BlurScorer + pHash | ✅ Done |
 | **3** | Clustering, cluster view, best-of-cluster export | ✅ Done |
-| **4** | Aesthetic scorer (ONNX/Torch), sort by aesthetic in UI | Planned |
+| **4** | Aesthetic scorer (ONNX/Torch), sort by aesthetic in UI | ✅ Done |
 
 ---
 
@@ -165,4 +165,3 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) and the agent enablement docs in
 ## License
 
 GPL-3.0-only — see [`LICENSE`](LICENSE).
-

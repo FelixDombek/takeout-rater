@@ -9,21 +9,19 @@ See ``docs/agents/how-to-add-a-scorer.md`` for the step-by-step workflow.
 
 from __future__ import annotations
 
-from takeout_rater.scorers.base import BaseScorer, ScorerSpec
-
 # ---------------------------------------------------------------------------
 # Explicit scorer class list
 # Add your scorer class here after creating it.
 # ---------------------------------------------------------------------------
+from takeout_rater.scorers.adapters.laion import AestheticScorer
+from takeout_rater.scorers.base import BaseScorer, ScorerSpec
 from takeout_rater.scorers.heuristics.blur import BlurScorer
 from takeout_rater.scorers.heuristics.dummy import DummyScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
     DummyScorer,
     BlurScorer,
-    # Add more scorers here, e.g.:
-    # from takeout_rater.scorers.adapters.laion import LaionAestheticScorer
-    # LaionAestheticScorer,
+    AestheticScorer,
 ]
 
 
