@@ -30,6 +30,12 @@ The launcher will:
 Click **Browse…** (or type the path) to select the directory that *contains*
 your `Takeout/` folder, then click **Save & continue**.
 
+> **Note:** Depending on your export settings, your photos may be nested under
+> `Takeout/Photos from YYYY/` directly, or under a localized subdirectory such
+> as `Takeout/Google Photos/` or `Takeout/Google Fotos/`.  Either way, point
+> takeout-rater at the folder that *contains* `Takeout/` — it will find your
+> photos automatically and skip unrelated Google product data.
+
 After indexing (see below), the browser shows your full photo library.
 
 ### Indexing your Takeout folder
