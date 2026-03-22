@@ -1,9 +1,33 @@
-"""Database package (placeholder).
+"""Database package: SQLite schema, migrations, and query helpers.
 
-Iteration 1 will add:
-- SQLite schema definitions (assets, albums, scorer_runs, asset_scores, …)
-- Migration helpers
-- Query utilities
+Public API
+----------
+- :func:`~takeout_rater.db.connection.open_library_db` — open / create the DB
+- :func:`~takeout_rater.db.connection.library_state_dir` — locate the state dir
+- :func:`~takeout_rater.db.queries.upsert_asset` — insert or update an asset
+- :func:`~takeout_rater.db.queries.get_asset_by_id` — fetch one asset by ID
+- :func:`~takeout_rater.db.queries.list_assets` — paginated asset listing
+- :func:`~takeout_rater.db.queries.count_assets` — total matching asset count
+- :class:`~takeout_rater.db.queries.AssetRow` — typed asset row dataclass
 
 See ``docs/agents/db-guidelines.md`` for conventions.
 """
+
+from takeout_rater.db.connection import library_state_dir, open_library_db
+from takeout_rater.db.queries import (
+    AssetRow,
+    count_assets,
+    get_asset_by_id,
+    list_assets,
+    upsert_asset,
+)
+
+__all__ = [
+    "AssetRow",
+    "count_assets",
+    "get_asset_by_id",
+    "library_state_dir",
+    "list_assets",
+    "open_library_db",
+    "upsert_asset",
+]
