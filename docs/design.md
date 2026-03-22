@@ -1,6 +1,6 @@
 # Design: takeout-rater
 
-*Last updated: 2026-03*
+*Last updated: 2026-03 (Iteration 3 complete)*
 
 ---
 
@@ -200,4 +200,5 @@ If a HEIC loader is unavailable, the asset is indexed but marked `unsupported/sk
 | **0** ✅ | Repo foundation: design docs, ADRs, agent docs, pyproject, scorer interface + registry, CI, skeleton modules |
 | **1** ✅ | Indexing: takeout scanner, sidecar parser, asset DB, thumbnail cache, minimal browse UI (FastAPI + HTMX) |
 | **2** ✅ | Scorer framework end-to-end: scoring pipeline, BlurScorer + DummyScorer wired to DB, pHash computation, `score` CLI command, score display in UI |
-| **3** | Clustering: pHash-based cluster builder, cluster persistence, cluster view, best-of-cluster export |
+| **3** ✅ | Clustering: pHash-based cluster builder, cluster persistence, cluster view in UI, best-of-cluster `export` CLI command |
+| **4** | Aesthetic scorer: LAION-aesthetic or similar ONNX/Torch model wired as an optional scorer, `aesthetic` metric, sort-by-aesthetic in UI |

@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Clusters – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .toolbar-count { color: #444; font-size: 0.9rem; }
+
+  .cluster-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .cluster-card {
+    background: #fff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    transition: box-shadow 0.15s;
+  }
+  .cluster-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .cluster-card a { display: block; color: inherit; text-decoration: none; }
+  .cluster-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #e0e0e0;
+  }
+  .cluster-thumb-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 2rem;
+  }
+  .cluster-body {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.75rem;
+    color: #555;
+  }
+  .cluster-size {
+    display: inline-block;
+    padding: 0 5px;
+    background: #e8f0fe;
+    color: #1a5cdb;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
+  .pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .pagination .current-page {
+    padding: 0.35rem 0.7rem;
+    border-radius: 4px;
+    background: #1a5cdb;
+    color: #fff;
+    font-size: 0.875rem;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 4rem 1rem;
+    color: #888;
+  }
+  .empty-state h2 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <span class="toolbar-count">
+    {% if total == 0 %}
+      No clusters yet
+    {% elif total == 1 %}
+      1 cluster
+    {% else %}
+      {{ total }} clusters
+    {% endif %}
+  </span>
+  <a class="btn" href="/assets">← All photos</a>
+</div>
+
+{% if clusters %}
+  <div class="cluster-grid">
+    {% for cluster in clusters %}
+    <div class="cluster-card">
+      <a href="/clusters/{{ cluster.cluster_id }}">
+        <img
+          class="cluster-thumb"
+          src="/thumbs/{{ cluster.rep_asset_id }}"
+          alt="{{ cluster.rep_filename }}"
+          loading="lazy"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+        >
+        <div class="cluster-thumb-placeholder" style="display:none">🖼</div>
+        <div class="cluster-body">
+          <span class="cluster-size">{{ cluster.member_count }} photos</span>
+          {{ cluster.rep_filename }}
+        </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <h2>No clusters found</h2>
+    <p>
+      Run <code>takeout-rater cluster &lt;path&gt;</code> to group near-duplicate photos.
+    </p>
+    <p style="margin-top:0.5rem; font-size:0.875rem; color:#aaa;">
+      Make sure you have first run <code>takeout-rater score --phash &lt;path&gt;</code>
+      to compute perceptual hashes.
+    </p>
+  </div>
+{% endif %}
+
+{% if total_pages > 1 %}
+<nav class="pagination" aria-label="Pagination">
+  {% if page > 1 %}
+    <a class="btn" href="/clusters?page={{ page - 1 }}">← Prev</a>
+  {% endif %}
+  <span class="current-page">{{ page }} / {{ total_pages }}</span>
+  {% if page < total_pages %}
+    <a class="btn" href="/clusters?page={{ page + 1 }}">Next →</a>
+  {% endif %}
+</nav>
+{% endif %}
+{% endblock %}

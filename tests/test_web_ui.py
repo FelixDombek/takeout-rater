@@ -13,7 +13,8 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from takeout_rater.db.queries import upsert_asset  # noqa: E402
+from takeout_rater.clustering.builder import build_clusters  # noqa: E402
+from takeout_rater.db.queries import upsert_asset, upsert_phash  # noqa: E402
 from takeout_rater.db.schema import migrate  # noqa: E402
 from takeout_rater.ui.app import create_app  # noqa: E402
 
@@ -53,6 +54,18 @@ def client_with_assets(tmp_path: Path) -> TestClient:
     conn = _make_db()
     for i in range(3):
         _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn)
+    return TestClient(app, follow_redirects=True)
+
+
+@pytest.fixture()
+def client_with_clusters(tmp_path: Path) -> TestClient:
+    conn = _make_db()
+    id1 = _add_asset(conn, "Photos/a.jpg")
+    id2 = _add_asset(conn, "Photos/b.jpg")
+    upsert_phash(conn, id1, "0000000000000000")
+    upsert_phash(conn, id2, "0000000000000001")  # 1 bit diff
+    build_clusters(conn, threshold=5)
     app = create_app(tmp_path, conn)
     return TestClient(app, follow_redirects=True)
 
@@ -140,3 +153,63 @@ def test_thumbnail_serves_jpeg(tmp_path: Path) -> None:
     resp = client.get(f"/thumbs/{asset_id}")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/jpeg"
+
+
+# ── GET /clusters ─────────────────────────────────────────────────────────────
+
+
+def test_clusters_empty_db_returns_200(client: TestClient) -> None:
+    resp = client.get("/clusters")
+    assert resp.status_code == 200
+
+
+def test_clusters_returns_html(client: TestClient) -> None:
+    resp = client.get("/clusters")
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_clusters_empty_shows_no_clusters_message(client: TestClient) -> None:
+    resp = client.get("/clusters")
+    assert "No clusters" in resp.text
+
+
+def test_clusters_shows_cluster_count(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusters")
+    assert resp.status_code == 200
+    assert "1 cluster" in resp.text
+
+
+def test_clusters_page2_returns_200(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusters?page=2")
+    assert resp.status_code == 200
+
+
+# ── GET /clusters/{id} ───────────────────────────────────────────────────────
+
+
+def test_cluster_detail_returns_200(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusters/1")
+    assert resp.status_code == 200
+
+
+def test_cluster_detail_not_found_returns_404(client: TestClient) -> None:
+    resp = client.get("/clusters/99999")
+    assert resp.status_code == 404
+
+
+def test_cluster_detail_shows_members(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusters/1")
+    assert "a.jpg" in resp.text or "b.jpg" in resp.text
+
+
+def test_cluster_detail_shows_rep_badge(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusters/1")
+    assert "REP" in resp.text
+
+
+# ── nav link ─────────────────────────────────────────────────────────────────
+
+
+def test_browse_page_has_clusters_nav_link(client: TestClient) -> None:
+    resp = client.get("/assets")
+    assert "/clusters" in resp.text

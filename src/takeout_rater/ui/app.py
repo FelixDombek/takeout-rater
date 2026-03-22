@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from takeout_rater.api.assets import router as assets_router
+from takeout_rater.api.clusters import router as clusters_router
 from takeout_rater.api.config_routes import router as config_router
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -90,6 +91,7 @@ def create_app(
 
     # Asset browsing routes (require a DB connection)
     app.include_router(assets_router)
+    app.include_router(clusters_router)
 
     @app.get("/")
     def redirect_to_browse(request: Request) -> RedirectResponse:

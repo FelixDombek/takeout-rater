@@ -554,6 +554,192 @@ def list_asset_ids_without_phash(conn: sqlite3.Connection) -> list[int]:
     return [row[0] for row in rows]
 
 
+def list_all_asset_ids(conn: sqlite3.Connection) -> list[int]:
+    """Return the IDs of all assets ordered by ID.
+
+    This is a lightweight alternative to :func:`list_assets` when only the
+    IDs are needed (e.g. in the scoring pipeline when re-scoring all assets).
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of integer asset IDs.
+    """
+    rows = conn.execute("SELECT id FROM assets ORDER BY id").fetchall()
+    return [row[0] for row in rows]
+
+
+def list_all_phashes(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    """Return all stored perceptual hashes as ``(asset_id, phash_hex)`` pairs.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of ``(asset_id, phash_hex)`` tuples ordered by ``asset_id``.
+    """
+    rows = conn.execute("SELECT asset_id, phash_hex FROM phash ORDER BY asset_id").fetchall()
+    return [(row[0], row[1]) for row in rows]
+
+
+def insert_cluster(
+    conn: sqlite3.Connection,
+    method: str,
+    params_json: str | None,
+) -> int:
+    """Insert a new cluster row and return its ID.
+
+    Args:
+        conn: Open database connection.
+        method: Algorithm identifier (e.g. ``"dhash_hamming"``).
+        params_json: JSON-serialised clustering parameters.
+
+    Returns:
+        The integer primary key of the new ``clusters`` row.
+    """
+    row = conn.execute(
+        "INSERT INTO clusters (method, params_json, created_at) VALUES (?, ?, ?) RETURNING id",
+        (method, params_json, int(time.time())),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def bulk_insert_cluster_members(
+    conn: sqlite3.Connection,
+    cluster_id: int,
+    members: list[tuple[int, float | None, int]],
+) -> None:
+    """Insert multiple ``cluster_members`` rows in a single transaction.
+
+    Args:
+        conn: Open database connection.
+        cluster_id: Foreign key into ``clusters``.
+        members: List of ``(asset_id, distance, is_representative)`` triples.
+    """
+    conn.executemany(
+        "INSERT OR IGNORE INTO cluster_members (cluster_id, asset_id, distance, is_representative)"
+        " VALUES (?, ?, ?, ?)",
+        [(cluster_id, asset_id, distance, is_rep) for asset_id, distance, is_rep in members],
+    )
+    conn.commit()
+
+
+def delete_clusters_by_method_params(
+    conn: sqlite3.Connection,
+    method: str,
+    params_json: str | None,
+) -> int:
+    """Delete all clusters (and their members) for a given method + params.
+
+    Args:
+        conn: Open database connection.
+        method: Algorithm identifier.
+        params_json: JSON parameters string (exact match).
+
+    Returns:
+        Number of cluster rows deleted.
+    """
+    rows = conn.execute(
+        "SELECT id FROM clusters WHERE method = ? AND params_json IS ?",
+        (method, params_json),
+    ).fetchall()
+    cluster_ids = [row[0] for row in rows]
+    if cluster_ids:
+        conn.executemany(
+            "DELETE FROM cluster_members WHERE cluster_id = ?",
+            [(cid,) for cid in cluster_ids],
+        )
+        conn.executemany(
+            "DELETE FROM clusters WHERE id = ?",
+            [(cid,) for cid in cluster_ids],
+        )
+        conn.commit()
+    return len(cluster_ids)
+
+
+def list_clusters_with_representatives(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Return clusters with their representative asset info, ordered by size (descending).
+
+    Args:
+        conn: Open database connection.
+        limit: Maximum number of clusters to return.
+        offset: Number of clusters to skip (for pagination).
+
+    Returns:
+        List of dicts with keys: ``cluster_id``, ``method``, ``member_count``,
+        ``rep_asset_id``, ``rep_filename``, ``created_at``.
+    """
+    rows = conn.execute(
+        "SELECT c.id AS cluster_id, c.method, c.created_at,"
+        "   COUNT(cm.asset_id) AS member_count,"
+        "   cm2.asset_id AS rep_asset_id,"
+        "   a.filename AS rep_filename"
+        " FROM clusters c"
+        " JOIN cluster_members cm ON cm.cluster_id = c.id"
+        " JOIN cluster_members cm2 ON cm2.cluster_id = c.id AND cm2.is_representative = 1"
+        " JOIN assets a ON a.id = cm2.asset_id"
+        " GROUP BY c.id"
+        " ORDER BY member_count DESC, c.id"
+        " LIMIT ? OFFSET ?",
+        (limit, offset),
+    ).fetchall()
+    return [
+        {
+            "cluster_id": row["cluster_id"],
+            "method": row["method"],
+            "member_count": row["member_count"],
+            "rep_asset_id": row["rep_asset_id"],
+            "rep_filename": row["rep_filename"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def count_clusters(conn: sqlite3.Connection) -> int:
+    """Return the total number of clusters stored in the database.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        Integer count.
+    """
+    return conn.execute("SELECT COUNT(*) FROM clusters").fetchone()[0]
+
+
+def get_cluster_members(
+    conn: sqlite3.Connection,
+    cluster_id: int,
+) -> list[tuple[Any, float | None, bool]]:
+    """Return all members of a cluster as ``(AssetRow, distance, is_representative)`` triples.
+
+    Args:
+        conn: Open database connection.
+        cluster_id: The cluster to look up.
+
+    Returns:
+        List of ``(AssetRow, distance, is_representative)`` triples.
+        Representative is listed first.
+    """
+    rows = conn.execute(
+        "SELECT a.*, cm.distance, cm.is_representative"
+        " FROM cluster_members cm"
+        " JOIN assets a ON a.id = cm.asset_id"
+        " WHERE cm.cluster_id = ?"
+        " ORDER BY cm.is_representative DESC, a.id",
+        (cluster_id,),
+    ).fetchall()
+    return [(_row_to_asset(row), row["distance"], bool(row["is_representative"])) for row in rows]
+
+
 def list_asset_ids_without_score(
     conn: sqlite3.Connection,
     scorer_id: str,
