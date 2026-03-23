@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from takeout_rater.config import get_takeout_path, set_takeout_path
+from takeout_rater.db.connection import open_library_db
 
 router = APIRouter()
 
@@ -78,8 +79,6 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
 
     # Open (or create) the library DB and update the live app state so that
     # all subsequent requests see the new configuration immediately.
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
-
     old_conn = request.app.state.db_conn
     if old_conn is not None:
         old_conn.close()
