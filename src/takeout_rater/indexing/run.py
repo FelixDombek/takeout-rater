@@ -9,6 +9,7 @@ blocking the web server while indexing is in progress.
 from __future__ import annotations
 
 import contextlib
+import os
 import sqlite3
 import time
 from collections.abc import Callable
@@ -35,6 +36,12 @@ class IndexProgress:
         indexed: Number of assets upserted into the database so far.
         thumbs_ok: Number of thumbnails successfully generated.
         thumbs_skip: Number of thumbnails skipped (already existed or error).
+        phase: Current phase — ``"scanning"`` while :func:`scan_takeout` is
+            running; ``"indexing"`` once the DB-upsert loop has started.
+        total_dirs: Total number of directories to scan (known after the fast
+            first pass inside :func:`scan_takeout`).
+        dirs_scanned: Number of directories fully processed so far.
+        current_dir: Name of the directory most recently processed.
     """
 
     running: bool = False
@@ -44,6 +51,10 @@ class IndexProgress:
     indexed: int = 0
     thumbs_ok: int = 0
     thumbs_skip: int = 0
+    phase: str = "scanning"
+    total_dirs: int = 0
+    dirs_scanned: int = 0
+    current_dir: str = ""
 
 
 def run_index(
@@ -97,8 +108,19 @@ def run_index(
             return progress
 
     photos_root = find_google_photos_root(takeout_dir)
-    assets = scan_takeout(photos_root)
+
+    # Wire the scanning-phase progress: on_dir_scanned is called by
+    # scan_takeout after each directory's files are stat'd.
+    def _on_dir_scanned(dirs_done: int, total_dirs: int, dir_name: str) -> None:
+        progress.total_dirs = total_dirs
+        progress.dirs_scanned = dirs_done
+        progress.current_dir = dir_name
+        if on_progress:
+            on_progress(progress)
+
+    assets = scan_takeout(photos_root, on_dir_scanned=_on_dir_scanned)
     progress.found = len(assets)
+    progress.phase = "indexing"
 
     if on_progress:
         on_progress(progress)
@@ -117,6 +139,7 @@ def run_index(
     now = int(time.time())
 
     for asset_file in assets:
+        progress.current_dir = os.path.dirname(asset_file.relpath)
         sidecar = None
         if asset_file.sidecar_path is not None:
             with contextlib.suppress(ValueError):

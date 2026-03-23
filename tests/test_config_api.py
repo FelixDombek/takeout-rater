@@ -259,7 +259,7 @@ def test_index_status_after_setting_path_triggers_background_index(
 
 
 def test_index_status_returns_progress_fields(client: TestClient) -> None:
-    """GET /api/index/status returns all expected progress fields."""
+    """GET /api/index/status returns all expected progress fields including new phase fields."""
     resp = client.get("/api/index/status")
     assert resp.status_code == 200
     data = resp.json()
@@ -270,13 +270,36 @@ def test_index_status_returns_progress_fields(client: TestClient) -> None:
     assert "indexed" in data
     assert "thumbs_ok" in data
     assert "thumbs_skip" in data
+    assert "phase" in data
+    assert "total_dirs" in data
+    assert "dirs_scanned" in data
+    assert "current_dir" in data
+
+
+def test_index_status_default_phase_is_scanning(client: TestClient) -> None:
+    """Before any indexing starts the phase must default to 'scanning'."""
+    resp = client.get("/api/index/status")
+    data = resp.json()
+    assert data["phase"] == "scanning"
+    assert data["total_dirs"] == 0
+    assert data["dirs_scanned"] == 0
+    assert data["current_dir"] == ""
 
 
 def test_index_status_reflects_stored_progress(client: TestClient) -> None:
     """The status endpoint reflects whatever is stored in app.state.index_progress."""
     from takeout_rater.indexing.run import IndexProgress  # noqa: E402
 
-    progress = IndexProgress(running=False, done=True, found=42, indexed=42)
+    progress = IndexProgress(
+        running=False,
+        done=True,
+        found=42,
+        indexed=42,
+        phase="indexing",
+        total_dirs=5,
+        dirs_scanned=5,
+        current_dir="Photos from 2023",
+    )
     client.app.state.index_progress = progress  # type: ignore[union-attr]
 
     resp = client.get("/api/index/status")
@@ -285,3 +308,7 @@ def test_index_status_reflects_stored_progress(client: TestClient) -> None:
     assert data["done"] is True
     assert data["found"] == 42
     assert data["indexed"] == 42
+    assert data["phase"] == "indexing"
+    assert data["total_dirs"] == 5
+    assert data["dirs_scanned"] == 5
+    assert data["current_dir"] == "Photos from 2023"

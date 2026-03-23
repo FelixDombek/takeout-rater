@@ -257,3 +257,68 @@ def test_run_index_is_idempotent(library_root: Path) -> None:
     relpaths = [r.relpath for r in rows]
     assert len(relpaths) == len(set(relpaths))
     assert total == len(relpaths)
+
+
+# ── run_index progress fields ─────────────────────────────────────────────────
+
+
+def test_run_index_final_progress_phase_is_indexing(library_root: Path) -> None:
+    """The final IndexProgress must have phase='indexing' (not 'scanning')."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    conn = open_library_db(library_root)
+    progress = run_index(library_root, conn, generate_thumbs=False)
+    conn.close()
+
+    assert progress.phase == "indexing"
+
+
+def test_run_index_final_progress_dirs_scanned(library_root: Path) -> None:
+    """dirs_scanned must be positive after a successful run."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    conn = open_library_db(library_root)
+    progress = run_index(library_root, conn, generate_thumbs=False)
+    conn.close()
+
+    assert progress.dirs_scanned > 0
+    assert progress.dirs_scanned == progress.total_dirs
+
+
+def test_run_index_on_progress_called_during_scanning(library_root: Path) -> None:
+    """on_progress must be invoked while scanning (phase='scanning')."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    scanning_calls: list[object] = []
+
+    def _cb(p: object) -> None:
+        from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
+
+        assert isinstance(p, IndexProgress)
+        if p.phase == "scanning":
+            scanning_calls.append(p)
+
+    conn = open_library_db(library_root)
+    run_index(library_root, conn, generate_thumbs=False, on_progress=_cb)
+    conn.close()
+
+    assert len(scanning_calls) > 0, "on_progress was never called with phase='scanning'"
+
+
+def test_run_index_on_progress_called_during_indexing(library_root: Path) -> None:
+    """on_progress must be invoked while indexing (phase='indexing')."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    indexing_calls: list[object] = []
+
+    def _cb(p: object) -> None:
+        from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
+
+        if isinstance(p, IndexProgress) and p.phase == "indexing" and not p.done:
+            indexing_calls.append(p)
+
+    conn = open_library_db(library_root)
+    run_index(library_root, conn, generate_thumbs=False, on_progress=_cb)
+    conn.close()
+
+    assert len(indexing_calls) > 0, "on_progress was never called with phase='indexing'"

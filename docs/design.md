@@ -1,6 +1,6 @@
 # Design: takeout-rater
 
-*Last updated: 2026-03 (Iteration 5 complete)*
+*Last updated: 2026-03 (Iteration 5 complete; scanning progress improvement applied)*
 
 ---
 
@@ -55,7 +55,11 @@ src/takeout_rater/
   cli.py        ← `takeout-rater` entry-point
 ```
 
-The **indexer** walks the Takeout tree, parses sidecars, and populates `assets` + `albums`.
+The **indexer** walks the Takeout tree in two passes:
+
+1. **Directory enumeration** (`os.walk` – fast, no per-file `stat`): all directory names are collected and image filenames are identified by extension.  Progress is reported as *dirs_scanned / total_dirs*.
+2. **Metadata collection** (one `stat` + sidecar probe per file): file sizes are read and sidecar JSON files are located.  Progress is reported as *files_indexed / total_files* plus the name of the directory currently being processed.
+
 **Scorers** are run as background jobs; they read thumbnails and write results to `scorer_runs` + `asset_scores`.
 The **API** layer exposes filtered/sorted asset lists and serves thumbnails.
 The **UI** renders pages with HTMX-driven interactions (no full SPA).

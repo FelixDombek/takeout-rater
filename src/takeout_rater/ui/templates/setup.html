@@ -167,14 +167,30 @@
           setTimeout(function () { window.location.href = '/'; }, 1200);
           return;
         }
-        // Still running — update progress bar and status text.
-        var pct = data.found > 0 ? Math.round((data.indexed / data.found) * 100) : 0;
-        setProgress(pct);
-        if (data.found > 0) {
-          showStatus('Indexing… ' + data.indexed + ' / ' + data.found + ' photos', 'info');
+        // Still running — show phase-appropriate progress.
+        // \u202f = narrow no-break space (keeps "5 / 20" together visually)
+        // \u2002 = en space (padding around the "–" separator)
+        // \u2026 = ellipsis "…"
+        var pct, msg;
+        if (data.phase === 'scanning' && data.total_dirs > 0) {
+          // Scanning phase: dirs_scanned / total_dirs maps to 0–40 % of the bar.
+          pct = Math.round((data.dirs_scanned / data.total_dirs) * 40);
+          msg = 'Scanning folders (' + data.dirs_scanned + '\u202f/\u202f' + data.total_dirs + ')';
+          if (data.current_dir) { msg += '\u2002–\u2002' + data.current_dir; }
+          msg += '\u2026';
+        } else if (data.phase === 'indexing' && data.found > 0) {
+          // Indexing phase: indexed / found maps to 40–100 % of the bar.
+          pct = 40 + Math.round((data.indexed / data.found) * 60);
+          msg = 'Indexing\u2026 ' + data.indexed + '\u202f/\u202f' + data.found + ' photos';
+          if (data.current_dir && data.current_dir !== '.') {
+            msg += '\u2002–\u2002' + data.current_dir;
+          }
         } else {
-          showStatus('Scanning for photos…', 'info');
+          pct = 0;
+          msg = 'Scanning for photos\u2026';
         }
+        setProgress(pct);
+        showStatus(msg, 'info');
         setTimeout(pollIndexStatus, 1000);
       })
       .catch(function () {
