@@ -195,3 +195,65 @@ def test_index_google_fotos_subdir_indexes_photo(
     conn.close()
     assert len(rows) == 1
     assert rows[0].relpath == "Fotos aus 2023/bild.jpg"
+
+
+# ── run_index function (background-callable API) ──────────────────────────────
+
+
+def test_run_index_returns_progress_with_indexed_count(library_root: Path) -> None:
+    """run_index must upsert assets and return the correct count."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    conn = open_library_db(library_root)
+    progress = run_index(library_root, conn, generate_thumbs=False)
+    conn.close()
+
+    assert progress.done is True
+    assert progress.running is False
+    assert progress.error is None
+    assert progress.indexed >= 2  # fixture has at least a JPEG and a PNG
+    assert progress.found == progress.indexed
+
+
+def test_run_index_populates_db(library_root: Path) -> None:
+    """After run_index the DB must contain the indexed assets."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    conn = open_library_db(library_root)
+    run_index(library_root, conn, generate_thumbs=False)
+    total = count_assets(conn)
+    conn.close()
+
+    assert total >= 2
+
+
+def test_run_index_missing_takeout_returns_error(tmp_path: Path) -> None:
+    """run_index must return an error when Takeout/ does not exist."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    conn = open_library_db(tmp_path)
+    progress = run_index(tmp_path, conn, generate_thumbs=False)
+    conn.close()
+
+    assert progress.done is True
+    assert progress.running is False
+    assert progress.error is not None
+    assert "Takeout" in progress.error
+
+
+def test_run_index_is_idempotent(library_root: Path) -> None:
+    """Calling run_index twice must not duplicate assets."""
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    conn = open_library_db(library_root)
+    run_index(library_root, conn, generate_thumbs=False)
+    run_index(library_root, conn, generate_thumbs=False)
+    total = count_assets(conn)
+    conn.close()
+
+    conn2 = open_library_db(library_root)
+    rows = list_assets(conn=conn2, limit=1000)
+    conn2.close()
+    relpaths = [r.relpath for r in rows]
+    assert len(relpaths) == len(set(relpaths))
+    assert total == len(relpaths)

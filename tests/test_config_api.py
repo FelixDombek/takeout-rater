@@ -218,3 +218,70 @@ def test_assets_redirects_to_setup_for_html_client(client: TestClient) -> None:
     resp = client.get("/assets", headers={"Accept": "text/html,application/xhtml+xml,*/*"})
     assert resp.status_code in (302, 307)
     assert resp.headers["location"] == "/setup"
+
+
+# ---------------------------------------------------------------------------
+# Index status endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_index_status_before_any_indexing(client: TestClient) -> None:
+    """GET /api/index/status returns a not-running, not-done response by default."""
+    resp = client.get("/api/index/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["running"] is False
+    assert data["done"] is False
+    assert data["error"] is None
+
+
+def test_index_status_after_setting_path_triggers_background_index(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After POST /api/config/takeout-path a background index run is started."""
+    import takeout_rater.api.config_routes as routes_mod  # noqa: E402
+
+    monkeypatch.setattr(routes_mod, "set_takeout_path", lambda p: None)
+
+    # Capture that _start_background_index is called
+    calls: list[Path] = []
+
+    def _fake_start(app: object, library_root: Path) -> None:
+        calls.append(library_root)
+        # Don't actually spawn a thread in unit tests
+
+    monkeypatch.setattr(routes_mod, "_start_background_index", _fake_start)
+
+    resp = client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
+    assert resp.status_code == 200
+    assert len(calls) == 1
+    assert calls[0] == tmp_path.resolve()
+
+
+def test_index_status_returns_progress_fields(client: TestClient) -> None:
+    """GET /api/index/status returns all expected progress fields."""
+    resp = client.get("/api/index/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "running" in data
+    assert "done" in data
+    assert "error" in data
+    assert "found" in data
+    assert "indexed" in data
+    assert "thumbs_ok" in data
+    assert "thumbs_skip" in data
+
+
+def test_index_status_reflects_stored_progress(client: TestClient) -> None:
+    """The status endpoint reflects whatever is stored in app.state.index_progress."""
+    from takeout_rater.indexing.run import IndexProgress  # noqa: E402
+
+    progress = IndexProgress(running=False, done=True, found=42, indexed=42)
+    client.app.state.index_progress = progress  # type: ignore[union-attr]
+
+    resp = client.get("/api/index/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["done"] is True
+    assert data["found"] == 42
+    assert data["indexed"] == 42

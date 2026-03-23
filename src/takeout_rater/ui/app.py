@@ -87,6 +87,8 @@ def create_app(
     app.state.takeout_root = library_root
     app.state.thumbs_dir = library_root / "takeout-rater" / "thumbs" if library_root else None
     app.state.templates = _make_templates(_TEMPLATES_DIR)
+    # Background indexing state (set/updated by the config route)
+    app.state.index_progress = None
 
     # Config / health routes always available (no DB required)
     app.include_router(config_router)

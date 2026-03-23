@@ -4,12 +4,14 @@ Endpoints
 ---------
 GET  /health                   – liveness probe (always returns 200)
 GET  /api/config               – current config state
-POST /api/config/takeout-path  – save a Takeout library path
+POST /api/config/takeout-path  – save a Takeout library path and start indexing
 POST /api/config/open-picker   – open a native OS directory picker (Tkinter)
+GET  /api/index/status         – current background indexing progress
 """
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -61,14 +63,16 @@ class _TakeoutPathBody(BaseModel):
 
 @router.post("/api/config/takeout-path")
 def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
-    """Validate and persist a Takeout library root path.
+    """Validate and persist a Takeout library root path, then start indexing.
 
     The path must point to an existing directory.  Returns 400 if the path
     does not exist, 200 with the saved path on success.
 
     Also initialises (or re-initialises) the library database and updates the
     running app's shared state so that the new configuration takes effect
-    immediately without requiring a server restart.
+    immediately without requiring a server restart.  A background indexing run
+    is launched automatically; callers can poll ``GET /api/index/status`` to
+    track progress.
     """
     p = Path(body.path).expanduser().resolve()
     if not p.exists():
@@ -87,6 +91,10 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     request.app.state.library_root = p
     request.app.state.takeout_root = p
     request.app.state.thumbs_dir = p / "takeout-rater" / "thumbs"
+
+    # Start background indexing so the library is populated without the user
+    # needing to run a separate CLI command.
+    _start_background_index(request.app, p)
 
     return JSONResponse({"status": "ok", "takeout_path": str(p)})
 
@@ -126,3 +134,91 @@ def open_picker() -> JSONResponse:
     if selected:
         return JSONResponse({"path": selected, "cancelled": False})
     return JSONResponse({"path": None, "cancelled": True})
+
+
+# ---------------------------------------------------------------------------
+# Background indexing helpers
+# ---------------------------------------------------------------------------
+
+
+def _start_background_index(app: object, library_root: Path) -> None:
+    """Launch a background thread that indexes *library_root*.
+
+    The thread opens its own database connection so that it does not compete
+    with the main ASGI thread's connection for SQLite write locks.  Progress
+    updates are stored in ``app.state.index_progress`` so that
+    ``GET /api/index/status`` can report them to the browser.
+
+    If an indexing run is already active, the request is ignored.
+    """
+    from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
+
+    # Ignore if already running
+    existing: IndexProgress | None = getattr(app.state, "index_progress", None)
+    if existing is not None and existing.running:
+        return
+
+    progress = IndexProgress(running=True)
+    app.state.index_progress = progress
+
+    def _worker() -> None:
+        from takeout_rater.db.connection import open_library_db as _open  # noqa: PLC0415
+        from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+
+        worker_conn = _open(library_root)
+        try:
+            result = run_index(library_root, worker_conn)
+        finally:
+            worker_conn.close()
+        # Replace the shared progress object once the run finishes.
+        app.state.index_progress = result  # type: ignore[union-attr]
+
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-indexer")
+    thread.start()
+
+
+# ---------------------------------------------------------------------------
+# Index status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/index/status")
+def index_status(request: Request) -> JSONResponse:
+    """Return the current background indexing progress.
+
+    Response fields
+    ---------------
+    running   bool   – ``true`` while the indexer thread is still active.
+    done      bool   – ``true`` once the run has finished (success or error).
+    error     str|null – human-readable error message, or ``null`` on success.
+    found     int    – total image files discovered during the scan.
+    indexed   int    – assets upserted into the DB so far.
+    thumbs_ok int    – thumbnails generated successfully.
+    thumbs_skip int  – thumbnails skipped (already existed or Pillow unavailable).
+    """
+    from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
+
+    progress: IndexProgress | None = getattr(request.app.state, "index_progress", None)
+    if progress is None:
+        return JSONResponse(
+            {
+                "running": False,
+                "done": False,
+                "error": None,
+                "found": 0,
+                "indexed": 0,
+                "thumbs_ok": 0,
+                "thumbs_skip": 0,
+            }
+        )
+    return JSONResponse(
+        {
+            "running": progress.running,
+            "done": progress.done,
+            "error": progress.error,
+            "found": progress.found,
+            "indexed": progress.indexed,
+            "thumbs_ok": progress.thumbs_ok,
+            "thumbs_skip": progress.thumbs_skip,
+        }
+    )
