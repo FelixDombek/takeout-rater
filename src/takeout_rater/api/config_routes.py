@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from takeout_rater.config import get_takeout_path, set_takeout_path
+from takeout_rater.db.connection import open_library_db
 
 router = APIRouter()
 
@@ -59,11 +60,15 @@ class _TakeoutPathBody(BaseModel):
 
 
 @router.post("/api/config/takeout-path")
-def set_path(body: _TakeoutPathBody) -> JSONResponse:
+def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     """Validate and persist a Takeout library root path.
 
     The path must point to an existing directory.  Returns 400 if the path
     does not exist, 200 with the saved path on success.
+
+    Also initialises (or re-initialises) the library database and updates the
+    running app's shared state so that the new configuration takes effect
+    immediately without requiring a server restart.
     """
     p = Path(body.path).expanduser().resolve()
     if not p.exists():
@@ -71,6 +76,18 @@ def set_path(body: _TakeoutPathBody) -> JSONResponse:
     if not p.is_dir():
         raise HTTPException(status_code=400, detail=f"Path is not a directory: {p}")
     set_takeout_path(p)
+
+    # Open (or create) the library DB and update the live app state so that
+    # all subsequent requests see the new configuration immediately.
+    old_conn = request.app.state.db_conn
+    if old_conn is not None:
+        old_conn.close()
+    conn = open_library_db(p)
+    request.app.state.db_conn = conn
+    request.app.state.library_root = p
+    request.app.state.takeout_root = p
+    request.app.state.thumbs_dir = p / "takeout-rater" / "thumbs"
+
     return JSONResponse({"status": "ok", "takeout_path": str(p)})
 
 

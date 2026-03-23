@@ -350,3 +350,21 @@ def test_clusters_returns_503_when_not_configured(client_unconfigured: TestClien
 def test_cluster_detail_returns_503_when_not_configured(client_unconfigured: TestClient) -> None:
     resp = client_unconfigured.get("/clusters/1")
     assert resp.status_code == 503
+
+
+def test_clusters_redirects_to_setup_for_html_browser(client_unconfigured: TestClient) -> None:
+    """Browser navigation to /clusters while unconfigured should redirect to /setup."""
+    resp = client_unconfigured.get(
+        "/clusters", headers={"Accept": "text/html,application/xhtml+xml,*/*"}
+    )
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "/setup"
+
+
+def test_assets_redirects_to_setup_for_html_browser(client_unconfigured: TestClient) -> None:
+    """Browser navigation to /assets while unconfigured should redirect to /setup."""
+    resp = client_unconfigured.get(
+        "/assets", headers={"Accept": "text/html,application/xhtml+xml,*/*"}
+    )
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "/setup"

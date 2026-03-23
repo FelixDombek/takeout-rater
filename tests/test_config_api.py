@@ -167,3 +167,54 @@ def test_setup_page_contains_form_elements(
 def test_assets_returns_503_when_no_db(client: TestClient) -> None:
     resp = client.get("/assets")
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Setting path initialises DB and updates app state immediately
+# ---------------------------------------------------------------------------
+
+
+def test_set_path_updates_app_state(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After POST /api/config/takeout-path the app state must have a live DB connection."""
+    import takeout_rater.api.config_routes as routes_mod  # noqa: E402
+
+    monkeypatch.setattr(routes_mod, "set_takeout_path", lambda p: None)
+
+    # Before setting the path the app is unconfigured
+    assert client.app.state.db_conn is None  # type: ignore[union-attr]
+
+    resp = client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
+    assert resp.status_code == 200
+
+    # After setting the path the app state must be updated
+    assert client.app.state.db_conn is not None  # type: ignore[union-attr]
+    assert client.app.state.library_root == tmp_path.resolve()  # type: ignore[union-attr]
+
+
+def test_set_path_then_assets_accessible(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After configuring the path, /assets must return 200 (not 503)."""
+    import takeout_rater.api.config_routes as routes_mod  # noqa: E402
+
+    monkeypatch.setattr(routes_mod, "set_takeout_path", lambda p: None)
+
+    client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
+
+    # Now /assets should be reachable (follow_redirects=False, so expect the HTML directly)
+    resp = client.get("/assets")
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Browser navigation to unconfigured routes redirects to /setup
+# ---------------------------------------------------------------------------
+
+
+def test_assets_redirects_to_setup_for_html_client(client: TestClient) -> None:
+    """A browser-style request (Accept: text/html) to /assets redirects to /setup."""
+    resp = client.get("/assets", headers={"Accept": "text/html,application/xhtml+xml,*/*"})
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "/setup"

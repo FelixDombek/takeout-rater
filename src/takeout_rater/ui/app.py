@@ -7,8 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from takeout_rater.api.assets import router as assets_router
 from takeout_rater.api.clusters import router as clusters_router
@@ -111,5 +112,20 @@ def create_app(
             "setup.html",
             {"request": request, "current_path": str(current) if current else None},
         )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse | RedirectResponse:
+        """Redirect browser navigation to /setup for 503 (library not configured).
+
+        When an HTML-accepting client (e.g. a browser tab) navigates to a page
+        route that requires a configured library, return a redirect to /setup
+        rather than exposing raw JSON.  All other HTTP exceptions and all
+        non-HTML clients continue to receive a JSON error response.
+        """
+        if exc.status_code == 503 and "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse(url="/setup")
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
     return app
