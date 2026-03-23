@@ -1,0 +1,26 @@
+{% for asset in assets %}
+<div class="card"
+     data-lb-id="{{ asset.id }}"
+     data-lb-src="/thumbs/{{ asset.id }}"
+     data-lb-title="{{ asset.title or asset.filename }}">
+  <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
+    <img
+      class="card-thumb"
+      src="/thumbs/{{ asset.id }}"
+      alt="{{ asset.title or asset.filename }}"
+      loading="lazy"
+      onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+    >
+    <div class="card-thumb-placeholder" style="display:none">🖼</div>
+    <div class="card-body">
+      {{ asset.filename }}{% if asset.favorited %}<span class="fav-badge">⭐</span>{% endif %}
+      {% if score_map and asset.id in score_map %}
+      <span class="score-badge">{{ "%.1f"|format(score_map[asset.id]) }}</span>
+      {% endif %}
+    </div>
+  </a>
+</div>
+{% endfor %}
+{% if page < total_pages %}
+<div class="scroll-sentinel" data-next-page="{{ page + 1 }}"></div>
+{% endif %}

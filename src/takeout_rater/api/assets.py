@@ -112,6 +112,7 @@ def browse_assets(
     min_score: str | None = None,
     max_score: str | None = None,
     dedupe: str = "1",
+    partial: str = "0",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
     """Render the browse page with paginated asset thumbnails.
@@ -127,6 +128,8 @@ def browse_assets(
       ``sort_by``).  Blank or non-numeric values are silently ignored.
     - ``dedupe``: ``"1"`` (default) to hide exact duplicate files (same SHA-256
       content hash); ``"0"`` to show all physical copies.
+    - ``partial``: ``"1"`` to return only a card fragment (for infinite scroll
+      fetch requests); ``"0"`` (default) to return the full page.
     """
     offset = max(0, (page - 1) * _PAGE_SIZE)
     fav_filter: bool | None = True if favorited == "1" else None
@@ -188,6 +191,17 @@ def browse_assets(
     presets = list_view_presets(conn)
 
     templates = request.app.state.templates
+    if partial == "1":
+        return templates.TemplateResponse(
+            "browse_partial.html",
+            {
+                "request": request,
+                "assets": assets,
+                "page": page,
+                "total_pages": total_pages,
+                "score_map": score_map,
+            },
+        )
     return templates.TemplateResponse(
         "browse.html",
         {
