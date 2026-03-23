@@ -41,10 +41,46 @@
     .btn:hover { background: #f0f0f0; }
     .btn-primary { background: #1a5cdb; color: #fff; border-color: #1a5cdb; }
     .btn-primary:hover { background: #1449b0; }
+
+    /* ── Global error toast ──────────────────────────────────────────────── */
+    #error-toast {
+      display: none;
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      background: #b91c1c;
+      color: #fff;
+      padding: 0.75rem 1.25rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,.25);
+      max-width: 90vw;
+      word-break: break-word;
+      cursor: pointer;
+    }
+    #error-toast.visible { display: block; }
   </style>
+  <script>
+    /**
+     * showError(msg) – display a dismissible error toast at the bottom of the
+     * screen.  Call from any inline script to surface API / fetch errors.
+     */
+    function showError(msg) {
+      const t = document.getElementById("error-toast");
+      if (!t) return;
+      t.textContent = "⚠ " + msg;
+      t.classList.add("visible");
+      // Auto-dismiss after 8 seconds
+      clearTimeout(t._hideTimer);
+      t._hideTimer = setTimeout(function() { t.classList.remove("visible"); }, 8000);
+    }
+  </script>
   {% block head %}{% endblock %}
 </head>
 <body>
+  <div id="error-toast" role="alert" onclick="this.classList.remove('visible')"></div>
   <header>
     <a href="/assets">📷 takeout-rater</a>
     <a href="/clusters" style="font-size:0.95rem; color:#aac4ff; font-weight:normal;">🔗 Clusters</a>

@@ -262,6 +262,40 @@ def test_browse_score_range_shows_filter_indicator(client_with_scores: TestClien
     assert "filtered by range" in resp.text
 
 
+def test_browse_blank_min_score_returns_200(client_with_scores: TestClient) -> None:
+    """Blank min_score= should not cause a 422 validation error."""
+    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=")
+    assert resp.status_code == 200
+
+
+def test_browse_blank_max_score_returns_200(client_with_scores: TestClient) -> None:
+    """Blank max_score= should not cause a 422 validation error."""
+    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&max_score=")
+    assert resp.status_code == 200
+
+
+def test_browse_both_blank_scores_returns_200(client_with_scores: TestClient) -> None:
+    """Both blank score params together should not cause a 422 validation error."""
+    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=&max_score=")
+    assert resp.status_code == 200
+
+
+def test_browse_blank_score_treats_as_unfiltered(client_with_scores: TestClient) -> None:
+    """Blank min_score should produce the same result as omitting the parameter."""
+    resp_no_filter = client_with_scores.get("/assets?sort_by=blur:sharpness")
+    resp_blank = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=")
+    assert resp_no_filter.status_code == 200
+    assert resp_blank.status_code == 200
+    # Both should show the same total count (blank is same as absent)
+    assert "5 photos" in resp_blank.text
+
+
+def test_browse_invalid_score_returns_200(client_with_scores: TestClient) -> None:
+    """Non-numeric min_score should be silently ignored, not produce a 422."""
+    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=abc")
+    assert resp.status_code == 200
+
+
 # ── preset API ────────────────────────────────────────────────────────────────
 
 

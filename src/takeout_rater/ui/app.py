@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -129,5 +130,19 @@ def create_app(
         if exc.status_code == 503 and "text/html" in request.headers.get("accept", ""):
             return RedirectResponse(url="/setup")
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Return a compact JSON error instead of FastAPI's default verbose 422 body.
+
+        This prevents raw validation error detail from being rendered directly
+        in the browser when query parameters fail type coercion.
+        """
+        detail = "; ".join(
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in exc.errors()
+        )
+        return JSONResponse({"detail": detail}, status_code=422)
 
     return app

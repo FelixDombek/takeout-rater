@@ -153,7 +153,8 @@
   {% endif %}
 
   {% if sort_options %}
-  <form class="sort-form" method="get" action="/assets">
+  <form class="sort-form" method="get" action="/assets" id="sort-form"
+        onsubmit="stripEmptyScores(this)">
     {% if favorited %}<input type="hidden" name="favorited" value="{{ favorited }}">{% endif %}
     <input type="hidden" name="page" value="1">
     <label for="sort_by_sel">Sort by:</label>
@@ -255,6 +256,17 @@
 {% endif %}
 
 <script>
+/**
+ * Disable blank min_score / max_score inputs before form submission so they
+ * are not included in the query string (avoids ?min_score= empty params).
+ */
+function stripEmptyScores(form) {
+  const minIn = form.querySelector('[name="min_score"]');
+  const maxIn = form.querySelector('[name="max_score"]');
+  if (minIn && !minIn.value.trim()) minIn.disabled = true;
+  if (maxIn && !maxIn.value.trim()) maxIn.disabled = true;
+}
+
 function loadPreset(sel) {
   const opt = sel.options[sel.selectedIndex];
   if (!opt.value) return;
@@ -274,7 +286,7 @@ function loadPreset(sel) {
 function savePreset() {
   const nameEl = document.getElementById("preset_name_in");
   const name = nameEl ? nameEl.value.trim() : "";
-  if (!name) { alert("Please enter a preset name."); return; }
+  if (!name) { showError("Please enter a preset name."); return; }
   const body = {
     name: name,
     sort_by: {{ (sort_by | tojson) if sort_by else "null" }},
@@ -290,9 +302,9 @@ function savePreset() {
     if (r.ok) {
       window.location.reload();
     } else {
-      r.json().then(d => alert("Error: " + (d.detail || r.status)));
+      r.json().then(d => showError("Error: " + (d.detail || r.status)));
     }
-  }).catch(e => alert("Error: " + e));
+  }).catch(e => showError("Error: " + e));
 }
 </script>
 {% endblock %}

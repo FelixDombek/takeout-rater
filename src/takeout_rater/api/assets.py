@@ -50,6 +50,21 @@ def _get_thumbs_dir(request: Request) -> Path:
     return thumbs_dir
 
 
+def _parse_score(raw: str | None) -> float | None:
+    """Parse a score query parameter, treating blank/missing values as ``None``.
+
+    Silently ignores non-numeric values rather than raising a validation error,
+    so that submitting an empty ``min_score=`` or ``max_score=`` form field
+    never causes a 422 response.
+    """
+    if not raw or not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
 def _parse_sort_by(sort_by: str | None) -> tuple[str, str] | None:
     """Parse a ``sort_by`` query parameter of the form ``scorer_id:metric_key``.
 
@@ -73,8 +88,8 @@ def browse_assets(
     page: int = 1,
     favorited: str | None = None,
     sort_by: str | None = None,
-    min_score: float | None = None,
-    max_score: float | None = None,
+    min_score: str | None = None,
+    max_score: str | None = None,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
     """Render the browse page with paginated asset thumbnails.
@@ -85,9 +100,9 @@ def browse_assets(
     - ``sort_by``: ``"scorer_id:metric_key"`` to sort by a score metric
       (e.g. ``"blur:sharpness"``).  Only scored assets are shown.
     - ``min_score``: Inclusive lower bound on the score value (requires
-      ``sort_by``).
+      ``sort_by``).  Blank or non-numeric values are silently ignored.
     - ``max_score``: Inclusive upper bound on the score value (requires
-      ``sort_by``).
+      ``sort_by``).  Blank or non-numeric values are silently ignored.
     """
     offset = max(0, (page - 1) * _PAGE_SIZE)
     fav_filter: bool | None = True if favorited == "1" else None
@@ -100,9 +115,9 @@ def browse_assets(
     # Score map: asset_id → score value (populated when sorting by score)
     score_map: dict[int, float] = {}
 
-    # Score range is only meaningful when sorting by score
-    eff_min = min_score if sort_parsed else None
-    eff_max = max_score if sort_parsed else None
+    # Score range is only meaningful when sorting by score; parse safely to float.
+    eff_min = _parse_score(min_score) if sort_parsed else None
+    eff_max = _parse_score(max_score) if sort_parsed else None
 
     if sort_parsed is not None:
         scorer_id, metric_key = sort_parsed
