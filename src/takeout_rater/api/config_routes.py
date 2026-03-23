@@ -177,7 +177,7 @@ def index_status(request: Request) -> JSONResponse:
                 "done": False,
                 "error": None,
                 "message": "",
-                "scored": 0,
+                "processed": 0,
                 "total": 0,
             }
         )
@@ -187,7 +187,7 @@ def index_status(request: Request) -> JSONResponse:
             "done": p.done,
             "error": p.error,
             "message": p.message,
-            "scored": p.scored,
+            "processed": p.processed,
             "total": p.total,
         }
     )

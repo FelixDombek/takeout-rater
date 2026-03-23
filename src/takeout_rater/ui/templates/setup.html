@@ -161,7 +161,7 @@
           return;
         }
         if (data.done) {
-          var msg = '✓ Indexed ' + data.scored + ' photo(s). Redirecting…';
+          var msg = '✓ Indexed ' + data.processed + ' photo(s). Redirecting…';
           showStatus(msg, 'ok');
           setProgress(100);
           setTimeout(function () { window.location.href = '/'; }, 1200);
@@ -170,7 +170,7 @@
         // Still running — show progress from the message field.
         var pct = 0;
         if (data.total > 0) {
-          pct = Math.round((data.scored / data.total) * 100);
+          pct = Math.round((data.processed / data.total) * 100);
         }
         setProgress(pct);
         showStatus(data.message || 'Scanning for photos\u2026', 'info');

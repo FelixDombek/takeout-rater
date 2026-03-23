@@ -304,7 +304,7 @@
     var jt = data.job_type;
     var pct = null;
     if (data.total > 0) {
-      pct = Math.round((data.scored / data.total) * 100);
+      pct = Math.round((data.processed / data.total) * 100);
     }
 
     setBadge(jt, data.running);

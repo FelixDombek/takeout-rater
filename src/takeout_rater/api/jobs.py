@@ -52,7 +52,7 @@ class JobProgress:
         done: ``True`` once the job has finished (success or error).
         error: Human-readable error message, or ``None`` on success.
         message: Short human-readable status line (updated during the run).
-        scored: General-purpose "items processed so far" counter.  For the
+        processed: General-purpose "items processed so far" counter.  For the
             ``"score"`` job this is the number of assets scored; for
             ``"index"`` / ``"rescan"`` / ``"rehash"`` jobs it is the number of
             assets indexed / rescanned / rehashed respectively.
@@ -66,7 +66,7 @@ class JobProgress:
     done: bool = False
     error: str | None = None
     message: str = ""
-    scored: int = 0
+    processed: int = 0
     total: int = 0
 
 
@@ -86,7 +86,7 @@ def _job_status_dict(p: JobProgress) -> dict:
         "done": p.done,
         "error": p.error,
         "message": p.message,
-        "scored": p.scored,
+        "processed": p.processed,
         "total": p.total,
     }
 
@@ -132,7 +132,7 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "done": False,
                     "error": None,
                     "message": "",
-                    "scored": 0,
+                    "processed": 0,
                     "total": 0,
                 }
             )
@@ -150,7 +150,7 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "done": False,
                     "error": None,
                     "message": "",
-                    "scored": 0,
+                    "processed": 0,
                     "total": 0,
                 }
             )
@@ -187,7 +187,7 @@ def _start_index_job(app: object, library_root: Path) -> None:
 
         def _cb(p: IndexProgress) -> None:
             progress.total = p.found
-            progress.scored = p.indexed
+            progress.processed = p.indexed
             if p.phase == "scanning" and p.total_dirs > 0:
                 msg = (
                     f"Scanning folders ({p.dirs_scanned}\u202f/\u202f{p.total_dirs})"
@@ -208,7 +208,7 @@ def _start_index_job(app: object, library_root: Path) -> None:
         try:
             result = run_index(library_root, worker_conn, on_progress=_cb)
             progress.total = result.found
-            progress.scored = result.indexed
+            progress.processed = result.indexed
             if result.error:
                 progress.error = result.error
                 progress.message = f"Error: {result.error}"
@@ -337,11 +337,11 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             total_scorers = len(scorer_ids)
             for idx, sid in enumerate(scorer_ids):
                 progress.message = f"Scoring with {sid!r} ({idx + 1}/{total_scorers})…"
-                progress.scored = 0
+                progress.processed = 0
                 progress.total = 0
 
                 def _cb(scored: int, total: int) -> None:
-                    progress.scored = scored
+                    progress.processed = scored
                     progress.total = total
 
                 run_scorer_by_id(
@@ -410,7 +410,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
             progress.message = "Building clusters…"
 
             def _cb(processed: int, total: int) -> None:
-                progress.scored = processed
+                progress.processed = processed
                 progress.total = total
                 if total > 0:
                     progress.message = f"Clustering… {processed}/{total} hashes"
@@ -562,7 +562,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                     dest = export_dir / f"cluster{cluster_id:06d}_{asset.filename}"
                     shutil.copy2(src, dest)
                     copied += 1
-                    progress.scored = copied
+                    progress.processed = copied
                     progress.message = f"Exported {copied} file(s)…"
 
             progress.message = f"Export complete — {copied} file(s) copied to {export_dir}" + (
@@ -655,11 +655,11 @@ def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
 
                 if hashed % 100 == 0:
                     worker_conn.commit()
-                    progress.scored = hashed
+                    progress.processed = hashed
                     progress.message = f"Rehashed {hashed}/{total} asset(s)…"
 
             worker_conn.commit()
-            progress.scored = hashed
+            progress.processed = hashed
             progress.message = f"Rehash complete — {hashed} hash(es) computed" + (
                 f" ({skipped} skipped)" if skipped else ""
             )
@@ -835,11 +835,11 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 processed += 1
                 if processed % 100 == 0:
                     worker_conn.commit()
-                    progress.scored = processed
+                    progress.processed = processed
                     progress.message = f"Rescanned {processed}/{total} asset(s)…"
 
             worker_conn.commit()
-            progress.scored = processed
+            progress.processed = processed
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
                 f" ({skipped} sidecar error(s))" if skipped else ""
             )

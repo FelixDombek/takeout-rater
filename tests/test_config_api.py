@@ -267,7 +267,7 @@ def test_index_status_returns_progress_fields(client: TestClient) -> None:
     assert "done" in data
     assert "error" in data
     assert "message" in data
-    assert "scored" in data
+    assert "processed" in data
     assert "total" in data
 
 
@@ -279,7 +279,7 @@ def test_index_status_reflects_stored_job_progress(client: TestClient) -> None:
         job_type="index",
         running=False,
         done=True,
-        scored=42,
+        processed=42,
         total=42,
         message="Indexed 42 photo(s).",
     )
@@ -291,6 +291,6 @@ def test_index_status_reflects_stored_job_progress(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["done"] is True
-    assert data["scored"] == 42
+    assert data["processed"] == 42
     assert data["total"] == 42
     assert data["message"] == "Indexed 42 photo(s)."

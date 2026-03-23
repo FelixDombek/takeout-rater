@@ -321,7 +321,7 @@ def test_jobs_status_reflects_stored_progress(client_with_db: TestClient) -> Non
         job_type="score",
         running=False,
         done=True,
-        scored=100,
+        processed=100,
         total=100,
         message="Scoring complete.",
     )
@@ -331,7 +331,7 @@ def test_jobs_status_reflects_stored_progress(client_with_db: TestClient) -> Non
     assert resp.status_code == 200
     data = resp.json()
     assert data["done"] is True
-    assert data["scored"] == 100
+    assert data["processed"] == 100
     assert data["total"] == 100
     assert data["message"] == "Scoring complete."
 
