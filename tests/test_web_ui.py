@@ -330,3 +330,23 @@ def test_browse_shows_save_preset_button_when_sort_active(
 ) -> None:
     resp = client_with_scores.get("/assets?sort_by=blur:sharpness")
     assert "Save as" in resp.text
+
+
+# ── Unconfigured (setup) state ────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def client_unconfigured(tmp_path: Path) -> TestClient:
+    """Client with no DB connection, simulating the initial setup state."""
+    app = create_app(library_root=None, db_conn=None)
+    return TestClient(app, follow_redirects=False)
+
+
+def test_clusters_returns_503_when_not_configured(client_unconfigured: TestClient) -> None:
+    resp = client_unconfigured.get("/clusters")
+    assert resp.status_code == 503
+
+
+def test_cluster_detail_returns_503_when_not_configured(client_unconfigured: TestClient) -> None:
+    resp = client_unconfigured.get("/clusters/1")
+    assert resp.status_code == 503

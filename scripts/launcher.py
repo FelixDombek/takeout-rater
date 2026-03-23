@@ -101,6 +101,20 @@ def _install_deps() -> None:
     _run([venv_py, "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
     print("  Installing takeout-rater[index,web] …")
     _run([venv_py, "-m", "pip", "install", "--quiet", "-e", f"{ROOT}[index,web]"])
+    # Install optional scorer/format extras; failure is non-fatal (heavy ML deps
+    # may not be installable on every machine, e.g. no CUDA / limited disk).
+    for extra, label in [
+        ("aesthetic", "LAION aesthetic scorer"),
+        ("nsfw", "NSFW scorer"),
+        ("heic", "HEIC image support"),
+    ]:
+        print(f"  Installing optional extra [{extra}] ({label}) …")
+        result = subprocess.run(
+            [venv_py, "-m", "pip", "install", "--quiet", "-e", f"{ROOT}[{extra}]"],
+            check=False,
+        )
+        if result.returncode != 0:
+            print(f"    (skipped — optional [{extra}] could not be installed)")
     DEPS_HASH_FILE.write_text(_compute_deps_hash())
 
 
