@@ -33,6 +33,8 @@ def thumb_path_for_id(thumbs_dir: Path, asset_id: int) -> Path:
 def generate_thumbnail(image_path: Path, output_path: Path) -> None:
     """Generate a ≤512 px JPEG thumbnail and write it to *output_path*.
 
+    EXIF orientation metadata is applied (via :func:`PIL.ImageOps.exif_transpose`)
+    before resizing, so the thumbnail always reflects the correct visual orientation.
     The image is resized so that neither dimension exceeds :data:`THUMB_MAX_PX`
     while preserving the aspect ratio.  The output is always a JPEG regardless
     of the source format.
@@ -47,7 +49,7 @@ def generate_thumbnail(image_path: Path, output_path: Path) -> None:
         OSError: If the image cannot be read or the thumbnail cannot be written.
     """
     try:
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image, ImageOps  # noqa: PLC0415
     except ImportError as exc:
         raise ImportError(
             "Pillow is required for thumbnail generation. Install it with: pip install Pillow>=10.0"
@@ -56,6 +58,8 @@ def generate_thumbnail(image_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with Image.open(image_path) as img:
+        # Apply EXIF orientation so thumbnails are always visually correct.
+        img = ImageOps.exif_transpose(img) or img
         # Convert to RGB so JPEG output always succeeds (handles RGBA, P, etc.)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
