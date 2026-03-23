@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from takeout_rater.api.assets import router as assets_router
 from takeout_rater.api.clusters import router as clusters_router
 from takeout_rater.api.config_routes import router as config_router
+from takeout_rater.api.jobs import router as jobs_router
 from takeout_rater.api.presets import router as presets_router
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -90,6 +91,8 @@ def create_app(
     app.state.templates = _make_templates(_TEMPLATES_DIR)
     # Background indexing state (set/updated by the config route)
     app.state.index_progress = None
+    # Background job state (set/updated by the jobs router)
+    app.state.jobs = {}
 
     # Config / health routes always available (no DB required)
     app.include_router(config_router)
@@ -98,6 +101,7 @@ def create_app(
     app.include_router(assets_router)
     app.include_router(clusters_router)
     app.include_router(presets_router)
+    app.include_router(jobs_router)
 
     @app.get("/")
     def redirect_to_browse(request: Request) -> RedirectResponse:
@@ -115,6 +119,15 @@ def create_app(
             "setup.html",
             {"request": request, "current_path": str(current) if current else None},
         )
+
+    @app.get("/jobs", response_class=HTMLResponse)
+    def jobs_page(request: Request) -> HTMLResponse:
+        if request.app.state.db_conn is None:
+            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+
+            return _RR(url="/setup")  # type: ignore[return-value]
+        templates = request.app.state.templates
+        return templates.TemplateResponse("jobs.html", {"request": request})
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_handler(
