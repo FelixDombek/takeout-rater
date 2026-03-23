@@ -51,7 +51,7 @@ def test_jobs_status_returns_list_by_default(client_no_db: TestClient) -> None:
     data = resp.json()
     assert isinstance(data, list)
     job_types = {item["job_type"] for item in data}
-    assert job_types == {"score", "cluster", "export", "rehash", "rescan"}
+    assert job_types == {"index", "score", "cluster", "export", "rehash", "rescan"}
 
 
 def test_jobs_status_initial_all_not_running(client_no_db: TestClient) -> None:
@@ -97,7 +97,7 @@ def test_list_scorers_returns_200(client_no_db: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("job_type", ["score", "cluster", "export", "rehash", "rescan"])
+@pytest.mark.parametrize("job_type", ["index", "score", "cluster", "export", "rehash", "rescan"])
 def test_start_job_without_db_returns_503(client_no_db: TestClient, job_type: str) -> None:
     resp = client_no_db.post(f"/api/jobs/{job_type}/start", json={})
     assert resp.status_code == 503
@@ -611,3 +611,44 @@ def test_rescan_worker_sets_indexer_version(tmp_path: Path) -> None:
     check_conn.close()
     assert row is not None
     assert row[0] == CURRENT_INDEXER_VERSION
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/index/start
+# ---------------------------------------------------------------------------
+
+
+def test_start_index_job_returns_started(client_with_db: TestClient) -> None:
+    """POST /api/jobs/index/start must return {'status': 'started'}."""
+    resp = client_with_db.post("/api/jobs/index/start")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "started"
+
+
+def test_start_index_job_conflicts_when_running(client_with_db: TestClient) -> None:
+    """A second start while already running must return 409."""
+    from takeout_rater.api.jobs import JobProgress  # noqa: E402
+
+    client_with_db.app.state.jobs["index"] = JobProgress(  # type: ignore[union-attr]
+        job_type="index", running=True
+    )
+
+    resp = client_with_db.post("/api/jobs/index/start")
+    assert resp.status_code == 409
+
+
+def test_index_status_endpoint_returns_index(client_with_db: TestClient) -> None:
+    """/api/jobs/status?job_type=index must return index status."""
+    resp = client_with_db.get("/api/jobs/status?job_type=index")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["job_type"] == "index"
+    assert data["running"] is False
+
+
+def test_start_index_job_creates_job_progress(client_with_db: TestClient) -> None:
+    """After POST /api/jobs/index/start, app.state.jobs must have an 'index' entry."""
+    client_with_db.post("/api/jobs/index/start")
+    jobs = client_with_db.app.state.jobs  # type: ignore[union-attr]
+    assert "index" in jobs
+    assert jobs["index"].job_type == "index"

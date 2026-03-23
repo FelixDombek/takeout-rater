@@ -149,9 +149,9 @@
     progressWrap.className = 'progress-bar-wrap';
   }
 
-  // Poll /api/index/status until indexing is done, then redirect.
+  // Poll /api/jobs/status?job_type=index until indexing is done, then redirect.
   function pollIndexStatus() {
-    fetch('/api/index/status')
+    fetch('/api/jobs/status?job_type=index')
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data.error) {
@@ -161,36 +161,19 @@
           return;
         }
         if (data.done) {
-          var msg = '✓ Indexed ' + data.indexed + ' photo(s). Redirecting…';
+          var msg = '✓ Indexed ' + data.scored + ' photo(s). Redirecting…';
           showStatus(msg, 'ok');
           setProgress(100);
           setTimeout(function () { window.location.href = '/'; }, 1200);
           return;
         }
-        // Still running — show phase-appropriate progress.
-        // \u202f = narrow no-break space (keeps "5 / 20" together visually)
-        // \u2002 = en space (padding around the "–" separator)
-        // \u2026 = ellipsis "…"
-        var pct, msg;
-        if (data.phase === 'scanning' && data.total_dirs > 0) {
-          // Scanning phase: dirs_scanned / total_dirs maps to 0–40 % of the bar.
-          pct = Math.round((data.dirs_scanned / data.total_dirs) * 40);
-          msg = 'Scanning folders (' + data.dirs_scanned + '\u202f/\u202f' + data.total_dirs + ')';
-          if (data.current_dir) { msg += '\u2002–\u2002' + data.current_dir; }
-          msg += '\u2026';
-        } else if (data.phase === 'indexing' && data.found > 0) {
-          // Indexing phase: indexed / found maps to 40–100 % of the bar.
-          pct = 40 + Math.round((data.indexed / data.found) * 60);
-          msg = 'Indexing\u2026 ' + data.indexed + '\u202f/\u202f' + data.found + ' photos';
-          if (data.current_dir && data.current_dir !== '.') {
-            msg += '\u2002–\u2002' + data.current_dir;
-          }
-        } else {
-          pct = 0;
-          msg = 'Scanning for photos\u2026';
+        // Still running — show progress from the message field.
+        var pct = 0;
+        if (data.total > 0) {
+          pct = Math.round((data.scored / data.total) * 100);
         }
         setProgress(pct);
-        showStatus(msg, 'info');
+        showStatus(data.message || 'Scanning for photos\u2026', 'info');
         setTimeout(pollIndexStatus, 1000);
       })
       .catch(function () {

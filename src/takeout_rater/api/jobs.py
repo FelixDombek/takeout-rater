@@ -1,6 +1,7 @@
 """FastAPI router for background job management.
 
 Exposes endpoints to trigger and monitor long-running operations:
+- Index (initial scan or re-index of the Takeout folder)
 - Scoring (run available scorers over indexed assets)
 - Clustering (group near-duplicates by pHash)
 - Export (copy best-of-cluster assets to the export folder)
@@ -15,6 +16,7 @@ Endpoints
 ---------
 GET  /api/jobs/status            – status of all (or a specific) background job
 GET  /api/jobs/scorers           – list available scorers
+POST /api/jobs/index/start       – start initial indexing (or re-index)
 POST /api/jobs/score/start       – start scoring (optional scorer_id body field)
 POST /api/jobs/cluster/start     – start clustering
 POST /api/jobs/export/start      – start best-of-cluster export
@@ -38,7 +40,7 @@ router = APIRouter()
 # Job progress dataclass
 # ---------------------------------------------------------------------------
 
-_JOB_TYPES = ("score", "cluster", "export", "rehash", "rescan")
+_JOB_TYPES = ("index", "score", "cluster", "export", "rehash", "rescan")
 
 
 @dataclass
@@ -50,9 +52,13 @@ class JobProgress:
         done: ``True`` once the job has finished (success or error).
         error: Human-readable error message, or ``None`` on success.
         message: Short human-readable status line (updated during the run).
-        scored: Number of assets scored so far (scoring job only).
-        total: Total items to process (scoring job only).
-        job_type: One of ``"score"``, ``"cluster"``, ``"export"``, ``"rehash"``.
+        scored: General-purpose "items processed so far" counter.  For the
+            ``"score"`` job this is the number of assets scored; for
+            ``"index"`` / ``"rescan"`` / ``"rehash"`` jobs it is the number of
+            assets indexed / rescanned / rehashed respectively.
+        total: Total items to process (0 until the count is known).
+        job_type: One of ``"index"``, ``"score"``, ``"cluster"``,
+            ``"export"``, ``"rehash"``, ``"rescan"``.
     """
 
     job_type: str = ""
@@ -151,6 +157,101 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
         else:
             statuses.append(_job_status_dict(p))
     return JSONResponse(statuses)
+
+
+# ---------------------------------------------------------------------------
+# Index job helper (used by both POST /api/jobs/index/start and by config_routes)
+# ---------------------------------------------------------------------------
+
+
+def _start_index_job(app: object, library_root: Path) -> None:
+    """Launch a background thread that indexes *library_root*.
+
+    Progress is stored in ``app.state.jobs["index"]`` as a :class:`JobProgress`
+    entry so that it is visible in the unified job queue.  The ``message``
+    field surfaces directory-level progress (phase, dirs_scanned, current_dir).
+
+    If an indexing run is already active, this call is a no-op.
+    """
+    jobs = _get_jobs(app)
+    existing = jobs.get("index")
+    if existing is not None and existing.running:
+        return
+
+    progress = JobProgress(job_type="index", running=True, message="Starting\u2026")
+    jobs["index"] = progress
+
+    def _worker() -> None:
+        from takeout_rater.db.connection import open_library_db as _open  # noqa: PLC0415
+        from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
+
+        def _cb(p: IndexProgress) -> None:
+            progress.total = p.found
+            progress.scored = p.indexed
+            if p.phase == "scanning" and p.total_dirs > 0:
+                msg = (
+                    f"Scanning folders ({p.dirs_scanned}\u202f/\u202f{p.total_dirs})"
+                    + (f"\u2002\u2013\u2002{p.current_dir}" if p.current_dir else "")
+                    + "\u2026"
+                )
+            elif p.phase == "indexing" and p.found > 0:
+                msg = f"Indexing\u2026 {p.indexed}\u202f/\u202f{p.found} photos" + (
+                    f"\u2002\u2013\u2002{p.current_dir}"
+                    if p.current_dir and p.current_dir != "."
+                    else ""
+                )
+            else:
+                msg = "Scanning for photos\u2026"
+            progress.message = msg
+
+        worker_conn = _open(library_root)
+        try:
+            result = run_index(library_root, worker_conn, on_progress=_cb)
+            progress.total = result.found
+            progress.scored = result.indexed
+            if result.error:
+                progress.error = result.error
+                progress.message = f"Error: {result.error}"
+            else:
+                progress.message = f"Indexed {result.indexed} photo(s)."
+            progress.running = False
+            progress.done = True
+        except Exception as exc:  # noqa: BLE001
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+            progress.running = False
+            progress.done = True
+        finally:
+            worker_conn.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-indexer")
+    thread.start()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/index/start
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/index/start")
+def start_index_job(request: Request) -> JSONResponse:
+    """Start a background index run (or re-index).
+
+    Scans the Takeout folder and upserts newly discovered assets into the
+    library.  Useful after adding new Takeout archives or if the initial
+    setup index was interrupted.
+
+    Returns ``409`` if an index job is already running.
+    """
+    _require_library_root(request)
+    jobs = _get_jobs(request.app)
+
+    existing = jobs.get("index")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="An index job is already running.")
+
+    _start_index_job(request.app, request.app.state.library_root)
+    return JSONResponse({"status": "started"})
 
 
 # ---------------------------------------------------------------------------
