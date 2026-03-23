@@ -5,6 +5,16 @@ types (``dict``, ``list``, ``int``, ``None``).
 
 Rows fetched from the DB are :class:`sqlite3.Row` objects, which support
 both index and column-name access.
+
+Constants
+---------
+CURRENT_INDEXER_VERSION : int
+    Monotonically-increasing integer tracking which version of the indexing
+    pipeline last processed each asset.  Increment this constant whenever the
+    indexing logic changes in a way that requires re-processing existing
+    assets.  Assets with ``indexer_version IS NULL`` or
+    ``indexer_version < CURRENT_INDEXER_VERSION`` are candidates for the
+    "Rescan library" job.
 """
 
 from __future__ import annotations
@@ -14,6 +24,15 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Indexer versioning
+# ---------------------------------------------------------------------------
+
+#: Increment this constant whenever the indexing pipeline changes in a way
+#: that requires existing assets to be re-processed.  Version 1 is the
+#: baseline introduced with the "Rescan library" feature.
+CURRENT_INDEXER_VERSION: int = 1
 
 
 @dataclass
@@ -1083,3 +1102,55 @@ def delete_view_preset(conn: sqlite3.Connection, preset_id: int) -> bool:
     cursor = conn.execute("DELETE FROM view_presets WHERE id = ?", (preset_id,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Rescan helpers
+# ---------------------------------------------------------------------------
+
+
+def list_asset_ids_needing_rescan(
+    conn: sqlite3.Connection,
+    full: bool = False,
+) -> list[tuple[int, str, str | None]]:
+    """Return assets that need reprocessing by the indexer.
+
+    Args:
+        conn: Open database connection.
+        full: When ``True``, return *all* assets regardless of their current
+            ``indexer_version``.  When ``False`` (default), return only assets
+            where ``indexer_version IS NULL OR indexer_version < CURRENT_INDEXER_VERSION``.
+
+    Returns:
+        A list of ``(id, relpath, sidecar_relpath)`` tuples ordered by ``id``.
+    """
+    if full:
+        sql = "SELECT id, relpath, sidecar_relpath FROM assets ORDER BY id"
+        rows = conn.execute(sql).fetchall()
+    else:
+        sql = (
+            "SELECT id, relpath, sidecar_relpath FROM assets "
+            "WHERE indexer_version IS NULL OR indexer_version < ? "
+            "ORDER BY id"
+        )
+        rows = conn.execute(sql, (CURRENT_INDEXER_VERSION,)).fetchall()
+    return [(row[0], row[1], row[2]) for row in rows]
+
+
+def count_assets_needing_rescan(conn: sqlite3.Connection) -> int:
+    """Return the number of assets with a stale or missing ``indexer_version``.
+
+    Useful for showing an "upgrade recommended" hint in the UI.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        Count of assets where
+        ``indexer_version IS NULL OR indexer_version < CURRENT_INDEXER_VERSION``.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE indexer_version IS NULL OR indexer_version < ?",
+        (CURRENT_INDEXER_VERSION,),
+    ).fetchone()
+    return row[0] if row else 0

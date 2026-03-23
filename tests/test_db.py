@@ -85,10 +85,10 @@ def test_schema_creates_asset_scores_table() -> None:
     assert "asset_scores" in tables
 
 
-def test_schema_user_version_is_3() -> None:
+def test_schema_user_version_is_4() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 3
+    assert version == 4
 
 
 def test_migrate_is_idempotent() -> None:
@@ -96,7 +96,7 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 3
+    assert version == 4
 
 
 # ── library_state_dir ────────────────────────────────────────────────────────

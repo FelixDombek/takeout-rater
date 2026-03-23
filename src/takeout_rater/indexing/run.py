@@ -17,6 +17,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from takeout_rater.db.queries import CURRENT_INDEXER_VERSION as _CURRENT_INDEXER_VERSION
+
 
 def _compute_sha256(path: Path) -> str:
     """Return the hex-encoded SHA-256 digest of the file at *path*."""
@@ -167,6 +169,7 @@ def run_index(
                 else None
             ),
             "indexed_at": now,
+            "indexer_version": _CURRENT_INDEXER_VERSION,
         }
 
         # Compute SHA-256 content hash; skip silently on read errors.

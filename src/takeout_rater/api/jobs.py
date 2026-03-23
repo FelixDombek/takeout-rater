@@ -5,6 +5,7 @@ Exposes endpoints to trigger and monitor long-running operations:
 - Clustering (group near-duplicates by pHash)
 - Export (copy best-of-cluster assets to the export folder)
 - Rehash (compute SHA-256 for already-indexed assets)
+- Rescan (re-process assets through the indexing pipeline, updating indexer_version)
 
 Each operation runs in a background thread.  Progress is stored in
 ``app.state.jobs`` (a dict keyed by job type string) and can be polled via
@@ -18,6 +19,7 @@ POST /api/jobs/score/start       – start scoring (optional scorer_id body fiel
 POST /api/jobs/cluster/start     – start clustering
 POST /api/jobs/export/start      – start best-of-cluster export
 POST /api/jobs/rehash/start      – start SHA-256 rehash
+POST /api/jobs/rescan/start      – start library rescan (update indexer_version)
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ router = APIRouter()
 # Job progress dataclass
 # ---------------------------------------------------------------------------
 
-_JOB_TYPES = ("score", "cluster", "export", "rehash")
+_JOB_TYPES = ("score", "cluster", "export", "rehash", "rescan")
 
 
 @dataclass
@@ -571,6 +573,186 @@ def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
             worker_conn.close()
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-rehash")
+    thread.start()
+
+    return JSONResponse({"status": "started"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/rescan/start
+# ---------------------------------------------------------------------------
+
+
+class _RescanStartBody(BaseModel):
+    mode: str = "missing_only"  # "missing_only" | "full"
+
+
+@router.post("/api/jobs/rescan/start")
+def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
+    """Start a background library rescan.
+
+    Re-processes assets through the indexing pipeline and sets
+    ``indexer_version = CURRENT_INDEXER_VERSION`` on each asset.
+
+    Body fields
+    -----------
+    mode : str
+        ``"missing_only"`` (default) processes only assets whose
+        ``indexer_version`` is ``NULL`` or less than
+        ``CURRENT_INDEXER_VERSION``.  ``"full"`` processes all assets.
+
+    Returns ``409`` if a rescan job is already running.
+    """
+    _require_library_root(request)
+    jobs = _get_jobs(request.app)
+
+    existing = jobs.get("rescan")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="A rescan job is already running.")
+
+    if body.mode not in ("missing_only", "full"):
+        raise HTTPException(status_code=400, detail="mode must be 'missing_only' or 'full'.")
+
+    library_root: Path = request.app.state.library_root
+    mode = body.mode
+    progress = JobProgress(job_type="rescan", running=True, message="Starting…")
+    jobs["rescan"] = progress
+
+    def _worker() -> None:
+        from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+        from takeout_rater.db.queries import (  # noqa: PLC0415
+            CURRENT_INDEXER_VERSION,
+            list_asset_ids_needing_rescan,
+        )
+
+        worker_conn = open_library_db(library_root)
+        try:
+            # Try to locate the photos root for sidecar re-parsing; continue
+            # even if the Takeout directory is not present (e.g. in tests).
+            photos_root = None
+            try:
+                from takeout_rater.indexing.scanner import (  # noqa: PLC0415
+                    find_google_photos_root,
+                )
+
+                photos_root = find_google_photos_root(library_root / "Takeout")
+            except (FileNotFoundError, ValueError, OSError):
+                pass
+
+            rows = list_asset_ids_needing_rescan(worker_conn, full=(mode == "full"))
+            total = len(rows)
+            progress.total = total
+            progress.message = f"Rescanning {total} asset(s)…"
+
+            processed = 0
+            skipped = 0
+
+            for asset_id, _relpath, sidecar_relpath in rows:
+                updates: dict = {}
+
+                # Re-parse sidecar when the library files are accessible.
+                if photos_root is not None and sidecar_relpath:
+                    sidecar_path = photos_root / sidecar_relpath
+                    if sidecar_path.exists():
+                        try:
+                            from takeout_rater.indexing.sidecar import (  # noqa: PLC0415
+                                parse_sidecar,
+                            )
+
+                            sidecar = parse_sidecar(sidecar_path)
+                            updates.update(
+                                {
+                                    "title": sidecar.title,
+                                    "description": sidecar.description,
+                                    "google_photos_url": sidecar.google_photos_url,
+                                    "taken_at": sidecar.taken_at,
+                                    "created_at_sidecar": sidecar.created_at_sidecar,
+                                    "image_views": sidecar.image_views,
+                                    "geo_lat": sidecar.geo_lat,
+                                    "geo_lon": sidecar.geo_lon,
+                                    "geo_alt": sidecar.geo_alt,
+                                    "geo_exif_lat": sidecar.geo_exif_lat,
+                                    "geo_exif_lon": sidecar.geo_exif_lon,
+                                    "geo_exif_alt": sidecar.geo_exif_alt,
+                                    "favorited": (
+                                        None
+                                        if sidecar.favorited is None
+                                        else int(sidecar.favorited)
+                                    ),
+                                    "archived": (
+                                        None if sidecar.archived is None else int(sidecar.archived)
+                                    ),
+                                    "trashed": (
+                                        None if sidecar.trashed is None else int(sidecar.trashed)
+                                    ),
+                                    "origin_type": sidecar.origin_type,
+                                    "origin_device_type": sidecar.origin_device_type,
+                                    "origin_device_folder": sidecar.origin_device_folder,
+                                    "app_source_package": sidecar.app_source_package,
+                                }
+                            )
+                        except (ValueError, OSError):
+                            skipped += 1
+
+                # Always stamp the indexer version.
+                updates["indexer_version"] = CURRENT_INDEXER_VERSION
+
+                # Guard: only allow known asset columns to avoid accidental
+                # or future-introduced SQL injection through dict key names.
+                _ALLOWED_ASSET_COLS = frozenset(
+                    {
+                        "title",
+                        "description",
+                        "google_photos_url",
+                        "taken_at",
+                        "created_at_sidecar",
+                        "image_views",
+                        "geo_lat",
+                        "geo_lon",
+                        "geo_alt",
+                        "geo_exif_lat",
+                        "geo_exif_lon",
+                        "geo_exif_alt",
+                        "favorited",
+                        "archived",
+                        "trashed",
+                        "origin_type",
+                        "origin_device_type",
+                        "origin_device_folder",
+                        "app_source_package",
+                        "indexer_version",
+                    }
+                )
+                safe_updates = {k: v for k, v in updates.items() if k in _ALLOWED_ASSET_COLS}
+
+                set_clause = ", ".join(f"{k} = ?" for k in safe_updates)
+                worker_conn.execute(
+                    f"UPDATE assets SET {set_clause} WHERE id = ?",  # noqa: S608
+                    [*safe_updates.values(), asset_id],
+                )
+
+                processed += 1
+                if processed % 100 == 0:
+                    worker_conn.commit()
+                    progress.scored = processed
+                    progress.message = f"Rescanned {processed}/{total} asset(s)…"
+
+            worker_conn.commit()
+            progress.scored = processed
+            progress.message = f"Rescan complete — {processed} asset(s) processed." + (
+                f" ({skipped} sidecar error(s))" if skipped else ""
+            )
+            progress.running = False
+            progress.done = True
+        except Exception as exc:  # noqa: BLE001
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+            progress.running = False
+            progress.done = True
+        finally:
+            worker_conn.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-rescan")
     thread.start()
 
     return JSONResponse({"status": "started"})

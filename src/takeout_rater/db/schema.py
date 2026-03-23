@@ -14,6 +14,7 @@ _MIGRATIONS: list[tuple[int, str]] = [
     (1, "0001_initial_schema.sql"),
     (2, "0002_view_presets.sql"),
     (3, "0003_sha256_index.sql"),
+    (4, "0004_assets_indexer_version.sql"),
 ]
 
 
