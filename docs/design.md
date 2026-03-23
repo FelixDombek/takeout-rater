@@ -1,6 +1,6 @@
 # Design: takeout-rater
 
-*Last updated: 2026-03 (Iteration 5 complete; scanning progress improvement applied)*
+*Last updated: 2026-03 (Iteration 7 complete: all core workflows available from the UI)*
 
 ---
 
@@ -209,3 +209,21 @@ If a HEIC loader is unavailable, the asset is indexed but marked `unsupported/sk
 | **3** ✅ | Clustering: pHash-based cluster builder, cluster persistence, cluster view in UI, best-of-cluster `export` CLI command |
 | **4** ✅ | Aesthetic scorer: LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP) as optional scorer, `aesthetic` metric (0–10), sort-by-aesthetic in UI via `aesthetic` extra |
 | **5** ✅ | NSFW / quality filter: NSFW detector wired as an optional scorer, filter-by-score range in UI, view presets saved to DB |
+| **6** ✅ | SHA-256 deduplication: `rehash` CLI command, deduplicate browse UI, duplicate paths in detail view; DB at schema version 3 |
+| **7** ✅ | All core workflows available from the UI: background jobs API (`/api/jobs/*`) for score, cluster, export, and rehash; `/jobs` page with progress bars and last-run status; Jobs nav link added to every page |
+
+---
+
+## UI-first development guideline
+
+> **All future features must be accessible from the web UI from day one.**
+>
+> Starting with Iteration 7, every new workflow (scorer, export mode, admin tool, etc.) **must** include:
+> 1. A UI trigger (button, form, or page) on the `/jobs` page or a dedicated feature page.
+> 2. A status / progress mechanism so users can see the job running and its result.
+> 3. API endpoint(s) that the UI calls (under `/api/…`).
+>
+> CLI commands may still be added as a convenience for power users and scripting, but they are
+> **never** the primary or only way to access a feature.  New features must not require
+> CLI usage to be functional.  This rule applies to all scorers, data-management tools,
+> export modes, and any other capability added in future iterations.

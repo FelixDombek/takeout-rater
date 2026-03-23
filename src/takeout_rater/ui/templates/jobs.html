@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+
+{% block title %}Jobs – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .jobs-page { max-width: 780px; margin: 0 auto; }
+  .jobs-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .jobs-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+
+  .job-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .job-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+  }
+  .job-card-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    flex: 1;
+  }
+  .job-card p.desc {
+    color: #555;
+    font-size: 0.875rem;
+    margin-bottom: 0.9rem;
+    line-height: 1.5;
+  }
+
+  /* Options row inside card */
+  .job-options {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 0.8rem;
+  }
+  .job-options label { font-size: 0.85rem; color: #444; }
+  .job-options select, .job-options input[type=number] {
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    background: #fff;
+  }
+
+  /* Status bar */
+  .job-status {
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    min-height: 1.3em;
+    color: #444;
+  }
+  .job-status.ok    { color: #1e7e34; }
+  .job-status.error { color: #c0392b; }
+  .job-status.info  { color: #1a5cdb; }
+
+  .progress-bar-wrap {
+    height: 6px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    margin-top: 0.5rem;
+    display: none;
+  }
+  .progress-bar-wrap.visible { display: block; }
+  .progress-bar {
+    height: 100%;
+    background: #1a5cdb;
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  .btn-run {
+    white-space: nowrap;
+  }
+
+  .badge-running {
+    display: inline-block;
+    background: #dbeafe;
+    color: #1e40af;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="jobs-page">
+  <h1>⚙ Jobs &amp; Tools</h1>
+  <p class="subtitle">
+    Trigger background operations on your library. Each job runs in the background — you can
+    navigate away and return to check progress.
+  </p>
+
+  <!-- ── Score ──────────────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-score">
+    <div class="job-card-header">
+      <h2>🎯 Score</h2>
+      <span class="badge-running" id="badge-score" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-score" onclick="startJob('score')">Run Scoring</button>
+    </div>
+    <p class="desc">
+      Run enabled scorers (blur, aesthetic, NSFW, …) over all indexed photos and store the
+      results in the library. Perceptual hashes are computed first (needed for clustering).
+    </p>
+    <div class="job-options">
+      <label for="score-scorer">Scorer:</label>
+      <select id="score-scorer">
+        <option value="">— all available —</option>
+        <!-- populated by JS -->
+      </select>
+      <label style="margin-left:0.5rem;">
+        <input type="checkbox" id="score-rerun"> Re-score already-scored assets
+      </label>
+    </div>
+    <div class="progress-bar-wrap" id="prog-wrap-score"><div class="progress-bar" id="prog-bar-score"></div></div>
+    <div class="job-status" id="status-score"></div>
+  </div>
+
+  <!-- ── Cluster ────────────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-cluster">
+    <div class="job-card-header">
+      <h2>🔗 Cluster</h2>
+      <span class="badge-running" id="badge-cluster" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-cluster" onclick="startJob('cluster')">Run Clustering</button>
+    </div>
+    <p class="desc">
+      Group near-duplicate photos using perceptual hashing (dhash). Requires scoring to have
+      been run first so that pHashes exist. Results appear in the
+      <a href="/clusters">Clusters</a> view.
+    </p>
+    <div class="job-options">
+      <label for="cluster-threshold">Threshold (bits):</label>
+      <input type="number" id="cluster-threshold" value="10" min="1" max="32" style="width:4rem;">
+      <label for="cluster-window">Window:</label>
+      <input type="number" id="cluster-window" value="200" min="10" max="1000" style="width:5rem;">
+      <label for="cluster-minsize">Min&nbsp;size:</label>
+      <input type="number" id="cluster-minsize" value="2" min="2" max="20" style="width:4rem;">
+    </div>
+    <div class="progress-bar-wrap" id="prog-wrap-cluster"><div class="progress-bar" id="prog-bar-cluster"></div></div>
+    <div class="job-status" id="status-cluster"></div>
+  </div>
+
+  <!-- ── Export ─────────────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-export">
+    <div class="job-card-header">
+      <h2>📤 Export Best-Of</h2>
+      <span class="badge-running" id="badge-export" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-export" onclick="startJob('export')">Run Export</button>
+    </div>
+    <p class="desc">
+      Copy the best representative from each cluster to the
+      <code>takeout-rater/exports/</code> folder. Requires clustering to have been run first.
+      Optionally rank by a scorer metric to pick the highest-quality photo from each group.
+    </p>
+    <div class="job-options">
+      <label for="export-scorer">Rank by scorer:</label>
+      <select id="export-scorer">
+        <option value="">— cluster representative —</option>
+        <!-- populated by JS with available scorers + metric combos -->
+      </select>
+    </div>
+    <div class="progress-bar-wrap" id="prog-wrap-export"><div class="progress-bar" id="prog-bar-export"></div></div>
+    <div class="job-status" id="status-export"></div>
+  </div>
+
+  <!-- ── Rehash ─────────────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-rehash">
+    <div class="job-card-header">
+      <h2>🔑 Rehash (SHA-256)</h2>
+      <span class="badge-running" id="badge-rehash" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-rehash" onclick="startJob('rehash')">Run Rehash</button>
+    </div>
+    <p class="desc">
+      Compute SHA-256 content hashes for indexed assets that don't have one yet.
+      Hashes are used to detect true duplicates (byte-identical files).
+    </p>
+    <div class="job-options">
+      <label>
+        <input type="checkbox" id="rehash-all"> Recompute hashes even for already-hashed assets
+      </label>
+    </div>
+    <div class="progress-bar-wrap" id="prog-wrap-rehash"><div class="progress-bar" id="prog-bar-rehash"></div></div>
+    <div class="job-status" id="status-rehash"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Scorer list for the Score and Export dropdowns
+  var scorerMetrics = {};  // scorer_id -> [{metric_key, display}] (filled below)
+
+  // Load available scorers
+  fetch('/api/jobs/scorers')
+    .then(function(r) { return r.json(); })
+    .then(function(scorers) {
+      var sel = document.getElementById('score-scorer');
+      scorers.forEach(function(s) {
+        var opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.name + (s.available ? '' : ' (unavailable)');
+        if (!s.available) opt.disabled = true;
+        sel.appendChild(opt);
+      });
+
+      // Export scorer select: show scorer+metric pairs
+      // For simplicity we just pass scorer_id and rely on default metric
+      var expSel = document.getElementById('export-scorer');
+      scorers.forEach(function(s) {
+        if (!s.available) return;
+        var opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.name;
+        expSel.appendChild(opt);
+      });
+    })
+    .catch(function() { /* ignore */ });
+
+  // ── Poll all job statuses on page load and after each action ──
+  var _pollers = {};  // job_type -> interval handle
+
+  function setStatus(jobType, msg, cls) {
+    var el = document.getElementById('status-' + jobType);
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'job-status' + (cls ? ' ' + cls : '');
+  }
+
+  function setProgress(jobType, pct) {
+    var wrap = document.getElementById('prog-wrap-' + jobType);
+    var bar  = document.getElementById('prog-bar-'  + jobType);
+    if (!wrap || !bar) return;
+    if (pct === null) {
+      wrap.className = 'progress-bar-wrap';
+    } else {
+      wrap.className = 'progress-bar-wrap visible';
+      bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    }
+  }
+
+  function setBadge(jobType, show) {
+    var badge = document.getElementById('badge-' + jobType);
+    if (!badge) return;
+    badge.style.display = show ? 'inline-block' : 'none';
+  }
+
+  function setBtn(jobType, disabled) {
+    var btn = document.getElementById('btn-' + jobType);
+    if (!btn) return;
+    btn.disabled = disabled;
+  }
+
+  function applyJobState(data) {
+    var jt = data.job_type;
+    var pct = null;
+    if (data.total > 0) {
+      pct = Math.round((data.scored / data.total) * 100);
+    }
+
+    setBadge(jt, data.running);
+    setBtn(jt, data.running);
+
+    if (data.error) {
+      setStatus(jt, '✗ ' + data.error, 'error');
+      setProgress(jt, null);
+    } else if (data.done) {
+      setStatus(jt, '✓ ' + data.message, 'ok');
+      setProgress(jt, 100);
+      setTimeout(function() { setProgress(jt, null); }, 3000);
+    } else if (data.running) {
+      setStatus(jt, data.message || 'Running…', 'info');
+      setProgress(jt, pct !== null ? pct : 0);
+    } else if (data.message) {
+      setStatus(jt, data.message, '');
+    }
+
+    if (!data.running) {
+      // Stop any poller for this job type
+      if (_pollers[jt]) {
+        clearInterval(_pollers[jt]);
+        delete _pollers[jt];
+      }
+    }
+  }
+
+  function pollJob(jobType) {
+    fetch('/api/jobs/status?job_type=' + jobType)
+      .then(function(r) { return r.json(); })
+      .then(function(data) { applyJobState(data); })
+      .catch(function() { /* ignore transient errors */ });
+  }
+
+  function startPolling(jobType) {
+    if (_pollers[jobType]) return;  // already polling
+    pollJob(jobType);
+    _pollers[jobType] = setInterval(function() { pollJob(jobType); }, 1000);
+  }
+
+  // Load initial state for all jobs
+  fetch('/api/jobs/status')
+    .then(function(r) { return r.json(); })
+    .then(function(list) {
+      list.forEach(function(data) {
+        applyJobState(data);
+        if (data.running) {
+          startPolling(data.job_type);
+        }
+      });
+    })
+    .catch(function() { /* ignore */ });
+
+  // ── Job launchers ────────────────────────────────────────────────────────
+
+  window.startJob = function(jobType) {
+    var body = {};
+
+    if (jobType === 'score') {
+      var scorerId = document.getElementById('score-scorer').value;
+      var rerun = document.getElementById('score-rerun').checked;
+      if (scorerId) body.scorer_id = scorerId;
+      body.rerun = rerun;
+    } else if (jobType === 'cluster') {
+      body.threshold = parseInt(document.getElementById('cluster-threshold').value, 10) || 10;
+      body.window    = parseInt(document.getElementById('cluster-window').value, 10) || 200;
+      body.min_size  = parseInt(document.getElementById('cluster-minsize').value, 10) || 2;
+    } else if (jobType === 'export') {
+      var exportScorer = document.getElementById('export-scorer').value;
+      if (exportScorer) {
+        body.scorer_id = exportScorer;
+        // Default metric key: use scorer_id itself (common convention).
+        // The backend falls back to cluster representative when metric isn't found.
+        body.metric_key = exportScorer;
+      }
+    } else if (jobType === 'rehash') {
+      body.rehash_all = document.getElementById('rehash-all').checked;
+    }
+
+    setBtn(jobType, true);
+    setBadge(jobType, false);
+    setStatus(jobType, 'Starting…', 'info');
+    setProgress(jobType, 0);
+
+    fetch('/api/jobs/' + jobType + '/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function(r) {
+        if (!r.ok) {
+          return r.json().then(function(d) {
+            throw new Error(d.detail || r.statusText);
+          });
+        }
+        return r.json();
+      })
+      .then(function() {
+        setBadge(jobType, true);
+        startPolling(jobType);
+      })
+      .catch(function(err) {
+        setStatus(jobType, '✗ ' + err.message, 'error');
+        setProgress(jobType, null);
+        setBtn(jobType, false);
+      });
+  };
+})();
+</script>
+{% endblock %}
