@@ -1,8 +1,8 @@
 # Database guidelines
 
-> **Status:** Iteration 1 — schema and migrations are implemented in
-> `src/takeout_rater/db/`.  This document captures the conventions to follow
-> when extending the database in future iterations.
+> **Status:** Iteration 8 — `indexer_version` column and rescan job added.
+> This document captures the conventions to follow when extending the database
+> in future iterations.
 
 ---
 
@@ -40,9 +40,31 @@
 - Never store scores in columns on the `assets` table.
 - This allows adding new scorers without schema migrations.
 
+### Indexer versioning
+
+- `assets.indexer_version` (INTEGER, nullable) tracks which version of the
+  indexing pipeline last processed each asset.
+- `CURRENT_INDEXER_VERSION` is defined in `src/takeout_rater/db/queries.py`.
+- Assets with `indexer_version IS NULL` or `indexer_version < CURRENT_INDEXER_VERSION`
+  are candidates for the "Rescan library" job (`missing_only` mode).
+- **Non-destructive rule**: rescanning must not modify `asset_scores`,
+  `phash`, or `clusters` tables.  Only `assets` columns may be updated.
+- When adding a new derived field to `assets`, increment
+  `CURRENT_INDEXER_VERSION` so that the UI can prompt the user to rescan.
+  Document the bump in the migration file and here.
+
+#### Rescan / upgrade workflow
+
+1. Add the new column via a migration SQL file (e.g. `0005_…`).
+2. Update `CURRENT_INDEXER_VERSION` in `queries.py` (e.g. `1 → 2`).
+3. Add population logic in the rescan worker inside `api/jobs.py`.
+4. Users navigate to `/jobs` → **Rescan library** → select *Missing only* →
+   click **Run Rescan**.  Progress is shown live; the rest of the app remains
+   fully navigable during the background job.
+
 ---
 
-## Key tables (planned for Iteration 1)
+## Key tables
 
 ```sql
 CREATE TABLE assets (
@@ -74,14 +96,16 @@ CREATE TABLE assets (
     archived                INTEGER,               -- 0/1, NULL when absent
     trashed                 INTEGER,               -- 0/1, NULL when absent
     -- Upload / origin info (from googlePhotosOrigin, optional)
-    origin_type             TEXT,                  -- 'mobileUpload'|'driveSync'|'fromPartnerSharing'|'fromSharedAlbum'|'webUpload'|'composition'|NULL
+    origin_type             TEXT,                  -- 'mobileUpload'|'driveSync'|...
     origin_device_type      TEXT,                  -- e.g. 'ANDROID_PHONE' (mobileUpload only)
     origin_device_folder    TEXT,                  -- localFolderName (mobileUpload only)
     app_source_package      TEXT,                  -- appSource.androidPackageName (optional)
     -- Indexing metadata
     sidecar_relpath         TEXT,                  -- path to *.supplemental-metadata.json
     mime                    TEXT,                  -- e.g. 'image/jpeg', 'image/heic'
-    indexed_at              INTEGER NOT NULL
+    indexed_at              INTEGER NOT NULL,
+    -- Pipeline versioning (added in migration 0004)
+    indexer_version         INTEGER                -- NULL = pre-versioning; set by rescan job
 );
 
 CREATE TABLE scorer_runs (
@@ -154,4 +178,13 @@ JOIN asset_scores s ON s.asset_id = a.id
 JOIN scorer_runs r ON r.id = s.scorer_run_id
 WHERE r.scorer_id = 'aesthetic' AND s.metric_key = 'aesthetic'
 ORDER BY s.value DESC;
+```
+
+### Assets needing rescan
+
+```sql
+SELECT id, relpath, sidecar_relpath
+FROM assets
+WHERE indexer_version IS NULL OR indexer_version < :current_version
+ORDER BY id;
 ```
