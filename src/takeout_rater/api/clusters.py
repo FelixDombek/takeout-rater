@@ -19,7 +19,10 @@ _PAGE_SIZE = 50
 
 
 def _get_conn(request: Request) -> sqlite3.Connection:
-    return request.app.state.db_conn
+    conn = request.app.state.db_conn
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
+    return conn
 
 
 @router.get("/clusters", response_class=HTMLResponse)
