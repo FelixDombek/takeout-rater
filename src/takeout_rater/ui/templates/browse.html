@@ -136,8 +136,6 @@
   <span class="toolbar-count">
     {% if total == 0 %}
       No photos indexed yet
-    {% elif total == 1 %}
-      1 unique photo
     {% else %}
       {{ total }} {% if dedupe %}unique {% endif %}photo{{ "s" if total != 1 else "" }}
     {% endif %}

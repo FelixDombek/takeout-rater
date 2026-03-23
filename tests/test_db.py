@@ -394,8 +394,9 @@ def test_list_assets_deduped_hides_duplicate() -> None:
     rows = list_assets_deduped(conn)
     assert len(rows) == 2
     relpaths = {r.relpath for r in rows}
-    # Only the lower-id copy of the duplicate should appear
-    assert "album2/img.jpg" not in relpaths or "album1/img.jpg" not in relpaths
+    # The canonical copy is always the lowest-id (first-inserted) one; album2 is hidden
+    assert "album1/img.jpg" in relpaths
+    assert "album2/img.jpg" not in relpaths
 
 
 def test_list_assets_deduped_shows_all_when_no_sha256() -> None:

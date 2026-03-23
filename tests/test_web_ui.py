@@ -94,8 +94,8 @@ def test_browse_returns_html(client: TestClient) -> None:
 
 def test_browse_shows_asset_count(client_with_assets: TestClient) -> None:
     resp = client_with_assets.get("/assets")
-    assert "3" in resp.text
-    assert "photo" in resp.text
+    # Default dedupe mode shows "3 unique photos" (assets have no sha256 → 3 groups)
+    assert "3 unique photos" in resp.text
 
 
 def test_browse_shows_empty_message_when_no_assets(client: TestClient) -> None:
