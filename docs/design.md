@@ -193,9 +193,9 @@ Threshold and algorithm are stored as `params_json` on `clusters` rows so result
 
 HEIC is handled via a pluggable `ImageLoader` abstraction:
 - Default: Pillow (JPEG, PNG, WebP)
-- Optional: `pillow-heif` (install via `pip install takeout-rater[heic]`)
+- HEIC: `pillow-heif` (included in the base install)
 
-If a HEIC loader is unavailable, the asset is indexed but marked `unsupported/skipped` and excluded from scoring until a loader is installed.
+If HEIC decoding fails for a specific file, the asset is indexed but marked `unsupported/skipped` and excluded from scoring.
 
 ---
 
@@ -207,8 +207,8 @@ If a HEIC loader is unavailable, the asset is indexed but marked `unsupported/sk
 | **1** ✅ | Indexing: takeout scanner, sidecar parser, asset DB, thumbnail cache, minimal browse UI (FastAPI + HTMX) |
 | **2** ✅ | Scorer framework end-to-end: scoring pipeline, BlurScorer + DummyScorer wired to DB, pHash computation, `score` CLI command, score display in UI |
 | **3** ✅ | Clustering: pHash-based cluster builder, cluster persistence, cluster view in UI, best-of-cluster `export` CLI command |
-| **4** ✅ | Aesthetic scorer: LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP) as optional scorer, `aesthetic` metric (0–10), sort-by-aesthetic in UI via `aesthetic` extra |
-| **5** ✅ | NSFW / quality filter: NSFW detector wired as an optional scorer, filter-by-score range in UI, view presets saved to DB |
+| **4** ✅ | Aesthetic scorer: LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP) as scorer, `aesthetic` metric (0–10), sort-by-aesthetic in UI |
+| **5** ✅ | NSFW / quality filter: NSFW detector wired as a scorer, filter-by-score range in UI, view presets saved to DB |
 | **6** ✅ | SHA-256 deduplication: `rehash` CLI command, deduplicate browse UI, duplicate paths in detail view; DB at schema version 3 |
 | **7** ✅ | All core workflows available from the UI: background jobs API (`/api/jobs/*`) for score, cluster, export, and rehash; `/jobs` page with progress bars and last-run status; Jobs nav link added to every page |
 

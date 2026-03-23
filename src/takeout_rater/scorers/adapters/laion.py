@@ -7,15 +7,6 @@ Higher scores indicate images that a crowd of annotators would rate as more
 aesthetically pleasing.  The model was trained on a combination of LAION,
 SAC, and AVA datasets.
 
-Requirements
-------------
-Install the ``aesthetic`` extra::
-
-    pip install takeout-rater[aesthetic]
-
-This brings in ``torch``, ``torchvision``, ``Pillow``, ``huggingface-hub``,
-and ``open-clip-torch``.
-
 The CLIP backbone (~900 MB) is downloaded from OpenAI on first use and cached
 by ``open_clip`` in the standard Torch hub cache (``~/.cache/torch/hub``).
 The MLP weights (~4 MB) are downloaded from the HuggingFace Hub and cached by
@@ -151,7 +142,7 @@ class AestheticScorer(BaseScorer):
                 ),
             ),
             default_variant_id="laion_v2",
-            requires_extras=("aesthetic",),
+            requires_extras=(),
         )
 
     @classmethod

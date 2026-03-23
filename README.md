@@ -110,11 +110,6 @@ cd takeout-rater
 
 # Install in editable mode with dev dependencies
 pip install -e ".[dev]"
-
-# (Optional) install optional scorer dependencies
-pip install -e ".[aesthetic]"   # PyTorch-based aesthetic scorer (LAION v2)
-pip install -e ".[nsfw]"        # NSFW detector scorer (Falconsai ViT)
-pip install -e ".[heic]"        # HEIC image support via pillow-heif
 ```
 
 ---

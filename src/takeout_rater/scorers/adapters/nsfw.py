@@ -8,14 +8,6 @@ The output metric ``nsfw`` is a probability in [0, 1]:
 - Values close to **0** indicate a safe-for-work image.
 - Values close to **1** indicate a potentially unsafe image.
 
-Requirements
-------------
-Install the ``nsfw`` extra::
-
-    pip install takeout-rater[nsfw]
-
-This brings in ``torch``, ``transformers``, and ``Pillow``.
-
 The model weights (~330 MB) are downloaded from the HuggingFace Hub on first
 use and cached by ``transformers`` (``~/.cache/huggingface``).
 """
@@ -48,10 +40,6 @@ class NSFWScorer(BaseScorer):
 
     The classifier is a fine-tuned ViT model hosted at
     ``Falconsai/nsfw_image_detection`` on HuggingFace Hub.
-
-    This scorer is only available when the ``nsfw`` extra is installed::
-
-        pip install takeout-rater[nsfw]
     """
 
     def __init__(self, variant_id: str | None = None, **kwargs: Any) -> None:
@@ -97,7 +85,7 @@ class NSFWScorer(BaseScorer):
                 ),
             ),
             default_variant_id="falconsai_vit",
-            requires_extras=("nsfw",),
+            requires_extras=(),
         )
 
     @classmethod

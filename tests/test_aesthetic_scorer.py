@@ -37,9 +37,9 @@ def test_spec_has_laion_v2_variant() -> None:
     assert spec.default_variant_id == "laion_v2"
 
 
-def test_spec_requires_aesthetic_extra() -> None:
+def test_spec_requires_no_extras() -> None:
     spec = AestheticScorer.spec()
-    assert "aesthetic" in spec.requires_extras
+    assert spec.requires_extras == ()
 
 
 def test_spec_display_name_not_empty() -> None:
