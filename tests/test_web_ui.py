@@ -108,6 +108,84 @@ def test_browse_assets_page2(client_with_assets: TestClient) -> None:
     assert resp.status_code == 200
 
 
+# ── Infinite scroll (partial endpoint) ───────────────────────────────────────
+
+
+def test_browse_partial_returns_200(client_with_assets: TestClient) -> None:
+    """GET /assets?partial=1 should return 200 with card fragment HTML."""
+    resp = client_with_assets.get("/assets?partial=1")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_browse_partial_contains_cards(client_with_assets: TestClient) -> None:
+    """Partial response should contain card elements (not a full page)."""
+    resp = client_with_assets.get("/assets?partial=1")
+    assert 'class="card"' in resp.text
+    # Should NOT contain the full page chrome
+    assert "<html" not in resp.text
+    assert "<header" not in resp.text
+
+
+def test_browse_partial_has_lightbox_data_attrs(client_with_assets: TestClient) -> None:
+    """Partial card elements must carry data-lb-* attributes for the lightbox."""
+    resp = client_with_assets.get("/assets?partial=1")
+    assert "data-lb-id=" in resp.text
+    assert "data-lb-src=" in resp.text
+    assert "data-lb-title=" in resp.text
+
+
+def test_browse_partial_no_sentinel_when_single_page(tmp_path: Path) -> None:
+    """When all assets fit on one page, partial should not include a sentinel."""
+    from takeout_rater.api.assets import _PAGE_SIZE  # noqa: PLC0415
+
+    conn = _make_db()
+    # Add fewer assets than one full page so total_pages == 1
+    for i in range(min(3, _PAGE_SIZE - 1)):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get("/assets?partial=1")
+    assert "scroll-sentinel" not in resp.text
+
+
+def test_browse_partial_has_sentinel_when_multi_page(tmp_path: Path) -> None:
+    """When there are more pages, partial response should include a scroll sentinel."""
+    from takeout_rater.api.assets import _PAGE_SIZE  # noqa: PLC0415
+
+    conn = _make_db()
+    # Add more assets than one page can hold
+    for i in range(_PAGE_SIZE + 1):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get("/assets?partial=1&page=1")
+    assert "scroll-sentinel" in resp.text
+    assert 'data-next-page="2"' in resp.text
+
+
+def test_browse_full_page_has_lightbox_data_attrs(client_with_assets: TestClient) -> None:
+    """Full browse page cards must carry data-lb-* attributes."""
+    resp = client_with_assets.get("/assets")
+    assert "data-lb-id=" in resp.text
+    assert "data-lb-src=" in resp.text
+    assert "data-lb-title=" in resp.text
+
+
+def test_browse_full_page_has_lightbox_markup(client_with_assets: TestClient) -> None:
+    """Full browse page must include the lightbox overlay element."""
+    resp = client_with_assets.get("/assets")
+    assert 'id="lightbox"' in resp.text
+    assert 'id="lb-img"' in resp.text
+    assert 'id="lb-link"' in resp.text
+
+
+def test_browse_full_page_no_pagination_nav(client_with_assets: TestClient) -> None:
+    """Browse page should use infinite scroll instead of old pagination nav."""
+    resp = client_with_assets.get("/assets")
+    assert 'class="pagination"' not in resp.text
+
+
 # ── GET /assets/{id} ─────────────────────────────────────────────────────────
 
 
