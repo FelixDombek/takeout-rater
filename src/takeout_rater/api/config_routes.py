@@ -165,9 +165,12 @@ def _start_background_index(app: object, library_root: Path) -> None:
         from takeout_rater.db.connection import open_library_db as _open  # noqa: PLC0415
         from takeout_rater.indexing.run import run_index  # noqa: PLC0415
 
+        def _cb(p: object) -> None:
+            app.state.index_progress = p  # type: ignore[union-attr]
+
         worker_conn = _open(library_root)
         try:
-            result = run_index(library_root, worker_conn)
+            result = run_index(library_root, worker_conn, on_progress=_cb)
         finally:
             worker_conn.close()
         # Replace the shared progress object once the run finishes.
@@ -188,13 +191,18 @@ def index_status(request: Request) -> JSONResponse:
 
     Response fields
     ---------------
-    running   bool   – ``true`` while the indexer thread is still active.
-    done      bool   – ``true`` once the run has finished (success or error).
-    error     str|null – human-readable error message, or ``null`` on success.
-    found     int    – total image files discovered during the scan.
-    indexed   int    – assets upserted into the DB so far.
-    thumbs_ok int    – thumbnails generated successfully.
-    thumbs_skip int  – thumbnails skipped (already existed or Pillow unavailable).
+    running     bool      – ``true`` while the indexer thread is still active.
+    done        bool      – ``true`` once the run has finished (success or error).
+    error       str|null  – human-readable error message, or ``null`` on success.
+    found       int       – total image files discovered during the scan.
+    indexed     int       – assets upserted into the DB so far.
+    thumbs_ok   int       – thumbnails generated successfully.
+    thumbs_skip int       – thumbnails skipped (already existed or Pillow unavailable).
+    phase       str       – ``"scanning"`` while scan_takeout runs; ``"indexing"`` once
+                            the DB-upsert loop has started.
+    total_dirs  int       – total directories to scan (0 until the first pass completes).
+    dirs_scanned int      – directories fully processed so far.
+    current_dir str       – name of the directory most recently processed.
     """
     from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
 
@@ -209,6 +217,10 @@ def index_status(request: Request) -> JSONResponse:
                 "indexed": 0,
                 "thumbs_ok": 0,
                 "thumbs_skip": 0,
+                "phase": "scanning",
+                "total_dirs": 0,
+                "dirs_scanned": 0,
+                "current_dir": "",
             }
         )
     return JSONResponse(
@@ -220,5 +232,9 @@ def index_status(request: Request) -> JSONResponse:
             "indexed": progress.indexed,
             "thumbs_ok": progress.thumbs_ok,
             "thumbs_skip": progress.thumbs_skip,
+            "phase": progress.phase,
+            "total_dirs": progress.total_dirs,
+            "dirs_scanned": progress.dirs_scanned,
+            "current_dir": progress.current_dir,
         }
     )

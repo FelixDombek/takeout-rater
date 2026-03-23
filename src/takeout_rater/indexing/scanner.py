@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import mimetypes
+import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -92,15 +94,31 @@ def _find_sidecar(image_path: Path) -> Path | None:
     return None
 
 
-def scan_takeout(takeout_root: Path) -> list[AssetFile]:
+def scan_takeout(
+    takeout_root: Path,
+    on_dir_scanned: Callable[[int, int, str], None] | None = None,
+) -> list[AssetFile]:
     """Walk *takeout_root* recursively and return all image assets found.
 
-    The function skips sidecar JSON files and any non-image files.  Results
-    are sorted by their relative path for deterministic ordering.
+    The scan runs in two phases to enable progress reporting on large libraries:
+
+    **Phase 1 – directory enumeration (no additional per-file ``stat`` calls):**
+    :func:`os.walk` is used to collect every ``(directory, image_filenames)``
+    pair using the filename metadata provided by the OS directory listing.
+    Only filename extensions are checked; no file content is read.
+
+    **Phase 2 – metadata collection (one ``stat`` + sidecar probe per file):**
+    Each collected image path is stat'd and its sidecar is located.
+    ``on_dir_scanned`` is called once per directory after all its files have
+    been processed.
 
     Args:
         takeout_root: The directory to scan.  Typically the ``Takeout/``
             directory itself, or the directory that *contains* ``Takeout/``.
+        on_dir_scanned: Optional callback invoked once per directory during
+            **phase 2**, after that directory's files have been stat'd.
+            Receives ``(dirs_done: int, total_dirs: int, dir_name: str)``.
+            Can be used to drive a progress bar during scanning.
 
     Returns:
         Sorted list of :class:`AssetFile` instances.
@@ -111,31 +129,50 @@ def scan_takeout(takeout_root: Path) -> list[AssetFile]:
     if not takeout_root.exists():
         raise FileNotFoundError(f"Takeout root does not exist: {takeout_root}")
 
-    assets: list[AssetFile] = []
-
-    for abspath in sorted(takeout_root.rglob("*")):
-        if not abspath.is_file():
-            continue
-        if abspath.suffix.lower() not in IMAGE_EXTENSIONS:
-            continue
-        # Sidecar files may have a double extension like ".jpg.supplemental-metadata.json"
-        if SIDECAR_SUFFIX in abspath.name:
-            continue
-
-        relpath = str(abspath.relative_to(takeout_root))
-        mime, _ = mimetypes.guess_type(str(abspath))
-        mime = mime or "application/octet-stream"
-        sidecar_path = _find_sidecar(abspath)
-        size_bytes = abspath.stat().st_size
-
-        assets.append(
-            AssetFile(
-                relpath=relpath,
-                abspath=abspath,
-                sidecar_path=sidecar_path,
-                mime=mime,
-                size_bytes=size_bytes,
-            )
+    # ------------------------------------------------------------------
+    # Phase 1: enumerate directories and image filenames via os.walk.
+    # os.walk yields DirEntry metadata from the OS directory listing, so
+    # no extra stat() call is needed per file at this stage.
+    # ------------------------------------------------------------------
+    dir_images: list[tuple[Path, list[str]]] = []
+    for dirpath_str, _subdirs, filenames in os.walk(takeout_root):
+        dp = Path(dirpath_str)
+        images = sorted(
+            f
+            for f in filenames
+            if Path(f).suffix.lower() in IMAGE_EXTENSIONS and SIDECAR_SUFFIX not in f
         )
+        dir_images.append((dp, images))
 
+    # Sort directories for deterministic ordering.
+    dir_images.sort(key=lambda t: str(t[0]))
+    total_dirs = len(dir_images)
+
+    # ------------------------------------------------------------------
+    # Phase 2: stat each image file, locate sidecars, build AssetFile
+    # objects.  Call on_dir_scanned after finishing each directory.
+    # ------------------------------------------------------------------
+    assets: list[AssetFile] = []
+    for i, (dp, image_names) in enumerate(dir_images):
+        for fname in image_names:
+            abspath = dp / fname
+            relpath = str(abspath.relative_to(takeout_root))
+            mime, _ = mimetypes.guess_type(str(abspath))
+            mime = mime or "application/octet-stream"
+            sidecar_path = _find_sidecar(abspath)
+            size_bytes = abspath.stat().st_size
+            assets.append(
+                AssetFile(
+                    relpath=relpath,
+                    abspath=abspath,
+                    sidecar_path=sidecar_path,
+                    mime=mime,
+                    size_bytes=size_bytes,
+                )
+            )
+        if on_dir_scanned is not None:
+            on_dir_scanned(i + 1, total_dirs, dp.name)
+
+    # Final sort by relpath for deterministic output (existing contract).
+    assets.sort(key=lambda a: a.relpath)
     return assets

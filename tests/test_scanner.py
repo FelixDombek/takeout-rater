@@ -173,6 +173,69 @@ def test_scan_missing_dir_raises(tmp_path: Path) -> None:
         scan_takeout(tmp_path / "nonexistent")
 
 
+# ── scan_takeout on_dir_scanned callback ─────────────────────────────────────
+
+
+def test_on_dir_scanned_called_once_for_single_dir(tmp_path: Path) -> None:
+    """Callback fires once when the root is the only directory."""
+    (tmp_path / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+    calls: list[tuple[int, int, str]] = []
+    scan_takeout(tmp_path, on_dir_scanned=lambda d, t, n: calls.append((d, t, n)))
+    assert len(calls) == 1
+    dirs_done, total_dirs, _ = calls[0]
+    assert dirs_done == 1
+    assert total_dirs == 1
+
+
+def test_on_dir_scanned_called_for_empty_dirs(tmp_path: Path) -> None:
+    """Callback fires for every directory even when it contains no images."""
+    sub = tmp_path / "empty_album"
+    sub.mkdir()
+    calls: list[tuple[int, int, str]] = []
+    scan_takeout(tmp_path, on_dir_scanned=lambda d, t, n: calls.append((d, t, n)))
+    # Two dirs: root + sub
+    assert len(calls) == 2
+
+
+def test_on_dir_scanned_total_dirs_matches_call_count(tmp_path: Path) -> None:
+    """total_dirs reported in each callback equals the number of calls made."""
+    for name in ("album_a", "album_b", "album_c"):
+        sub = tmp_path / name
+        sub.mkdir()
+        (sub / "img.jpg").write_bytes(b"\xff\xd8\xff")
+    calls: list[tuple[int, int, str]] = []
+    scan_takeout(tmp_path, on_dir_scanned=lambda d, t, n: calls.append((d, t, n)))
+    reported_total = calls[0][1]
+    assert reported_total == len(calls)
+
+
+def test_on_dir_scanned_dirs_done_increments(tmp_path: Path) -> None:
+    """dirs_done must increase by 1 with each call."""
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "img.jpg").write_bytes(b"\xff\xd8\xff")
+    calls: list[int] = []
+    scan_takeout(tmp_path, on_dir_scanned=lambda d, t, n: calls.append(d))
+    assert calls == list(range(1, len(calls) + 1))
+
+
+def test_on_dir_scanned_dir_name_matches_leaf(tmp_path: Path) -> None:
+    """The dir_name arg must be the last path component (leaf name)."""
+    album = tmp_path / "Photos from 2023"
+    album.mkdir()
+    (album / "img.jpg").write_bytes(b"\xff\xd8\xff")
+    names: list[str] = []
+    scan_takeout(tmp_path, on_dir_scanned=lambda d, t, n: names.append(n))
+    assert "Photos from 2023" in names
+
+
+def test_on_dir_scanned_none_does_not_crash(tmp_path: Path) -> None:
+    """Passing on_dir_scanned=None must not raise."""
+    (tmp_path / "photo.jpg").write_bytes(b"\xff\xd8\xff")
+    result = scan_takeout(tmp_path, on_dir_scanned=None)
+    assert len(result) == 1
+
+
 # ── find_google_photos_root ───────────────────────────────────────────────────
 
 
