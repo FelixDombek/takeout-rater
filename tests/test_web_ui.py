@@ -486,3 +486,109 @@ def test_asset_detail_no_duplicate_section_for_unique(tmp_path: Path) -> None:
     resp = client.get(f"/assets/{id1}")
     assert resp.status_code == 200
     assert "Also stored at" not in resp.text
+
+
+def test_asset_detail_shows_sidecar_json_panel(tmp_path: Path) -> None:
+    """Detail page should show the raw metadata panel when a sidecar file exists."""
+    conn = _make_db()
+    # Create a real sidecar file in the tmp directory
+    sidecar_relpath = "Photos/img.jpg.supplemental-metadata.json"
+    sidecar_path = tmp_path / sidecar_relpath
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.write_text(
+        '{"title":"img.jpg","description":"","url":"https://photos.google.com/x",'
+        '"creationTime":{"timestamp":"1686836581"},"imageViews":"7"}',
+        encoding="utf-8",
+    )
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": "Photos/img.jpg",
+            "filename": "img.jpg",
+            "ext": ".jpg",
+            "size_bytes": 1024,
+            "mime": "image/jpeg",
+            "sidecar_relpath": sidecar_relpath,
+            "indexed_at": int(time.time()),
+        },
+    )
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+    assert "Raw metadata" in resp.text
+    assert "imageViews" in resp.text
+    assert "https://photos.google.com/x" in resp.text
+
+
+def test_asset_detail_no_sidecar_panel_when_missing(tmp_path: Path) -> None:
+    """Detail page should NOT show the raw metadata panel when no sidecar is indexed."""
+    conn = _make_db()
+    asset_id = _add_asset(conn, "Photos/nosidecar.jpg")
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+    assert "Raw metadata" not in resp.text
+
+
+def test_asset_detail_shows_duplicate_sidecar_panels(tmp_path: Path) -> None:
+    """Detail page should show separate sidecar panels for each duplicate with a sidecar."""
+    conn = _make_db()
+
+    # Create sidecar for the first copy
+    sidecar1 = "Photos/album1/img.jpg.supplemental-metadata.json"
+    sidecar1_path = tmp_path / sidecar1
+    sidecar1_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar1_path.write_text(
+        '{"title":"img.jpg","description":"album1 copy","url":"",'
+        '"creationTime":{"timestamp":"1000"},"imageViews":"1"}',
+        encoding="utf-8",
+    )
+
+    # Create sidecar for the second copy (duplicate)
+    sidecar2 = "Photos/album2/img.jpg.supplemental-metadata.json"
+    sidecar2_path = tmp_path / sidecar2
+    sidecar2_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar2_path.write_text(
+        '{"title":"img.jpg","description":"album2 copy","url":"",'
+        '"creationTime":{"timestamp":"2000"},"imageViews":"2"}',
+        encoding="utf-8",
+    )
+
+    id1 = upsert_asset(
+        conn,
+        {
+            "relpath": "Photos/album1/img.jpg",
+            "filename": "img.jpg",
+            "ext": ".jpg",
+            "size_bytes": 512,
+            "mime": "image/jpeg",
+            "sha256": "aabbccdd",
+            "sidecar_relpath": sidecar1,
+            "indexed_at": int(time.time()),
+        },
+    )
+    upsert_asset(
+        conn,
+        {
+            "relpath": "Photos/album2/img.jpg",
+            "filename": "img.jpg",
+            "ext": ".jpg",
+            "size_bytes": 512,
+            "mime": "image/jpeg",
+            "sha256": "aabbccdd",
+            "sidecar_relpath": sidecar2,
+            "indexed_at": int(time.time()),
+        },
+    )
+
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{id1}")
+    assert resp.status_code == 200
+    # Both sidecar panels should appear
+    assert "album1 copy" in resp.text
+    assert "album2 copy" in resp.text
+    # Both paths labelled in the duplicate sidecars section
+    assert "album2/img.jpg" in resp.text
