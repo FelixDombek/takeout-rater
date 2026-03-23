@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -51,6 +52,23 @@ def _get_thumbs_dir(request: Request) -> Path:
     if thumbs_dir is None:
         raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
     return thumbs_dir
+
+
+def _read_sidecar_json(takeout_root: Path | None, asset: AssetRow) -> str | None:
+    """Return the pretty-printed raw sidecar JSON for *asset*, or ``None``.
+
+    Reads ``takeout_root / asset.sidecar_relpath`` when both values are
+    available and the file exists.  Returns ``None`` on any I/O or parse error
+    so that the UI can gracefully degrade.
+    """
+    if takeout_root is None or asset.sidecar_relpath is None:
+        return None
+    sidecar_path = takeout_root / asset.sidecar_relpath
+    try:
+        raw = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        return json.dumps(raw, indent=2, ensure_ascii=False)
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _parse_score(raw: str | None) -> float | None:
@@ -196,6 +214,7 @@ def asset_detail(
     asset_id: int,
     request: Request,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+    takeout_root: Path | None = Depends(_get_takeout_root),  # noqa: B008
 ) -> HTMLResponse:
     """Render the detail page for a single asset."""
     asset: AssetRow | None = get_asset_by_id(conn, asset_id)
@@ -211,10 +230,23 @@ def asset_detail(
         all_copies = get_duplicate_assets(conn, asset.sha256)
         duplicates = [a for a in all_copies if a.id != asset_id]
 
+    # Load raw sidecar JSON for the main asset and each duplicate.
+    sidecar_json = _read_sidecar_json(takeout_root, asset)
+    duplicate_sidecars: list[tuple[AssetRow, str | None]] = [
+        (dup, _read_sidecar_json(takeout_root, dup)) for dup in duplicates
+    ]
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "detail.html",
-        {"request": request, "asset": asset, "scores": scores, "duplicates": duplicates},
+        {
+            "request": request,
+            "asset": asset,
+            "scores": scores,
+            "duplicates": duplicates,
+            "sidecar_json": sidecar_json,
+            "duplicate_sidecars": duplicate_sidecars,
+        },
     )
 
 
