@@ -11,11 +11,14 @@ from fastapi.responses import FileResponse, HTMLResponse
 from takeout_rater.db.queries import (
     AssetRow,
     count_assets,
+    count_assets_deduped,
     count_assets_with_score,
     get_asset_by_id,
     get_asset_scores,
+    get_duplicate_assets,
     list_assets,
     list_assets_by_score,
+    list_assets_deduped,
     list_view_presets,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
@@ -90,6 +93,7 @@ def browse_assets(
     sort_by: str | None = None,
     min_score: str | None = None,
     max_score: str | None = None,
+    dedupe: str = "1",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
     """Render the browse page with paginated asset thumbnails.
@@ -103,9 +107,12 @@ def browse_assets(
       ``sort_by``).  Blank or non-numeric values are silently ignored.
     - ``max_score``: Inclusive upper bound on the score value (requires
       ``sort_by``).  Blank or non-numeric values are silently ignored.
+    - ``dedupe``: ``"1"`` (default) to hide exact duplicate files (same SHA-256
+      content hash); ``"0"`` to show all physical copies.
     """
     offset = max(0, (page - 1) * _PAGE_SIZE)
     fav_filter: bool | None = True if favorited == "1" else None
+    dedup_enabled = dedupe != "0"
 
     sort_parsed = _parse_sort_by(sort_by)
     # Normalize sort_by: use the canonical form when valid, None when malformed.
@@ -142,6 +149,9 @@ def browse_assets(
             min_score=eff_min,
             max_score=eff_max,
         )
+    elif dedup_enabled:
+        assets = list_assets_deduped(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
+        total = count_assets_deduped(conn, favorited=fav_filter)
     else:
         assets = list_assets(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
         total = count_assets(conn, favorited=fav_filter)
@@ -175,6 +185,8 @@ def browse_assets(
             "min_score": eff_min,
             "max_score": eff_max,
             "presets": presets,
+            # dedupe is only actively applied when not sorting by score metric
+            "dedupe": dedup_enabled and sort_parsed is None,
         },
     )
 
@@ -192,10 +204,17 @@ def asset_detail(
 
     scores = get_asset_scores(conn, asset_id)
 
+    # Collect all physical copies that share the same SHA-256 hash so the
+    # detail view can list every path/album where this image appears.
+    duplicates: list[AssetRow] = []
+    if asset.sha256 is not None:
+        all_copies = get_duplicate_assets(conn, asset.sha256)
+        duplicates = [a for a in all_copies if a.id != asset_id]
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "detail.html",
-        {"request": request, "asset": asset, "scores": scores},
+        {"request": request, "asset": asset, "scores": scores, "duplicates": duplicates},
     )
 
 

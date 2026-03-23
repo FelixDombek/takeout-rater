@@ -9,12 +9,22 @@ blocking the web server while indexing is in progress.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def _compute_sha256(path: Path) -> str:
+    """Return the hex-encoded SHA-256 digest of the file at *path*."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _bool_to_int(v: bool | None) -> int | None:
@@ -158,6 +168,10 @@ def run_index(
             ),
             "indexed_at": now,
         }
+
+        # Compute SHA-256 content hash; skip silently on read errors.
+        with contextlib.suppress(OSError):
+            row["sha256"] = _compute_sha256(asset_file.abspath)
 
         if sidecar is not None:
             row.update(

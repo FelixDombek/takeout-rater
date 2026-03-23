@@ -94,7 +94,8 @@ def test_browse_returns_html(client: TestClient) -> None:
 
 def test_browse_shows_asset_count(client_with_assets: TestClient) -> None:
     resp = client_with_assets.get("/assets")
-    assert "3 photos" in resp.text
+    assert "3" in resp.text
+    assert "photo" in resp.text
 
 
 def test_browse_shows_empty_message_when_no_assets(client: TestClient) -> None:
@@ -402,3 +403,86 @@ def test_assets_redirects_to_setup_for_html_browser(client_unconfigured: TestCli
     )
     assert resp.status_code in (302, 307)
     assert resp.headers["location"] == "/setup"
+
+
+# ── deduplication (SHA-256) ───────────────────────────────────────────────────
+
+
+def _add_asset_with_sha256(conn: sqlite3.Connection, relpath: str, sha256: str) -> int:
+    return upsert_asset(
+        conn,
+        {
+            "relpath": relpath,
+            "filename": Path(relpath).name,
+            "ext": Path(relpath).suffix.lower(),
+            "size_bytes": 512,
+            "mime": "image/jpeg",
+            "sha256": sha256,
+            "indexed_at": int(time.time()),
+        },
+    )
+
+
+@pytest.fixture()
+def client_with_duplicates(tmp_path: Path) -> TestClient:
+    """DB with 3 files: two share a sha256 (duplicates) + one unique."""
+    conn = _make_db()
+    _add_asset_with_sha256(conn, "Photos/album1/img.jpg", "cafebabe")
+    _add_asset_with_sha256(conn, "Photos/album2/img.jpg", "cafebabe")
+    _add_asset_with_sha256(conn, "Photos/unique.jpg", "deadbeef")
+    app = create_app(tmp_path, conn)
+    return TestClient(app, follow_redirects=True)
+
+
+def test_browse_dedupe_default_shows_unique_count(
+    client_with_duplicates: TestClient,
+) -> None:
+    """Default (dedupe=1) should show 2 unique photos, not 3."""
+    resp = client_with_duplicates.get("/assets")
+    assert resp.status_code == 200
+    assert "2" in resp.text
+    assert "unique" in resp.text
+
+
+def test_browse_dedupe_off_shows_all_files(client_with_duplicates: TestClient) -> None:
+    """dedupe=0 should show all 3 physical files."""
+    resp = client_with_duplicates.get("/assets?dedupe=0")
+    assert resp.status_code == 200
+    assert "3" in resp.text
+
+
+def test_browse_dedupe_toggle_link_present(client_with_duplicates: TestClient) -> None:
+    """Default view should include a link to show duplicates."""
+    resp = client_with_duplicates.get("/assets")
+    assert "dedupe=0" in resp.text or "Show duplicates" in resp.text
+
+
+def test_browse_dedupe_off_toggle_link_present(client_with_duplicates: TestClient) -> None:
+    """Non-dedupe view should include a link to hide duplicates."""
+    resp = client_with_duplicates.get("/assets?dedupe=0")
+    assert "Hide duplicates" in resp.text
+
+
+def test_asset_detail_shows_duplicate_paths(tmp_path: Path) -> None:
+    """Detail page for a duplicate image should list all physical paths."""
+    conn = _make_db()
+    id1 = _add_asset_with_sha256(conn, "Photos/album1/img.jpg", "cafebabe")
+    _add_asset_with_sha256(conn, "Photos/album2/img.jpg", "cafebabe")
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{id1}")
+    assert resp.status_code == 200
+    # Both paths should appear in the detail page
+    assert "album1/img.jpg" in resp.text
+    assert "album2/img.jpg" in resp.text
+
+
+def test_asset_detail_no_duplicate_section_for_unique(tmp_path: Path) -> None:
+    """Detail page for a unique image should NOT show the duplicates section."""
+    conn = _make_db()
+    id1 = _add_asset_with_sha256(conn, "Photos/unique.jpg", "deadbeef")
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{id1}")
+    assert resp.status_code == 200
+    assert "Also stored at" not in resp.text

@@ -8,6 +8,7 @@ Sub-commands:
 - ``score``   – run scorer(s) over indexed assets
 - ``browse``  – launch the local web UI
 - ``export``  – copy selected assets to an export folder  *(Iteration 3)*
+- ``rehash``  – compute SHA-256 hashes for already-indexed assets
 """
 
 from __future__ import annotations
@@ -199,6 +200,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Host/IP to bind to (default: 127.0.0.1).",
     )
 
+    # rehash – compute SHA-256 for already-indexed assets without a hash
+    rehash_parser = sub.add_parser(
+        "rehash",
+        help="Compute SHA-256 content hashes for already-indexed assets",
+    )
+    rehash_parser.add_argument(
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder (same as used with 'index').",
+    )
+    rehash_parser.add_argument(
+        "--all",
+        action="store_true",
+        default=False,
+        dest="rehash_all",
+        help="Recompute hashes even for assets that already have one (useful after migration).",
+    )
+
     return parser
 
 
@@ -211,6 +230,8 @@ def _bool_to_int(v: bool | None) -> int | None:
 
 def _cmd_index(args: argparse.Namespace) -> int:
     """Execute the ``index`` sub-command."""
+    import hashlib  # noqa: PLC0415
+
     from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
     from takeout_rater.indexing.scanner import (  # noqa: PLC0415
         GOOGLE_PHOTOS_DIR_NAMES,
@@ -290,6 +311,16 @@ def _cmd_index(args: argparse.Namespace) -> int:
             "indexed_at": now,
         }
 
+        # Compute SHA-256 content hash; skip silently on read errors.
+        try:
+            h = hashlib.sha256()
+            with open(asset_file.abspath, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    h.update(chunk)
+            row["sha256"] = h.hexdigest()
+        except OSError:
+            pass
+
         if sidecar is not None:
             row.update(
                 {
@@ -340,6 +371,71 @@ def _cmd_index(args: argparse.Namespace) -> int:
     if not args.no_thumbs:
         print(f"Thumbnails: {thumbs_ok} generated, {thumbs_skip} skipped.")
     print(f"Library: {library_root / 'takeout-rater'}")
+    return 0
+
+
+def _cmd_rehash(args: argparse.Namespace) -> int:
+    """Execute the ``rehash`` sub-command.
+
+    Computes SHA-256 content hashes for already-indexed assets that are missing
+    a hash (or all assets when ``--all`` is given).  This is the migration path
+    for libraries that were indexed before SHA-256 computation was added.
+    """
+    import hashlib  # noqa: PLC0415
+
+    from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.queries import (  # noqa: PLC0415
+        get_asset_by_id,
+        list_all_asset_ids,
+        list_asset_ids_without_sha256,
+        update_asset_sha256,
+    )
+
+    library_root = Path(args.library_root).resolve()
+    db_path = library_db_path(library_root)
+
+    if not db_path.exists():
+        print(
+            f"error: no library database found at {db_path}\n"
+            "       Run 'takeout-rater index <library_root>' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    conn = open_library_db(library_root)
+
+    asset_ids = list_all_asset_ids(conn) if args.rehash_all else list_asset_ids_without_sha256(conn)
+
+    total = len(asset_ids)
+    if total == 0:
+        print("All assets already have a SHA-256 hash. Nothing to do.")
+        conn.close()
+        return 0
+
+    print(f"Computing SHA-256 for {total} asset(s) …")
+    done = 0
+    errors = 0
+
+    for asset_id in asset_ids:
+        asset = get_asset_by_id(conn, asset_id)
+        if asset is None:
+            continue
+        abspath = library_root / "Takeout" / asset.relpath
+        try:
+            h = hashlib.sha256()
+            with open(abspath, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    h.update(chunk)
+            update_asset_sha256(conn, asset_id, h.hexdigest())
+        except OSError as exc:
+            print(f"  warning: could not read {asset.relpath}: {exc}", file=sys.stderr)
+            errors += 1
+        done += 1
+        if done % 100 == 0:
+            print(f"  {done}/{total}", end="\r", flush=True)
+
+    conn.close()
+    print(f"\nHashed {done - errors}/{total} asset(s). {errors} error(s).")
     return 0
 
 
@@ -704,6 +800,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return _cmd_serve(args)
+
+    if args.command == "rehash":
+        return _cmd_rehash(args)
 
     print(f"Command '{args.command}' is not yet implemented (see roadmap in README).")
     return 1

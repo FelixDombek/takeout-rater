@@ -13,6 +13,7 @@ _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _MIGRATIONS: list[tuple[int, str]] = [
     (1, "0001_initial_schema.sql"),
     (2, "0002_view_presets.sql"),
+    (3, "0003_sha256_index.sql"),
 ]
 
 
