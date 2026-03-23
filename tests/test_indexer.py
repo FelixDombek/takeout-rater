@@ -322,3 +322,46 @@ def test_run_index_on_progress_called_during_indexing(library_root: Path) -> Non
     conn.close()
 
     assert len(indexing_calls) > 0, "on_progress was never called with phase='indexing'"
+
+
+# ── SHA-256 computation during indexing ──────────────────────────────────────
+
+
+def test_index_command_computes_sha256(library_root: Path) -> None:
+    """Assets indexed via the CLI should have a sha256 hash set."""
+    main(["index", "--no-thumbs", str(library_root)])
+    conn = open_library_db(library_root)
+    rows = list_assets(conn=conn, limit=1000)
+    conn.close()
+    # At least one asset should have a sha256
+    sha256_values = [r.sha256 for r in rows if r.sha256 is not None]
+    assert len(sha256_values) > 0
+
+
+def test_index_command_sha256_is_valid_hex(library_root: Path) -> None:
+    """SHA-256 values stored during indexing must be 64-character hex strings."""
+    main(["index", "--no-thumbs", str(library_root)])
+    conn = open_library_db(library_root)
+    rows = list_assets(conn=conn, limit=1000)
+    conn.close()
+    for row in rows:
+        if row.sha256 is not None:
+            assert len(row.sha256) == 64
+            int(row.sha256, 16)  # raises ValueError if not valid hex
+
+
+def test_index_command_identical_files_get_same_sha256(tmp_path: Path) -> None:
+    """Two physically identical files (same bytes) must share the same sha256."""
+    takeout = tmp_path / "Takeout" / "Photos from 2024"
+    takeout.mkdir(parents=True)
+    content = b"\xff\xd8\xff" + b"\x00" * 100
+    (takeout / "copy1.jpg").write_bytes(content)
+    (takeout / "copy2.jpg").write_bytes(content)
+
+    main(["index", "--no-thumbs", str(tmp_path)])
+    conn = open_library_db(tmp_path)
+    rows = list_assets(conn=conn, limit=1000)
+    conn.close()
+    hashes = [r.sha256 for r in rows if r.sha256 is not None]
+    assert len(hashes) == 2
+    assert hashes[0] == hashes[1]

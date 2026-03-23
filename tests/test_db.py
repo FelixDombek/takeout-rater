@@ -10,9 +10,14 @@ from takeout_rater.db.connection import library_state_dir, open_library_db
 from takeout_rater.db.queries import (
     AssetRow,
     count_assets,
+    count_assets_deduped,
     get_asset_by_id,
     get_asset_by_relpath,
+    get_duplicate_assets,
+    list_asset_ids_without_sha256,
     list_assets,
+    list_assets_deduped,
+    update_asset_sha256,
     upsert_asset,
 )
 from takeout_rater.db.schema import migrate
@@ -80,10 +85,10 @@ def test_schema_creates_asset_scores_table() -> None:
     assert "asset_scores" in tables
 
 
-def test_schema_user_version_is_2() -> None:
+def test_schema_user_version_is_3() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 2
+    assert version == 3
 
 
 def test_migrate_is_idempotent() -> None:
@@ -91,7 +96,7 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 2
+    assert version == 3
 
 
 # ── library_state_dir ────────────────────────────────────────────────────────
@@ -289,3 +294,123 @@ def test_asset_row_favorited_none_when_not_set() -> None:
     row = get_asset_by_id(conn, asset_id)
     assert row is not None
     assert row.favorited is None
+
+
+# ── SHA-256 / deduplication helpers ──────────────────────────────────────────
+
+
+def test_asset_row_sha256_field_defaults_to_none() -> None:
+    conn = _open_in_memory()
+    asset_id = upsert_asset(conn, _minimal_asset())
+    row = get_asset_by_id(conn, asset_id)
+    assert row is not None
+    assert row.sha256 is None
+
+
+def test_asset_row_sha256_stored_and_retrieved() -> None:
+    conn = _open_in_memory()
+    asset_id = upsert_asset(conn, {**_minimal_asset(), "sha256": "abc123"})
+    row = get_asset_by_id(conn, asset_id)
+    assert row is not None
+    assert row.sha256 == "abc123"
+
+
+def test_update_asset_sha256() -> None:
+    conn = _open_in_memory()
+    asset_id = upsert_asset(conn, _minimal_asset())
+    update_asset_sha256(conn, asset_id, "deadbeef")
+    row = get_asset_by_id(conn, asset_id)
+    assert row is not None
+    assert row.sha256 == "deadbeef"
+
+
+def test_list_asset_ids_without_sha256_returns_unhashed() -> None:
+    conn = _open_in_memory()
+    id_no_hash = upsert_asset(conn, _minimal_asset("p/a.jpg"))
+    upsert_asset(conn, {**_minimal_asset("p/b.jpg"), "sha256": "abc123"})
+    missing = list_asset_ids_without_sha256(conn)
+    assert id_no_hash in missing
+    # The asset that already has a sha256 should NOT appear
+    for asset_id in missing:
+        row = get_asset_by_id(conn, asset_id)
+        assert row is not None
+        assert row.sha256 is None
+
+
+def test_list_asset_ids_without_sha256_empty_when_all_hashed() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset("p/a.jpg"), "sha256": "aaa"})
+    upsert_asset(conn, {**_minimal_asset("p/b.jpg"), "sha256": "bbb"})
+    assert list_asset_ids_without_sha256(conn) == []
+
+
+def test_get_duplicate_assets_returns_all_copies() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset("album1/img.jpg"), "sha256": "cafebabe"})
+    upsert_asset(conn, {**_minimal_asset("album2/img.jpg"), "sha256": "cafebabe"})
+    upsert_asset(conn, {**_minimal_asset("album3/other.jpg"), "sha256": "deadbeef"})
+    dups = get_duplicate_assets(conn, "cafebabe")
+    assert len(dups) == 2
+    relpaths = {d.relpath for d in dups}
+    assert relpaths == {"album1/img.jpg", "album2/img.jpg"}
+
+
+def test_get_duplicate_assets_returns_empty_for_unknown_hash() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset(), "sha256": "aaa"})
+    assert get_duplicate_assets(conn, "zzz") == []
+
+
+def test_count_assets_deduped_no_duplicates() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset("p/a.jpg"), "sha256": "aaa"})
+    upsert_asset(conn, {**_minimal_asset("p/b.jpg"), "sha256": "bbb"})
+    # Two unique hashes → still 2
+    assert count_assets_deduped(conn) == 2
+
+
+def test_count_assets_deduped_with_exact_duplicates() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset("album1/img.jpg"), "sha256": "cafebabe"})
+    upsert_asset(conn, {**_minimal_asset("album2/img.jpg"), "sha256": "cafebabe"})
+    upsert_asset(conn, {**_minimal_asset("p/unique.jpg"), "sha256": "deadbeef"})
+    # 3 files but only 2 unique hashes
+    assert count_assets_deduped(conn) == 2
+
+
+def test_count_assets_deduped_null_sha256_each_counted() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, _minimal_asset("p/a.jpg"))
+    upsert_asset(conn, _minimal_asset("p/b.jpg"))
+    # Both have no sha256 → treated as separate unique images
+    assert count_assets_deduped(conn) == 2
+
+
+def test_list_assets_deduped_hides_duplicate() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset("album1/img.jpg"), "sha256": "cafebabe"})
+    upsert_asset(conn, {**_minimal_asset("album2/img.jpg"), "sha256": "cafebabe"})
+    upsert_asset(conn, {**_minimal_asset("p/other.jpg"), "sha256": "deadbeef"})
+    rows = list_assets_deduped(conn)
+    assert len(rows) == 2
+    relpaths = {r.relpath for r in rows}
+    # The canonical copy is always the lowest-id (first-inserted) one; album2 is hidden
+    assert "album1/img.jpg" in relpaths
+    assert "album2/img.jpg" not in relpaths
+
+
+def test_list_assets_deduped_shows_all_when_no_sha256() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, _minimal_asset("p/a.jpg"))
+    upsert_asset(conn, _minimal_asset("p/b.jpg"))
+    rows = list_assets_deduped(conn)
+    assert len(rows) == 2
+
+
+def test_count_assets_deduped_favorited_filter() -> None:
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset("a/fav.jpg"), "sha256": "aaa", "favorited": 1})
+    upsert_asset(conn, {**_minimal_asset("b/fav.jpg"), "sha256": "aaa", "favorited": 1})
+    upsert_asset(conn, {**_minimal_asset("c/other.jpg"), "sha256": "bbb", "favorited": 0})
+    assert count_assets_deduped(conn, favorited=True) == 1
+    assert count_assets_deduped(conn, favorited=False) == 1

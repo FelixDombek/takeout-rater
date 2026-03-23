@@ -136,10 +136,8 @@
   <span class="toolbar-count">
     {% if total == 0 %}
       No photos indexed yet
-    {% elif total == 1 %}
-      1 photo
     {% else %}
-      {{ total }} photos
+      {{ total }} {% if dedupe %}unique {% endif %}photo{{ "s" if total != 1 else "" }}
     {% endif %}
     {% if favorited == "1" %}&nbsp;(favorites only){% endif %}
     {% if sort_by %}&nbsp;· sorted by score{% endif %}
@@ -147,9 +145,15 @@
   </span>
 
   {% if favorited == "1" %}
-    <a class="btn" href="/assets?page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">All photos</a>
+    <a class="btn" href="/assets?page=1{% if not dedupe %}&dedupe=0{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">All photos</a>
   {% else %}
-    <a class="btn" href="/assets?favorited=1&page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">⭐ Favorites only</a>
+    <a class="btn" href="/assets?favorited=1&page=1{% if not dedupe %}&dedupe=0{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">⭐ Favorites only</a>
+  {% endif %}
+
+  {% if dedupe %}
+    <a class="btn" href="/assets?dedupe=0&page=1{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}" title="Show all physical copies including duplicates">Show duplicates</a>
+  {% else %}
+    <a class="btn" href="/assets?page=1{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}" title="Hide exact duplicate files (same content)">Hide duplicates</a>
   {% endif %}
 
   {% if sort_options %}
@@ -244,13 +248,13 @@
 {% if total_pages > 1 %}
 <nav class="pagination" aria-label="Pagination">
   {% if page > 1 %}
-    <a class="btn" href="/assets?page={{ page - 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">← Prev</a>
+    <a class="btn" href="/assets?page={{ page - 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if not dedupe %}&dedupe=0{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">← Prev</a>
   {% endif %}
 
   <span class="current-page">{{ page }} / {{ total_pages }}</span>
 
   {% if page < total_pages %}
-    <a class="btn" href="/assets?page={{ page + 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">Next →</a>
+    <a class="btn" href="/assets?page={{ page + 1 }}{% if favorited %}&favorited={{ favorited }}{% endif %}{% if not dedupe %}&dedupe=0{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">Next →</a>
   {% endif %}
 </nav>
 {% endif %}

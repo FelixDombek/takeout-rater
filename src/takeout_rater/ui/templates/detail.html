@@ -80,6 +80,22 @@
       <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
     </table>
 
+    {% if duplicates %}
+    <h2 style="font-size:1rem; margin-top:1.25rem; margin-bottom:0.5rem; color:#444;">Also stored at</h2>
+    <p style="font-size:0.85rem; color:#666; margin-bottom:0.5rem;">
+      This image appears in {{ duplicates | length + 1 }} location{{ "s" if (duplicates | length + 1) != 1 else "" }} in your Takeout archive:
+    </p>
+    <table>
+      <tr><td style="color:#888;">{{ asset.relpath }}</td><td style="color:#888;"><em>(this copy)</em></td></tr>
+      {% for dup in duplicates %}
+      <tr>
+        <td><small><a href="/assets/{{ dup.id }}">{{ dup.relpath }}</a></small></td>
+        <td></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
     {% if scores %}
     <h2 style="font-size:1rem; margin-top:1.25rem; margin-bottom:0.5rem; color:#444;">Scores</h2>
     <table>

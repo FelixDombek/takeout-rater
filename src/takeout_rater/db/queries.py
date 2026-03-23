@@ -25,6 +25,7 @@ class AssetRow:
     filename: str
     ext: str
     size_bytes: int | None
+    sha256: str | None
     taken_at: int | None
     created_at_sidecar: int | None
     width: int | None
@@ -59,6 +60,7 @@ def _row_to_asset(row: sqlite3.Row) -> AssetRow:
         filename=row["filename"],
         ext=row["ext"],
         size_bytes=row["size_bytes"],
+        sha256=row["sha256"],
         taken_at=row["taken_at"],
         created_at_sidecar=row["created_at_sidecar"],
         width=row["width"],
@@ -247,8 +249,173 @@ def asset_relpath_to_path(asset: AssetRow, takeout_root: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Scorer-run helpers
+# SHA-256 / content-deduplication helpers
 # ---------------------------------------------------------------------------
+
+
+def list_asset_ids_without_sha256(conn: sqlite3.Connection) -> list[int]:
+    """Return IDs of assets that do not yet have a stored SHA-256 hash.
+
+    Used by the ``rehash`` CLI command to find assets that need their content
+    hash computed without re-scanning the full Takeout directory.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of integer asset IDs ordered by ID.
+    """
+    rows = conn.execute("SELECT id FROM assets WHERE sha256 IS NULL ORDER BY id").fetchall()
+    return [row[0] for row in rows]
+
+
+def update_asset_sha256(conn: sqlite3.Connection, asset_id: int, sha256: str) -> None:
+    """Store the SHA-256 content hash for a single asset.
+
+    Args:
+        conn: Open database connection.
+        asset_id: Primary key of the asset to update.
+        sha256: Hex-encoded SHA-256 digest of the image file.
+    """
+    conn.execute("UPDATE assets SET sha256 = ? WHERE id = ?", (sha256, asset_id))
+    conn.commit()
+
+
+def list_assets_deduped(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    order_by: str = "taken_at DESC",
+    favorited: bool | None = None,
+    archived: bool | None = None,
+    trashed: bool | None = None,
+    ext: str | None = None,
+) -> list[AssetRow]:
+    """Return a deduplicated, paginated list of assets.
+
+    For assets that share the same SHA-256 content hash, only the row with the
+    lowest ``id`` (the first-indexed copy) is returned.  Assets that have no
+    SHA-256 yet are each shown individually (no merging).
+
+    Args:
+        conn: Open database connection.
+        limit: Maximum number of rows to return.
+        offset: Rows to skip (for pagination).
+        order_by: SQL ``ORDER BY`` clause fragment (trusted, code-controlled).
+        favorited: Optional favorited filter.
+        archived: Optional archived filter.
+        trashed: Optional trashed filter.
+        ext: Optional file-extension filter (e.g. ``".jpg"``).
+
+    Returns:
+        List of :class:`AssetRow` objects.
+    """
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if favorited is not None:
+        conditions.append("favorited = ?")
+        params.append(1 if favorited else 0)
+    if archived is not None:
+        conditions.append("archived = ?")
+        params.append(1 if archived else 0)
+    if trashed is not None:
+        conditions.append("trashed = ?")
+        params.append(1 if trashed else 0)
+    if ext is not None:
+        conditions.append("ext = ?")
+        params.append(ext.lower())
+
+    # Each sha256 group is represented by its minimum id; assets without sha256
+    # are partitioned individually via COALESCE with a unique per-row key.
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    sql = (  # noqa: S608
+        f"SELECT * FROM ("
+        f"  SELECT *, ROW_NUMBER() OVER ("
+        f"    PARTITION BY COALESCE(sha256, CAST(id AS TEXT))"
+        f"    ORDER BY id"
+        f"  ) AS _rn"
+        f"  FROM assets {where}"
+        f") WHERE _rn = 1"
+        f" ORDER BY {order_by}"
+        f" LIMIT ? OFFSET ?"
+    )
+    params.extend([limit, offset])
+    rows = conn.execute(sql, params).fetchall()
+    return [_row_to_asset(r) for r in rows]
+
+
+def count_assets_deduped(
+    conn: sqlite3.Connection,
+    *,
+    favorited: bool | None = None,
+    archived: bool | None = None,
+    trashed: bool | None = None,
+    ext: str | None = None,
+) -> int:
+    """Count unique images after SHA-256 deduplication.
+
+    For assets that share a SHA-256 hash, only one is counted.  Assets without
+    a SHA-256 are each counted individually.
+
+    Args:
+        conn: Open database connection.
+        favorited: Optional favorited filter.
+        archived: Optional archived filter.
+        trashed: Optional trashed filter.
+        ext: Optional file-extension filter.
+
+    Returns:
+        Integer count of unique images.
+    """
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    if favorited is not None:
+        conditions.append("favorited = ?")
+        params.append(1 if favorited else 0)
+    if archived is not None:
+        conditions.append("archived = ?")
+        params.append(1 if archived else 0)
+    if trashed is not None:
+        conditions.append("trashed = ?")
+        params.append(1 if trashed else 0)
+    if ext is not None:
+        conditions.append("ext = ?")
+        params.append(ext.lower())
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    # Count distinct sha256 groups (NULL-sha256 assets each count as 1 via COALESCE).
+    sql = (  # noqa: S608
+        f"SELECT COUNT(*) FROM ("
+        f"  SELECT MIN(id)"
+        f"  FROM assets {where}"
+        f"  GROUP BY COALESCE(sha256, CAST(id AS TEXT))"
+        f")"
+    )
+    return conn.execute(sql, params).fetchone()[0]
+
+
+def get_duplicate_assets(conn: sqlite3.Connection, sha256: str) -> list[AssetRow]:
+    """Return all assets that share the given SHA-256 content hash.
+
+    This is used by the detail view to show all physical file locations for a
+    deduplicated image.
+
+    Args:
+        conn: Open database connection.
+        sha256: Hex-encoded SHA-256 digest to look up.
+
+    Returns:
+        List of :class:`AssetRow` objects ordered by ``id``.  Returns an empty
+        list if *sha256* is not found in the database.
+    """
+    rows = conn.execute(
+        "SELECT * FROM assets WHERE sha256 = ? ORDER BY id",
+        (sha256,),
+    ).fetchall()
+    return [_row_to_asset(r) for r in rows]
 
 
 def insert_scorer_run(
