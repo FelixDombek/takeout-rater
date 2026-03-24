@@ -334,11 +334,36 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         worker_conn = open_library_db(library_root)
         thumbs_dir = library_state_dir(library_root) / "thumbs"
         try:
-            # Compute pHashes first (needed for clustering later)
+            # ── Phase 1: Compute pHashes (needed for clustering later) ──────
             progress.message = "Computing perceptual hashes…"
-            compute_phash_all(worker_conn, thumbs_dir)
+            progress.processed = 0
+            progress.total = 0
+            progress.current_item = ""
 
-            # Determine which scorers to run
+            # Pre-build id→relpath map for current-item display.
+            _id_to_relpath: dict[int, str] = {
+                row[0]: row[1]
+                for row in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
+            }
+
+            def _phash_progress(done: int, total: int) -> None:
+                progress.processed = done
+                progress.total = total
+                progress.message = f"Computing perceptual hashes… {done}\u202f/\u202f{total}"
+
+            def _phash_item(asset_id: int, done: int, total: int) -> None:
+                progress.current_item = _id_to_relpath.get(asset_id, "")
+
+            compute_phash_all(
+                worker_conn,
+                thumbs_dir,
+                on_progress=_phash_progress,
+                on_item=_phash_item,
+            )
+
+            progress.current_item = ""
+
+            # ── Phase 2: Run scorers ─────────────────────────────────────────
             if scorer_id:
                 scorer_ids = [scorer_id]
             else:
@@ -363,11 +388,13 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                 )
 
             progress.message = "Scoring complete."
+            progress.current_item = ""
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
             progress.error = str(exc)
             progress.message = f"Error: {exc}"
+            progress.current_item = ""
             progress.running = False
             progress.done = True
         finally:
@@ -649,6 +676,8 @@ def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
                 progress.current_item = relpath
                 if not src.exists():
                     skipped += 1
+                    progress.processed = hashed
+                    progress.message = f"Rehashing {hashed + skipped}\u202f/\u202f{total}\u2026"
                     continue
                 h = hashlib.sha256()
                 try:
@@ -664,10 +693,10 @@ def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
                     skipped += 1
                     continue
 
+                progress.processed = hashed
+                progress.message = f"Rehashing {hashed + skipped}\u202f/\u202f{total}\u2026"
                 if hashed % 100 == 0:
                     worker_conn.commit()
-                    progress.processed = hashed
-                    progress.message = f"Rehashed {hashed}/{total} asset(s)…"
 
             worker_conn.commit()
             progress.processed = hashed
@@ -847,10 +876,10 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 )
 
                 processed += 1
+                progress.processed = processed
+                progress.message = f"Rescanning {processed}\u202f/\u202f{total}\u2026"
                 if processed % 100 == 0:
                     worker_conn.commit()
-                    progress.processed = processed
-                    progress.message = f"Rescanned {processed}/{total} asset(s)…"
 
             worker_conn.commit()
             progress.processed = processed

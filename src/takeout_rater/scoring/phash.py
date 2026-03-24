@@ -86,6 +86,7 @@ def compute_phash_all(
     asset_ids: list[int] | None = None,
     batch_size: int = 64,
     on_progress: Callable[[int, int], None] | None = None,
+    on_item: Callable[[int, int, int], None] | None = None,
 ) -> int:
     """Compute and persist dhash values for assets that lack one.
 
@@ -95,8 +96,14 @@ def compute_phash_all(
         asset_ids: Explicit list of asset IDs to process.  When ``None``
             (default), all assets without a stored hash are processed.
         batch_size: Number of images to process before committing (default 64).
-        on_progress: Optional callback called after each batch with
+            No longer affects the frequency of ``on_progress`` calls (which
+            now fire once per item), but retained for backward compatibility.
+        on_progress: Optional callback invoked after **each item** with
             ``(processed_so_far, total)`` integers.
+        on_item: Optional callback invoked before processing each item with
+            ``(asset_id, processed_so_far, total)`` so callers can display the
+            current item name.  Receives the raw DB asset ID which can be
+            mapped to a filename by the caller.
 
     Returns:
         Number of hashes successfully written.
@@ -124,20 +131,21 @@ def compute_phash_all(
     total = len(asset_ids)
     written = 0
 
-    for batch_start in range(0, total, batch_size):
-        batch = asset_ids[batch_start : batch_start + batch_size]
-        for aid in batch:
-            thumb = thumb_path_for_id(thumbs_dir, aid)
-            if not thumb.exists():
-                continue
+    for i, aid in enumerate(asset_ids):
+        processed = i + 1
+        if on_item is not None:
+            on_item(aid, processed, total)
+        thumb = thumb_path_for_id(thumbs_dir, aid)
+        if thumb.exists():
             try:
                 phash_hex = compute_dhash(thumb)
                 upsert_phash(conn, aid, phash_hex, algo=_DHASH_ALGO)
                 written += 1
             except OSError as exc:
-                logger.warning("Could not compute dhash for asset %d (%s): %s", aid, thumb, exc)
-
+                logger.warning(
+                    "Could not compute dhash for asset %d (%s): %s", aid, thumb, exc
+                )
         if on_progress is not None:
-            on_progress(min(batch_start + batch_size, total), total)
+            on_progress(processed, total)
 
     return written

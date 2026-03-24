@@ -204,5 +204,34 @@ def test_compute_phash_all_progress_callback(tmp_path: Path) -> None:
     calls: list[tuple[int, int]] = []
     compute_phash_all(conn, thumbs_dir, batch_size=2, on_progress=lambda d, t: calls.append((d, t)))
 
-    assert len(calls) > 0
-    assert calls[-1][1] == 4  # total is 4
+    # on_progress is now fired once per item, so we expect exactly 4 calls.
+    assert len(calls) == 4
+    assert calls[-1] == (4, 4)
+    # processed counter must be monotonically increasing.
+    for i, (done, total) in enumerate(calls):
+        assert done == i + 1
+        assert total == 4
+
+
+def test_compute_phash_all_on_item_callback(tmp_path: Path) -> None:
+    pytest.importorskip("PIL")
+    conn = _open_in_memory()
+    thumbs_dir = tmp_path / "thumbs"
+    aids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
+    for aid in aids:
+        _make_thumbnail(thumbs_dir, aid)
+
+    items: list[tuple[int, int, int]] = []
+    compute_phash_all(
+        conn,
+        thumbs_dir,
+        on_item=lambda aid, done, total: items.append((aid, done, total)),
+    )
+
+    assert len(items) == 3
+    # asset IDs must appear in the callback
+    assert {item[0] for item in items} == set(aids)
+    # processed counter must be 1-based and monotonically increasing
+    for i, (_aid, done, total) in enumerate(items):
+        assert done == i + 1
+        assert total == 3
