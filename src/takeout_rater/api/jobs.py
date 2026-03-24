@@ -57,6 +57,9 @@ class JobProgress:
             ``"index"`` / ``"rescan"`` / ``"rehash"`` jobs it is the number of
             assets indexed / rescanned / rehashed respectively.
         total: Total items to process (0 until the count is known).
+        current_item: Current item being processed (e.g., directory path for
+            ``"index"`` / ``"rescan"``, file path for ``"rehash"``).  Empty
+            string if unavailable or not applicable for the job type.
         job_type: One of ``"index"``, ``"score"``, ``"cluster"``,
             ``"export"``, ``"rehash"``, ``"rescan"``.
     """
@@ -68,6 +71,7 @@ class JobProgress:
     message: str = ""
     processed: int = 0
     total: int = 0
+    current_item: str = ""
 
 
 def _get_jobs(app: object) -> dict[str, JobProgress]:
@@ -88,6 +92,7 @@ def _job_status_dict(p: JobProgress) -> dict:
         "message": p.message,
         "processed": p.processed,
         "total": p.total,
+        "current_item": p.current_item,
     }
 
 
@@ -134,6 +139,7 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "message": "",
                     "processed": 0,
                     "total": 0,
+                    "current_item": "",
                 }
             )
         return JSONResponse(_job_status_dict(p))
@@ -152,6 +158,7 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "message": "",
                     "processed": 0,
                     "total": 0,
+                    "current_item": "",
                 }
             )
         else:
@@ -188,6 +195,7 @@ def _start_index_job(app: object, library_root: Path) -> None:
         def _cb(p: IndexProgress) -> None:
             progress.total = p.found
             progress.processed = p.indexed
+            progress.current_item = p.current_dir
             if p.phase == "scanning" and p.total_dirs > 0:
                 msg = (
                     f"Scanning folders ({p.dirs_scanned}\u202f/\u202f{p.total_dirs})"
@@ -209,6 +217,7 @@ def _start_index_job(app: object, library_root: Path) -> None:
             result = run_index(library_root, worker_conn, on_progress=_cb)
             progress.total = result.found
             progress.processed = result.indexed
+            progress.current_item = ""
             if result.error:
                 progress.error = result.error
                 progress.message = f"Error: {result.error}"
@@ -219,6 +228,7 @@ def _start_index_job(app: object, library_root: Path) -> None:
         except Exception as exc:  # noqa: BLE001
             progress.error = str(exc)
             progress.message = f"Error: {exc}"
+            progress.current_item = ""
             progress.running = False
             progress.done = True
         finally:
@@ -636,6 +646,7 @@ def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
             skipped = 0
             for asset_id, relpath in rows:
                 src = takeout_root / relpath
+                progress.current_item = relpath
                 if not src.exists():
                     skipped += 1
                     continue
@@ -660,6 +671,7 @@ def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
 
             worker_conn.commit()
             progress.processed = hashed
+            progress.current_item = ""
             progress.message = f"Rehash complete — {hashed} hash(es) computed" + (
                 f" ({skipped} skipped)" if skipped else ""
             )
@@ -668,6 +680,7 @@ def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
         except Exception as exc:  # noqa: BLE001
             progress.error = str(exc)
             progress.message = f"Error: {exc}"
+            progress.current_item = ""
             progress.running = False
             progress.done = True
         finally:
@@ -749,6 +762,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             skipped = 0
 
             for asset_id, _relpath, sidecar_relpath in rows:
+                progress.current_item = sidecar_relpath or _relpath
                 updates: dict = {}
 
                 # Re-parse sidecar when the library files are accessible.
@@ -840,6 +854,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
             worker_conn.commit()
             progress.processed = processed
+            progress.current_item = ""
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
                 f" ({skipped} sidecar error(s))" if skipped else ""
             )
@@ -848,6 +863,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
         except Exception as exc:  # noqa: BLE001
             progress.error = str(exc)
             progress.message = f"Error: {exc}"
+            progress.current_item = ""
             progress.running = False
             progress.done = True
         finally:

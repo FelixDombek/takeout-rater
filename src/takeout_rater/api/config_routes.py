@@ -6,14 +6,13 @@ GET  /health                   – liveness probe (always returns 200)
 GET  /api/config               – current config state
 POST /api/config/takeout-path  – save a Takeout library path and start indexing
 POST /api/config/open-picker   – open a native OS directory picker (Tkinter)
-GET  /api/index/status         – backward-compatible wrapper for the index job status
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -70,9 +69,11 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     Also initialises (or re-initialises) the library database and updates the
     running app's shared state so that the new configuration takes effect
     immediately without requiring a server restart.  A background indexing run
-    is launched automatically; callers can poll ``GET /api/index/status`` to
-    track progress.
+    is launched automatically; callers can poll ``GET /api/jobs/status?job_type=index``
+    to track progress.
     """
+    from fastapi import HTTPException
+
     p = Path(body.path).expanduser().resolve()
     if not p.exists():
         raise HTTPException(status_code=400, detail=f"Path does not exist: {p}")
@@ -93,7 +94,9 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
 
     # Start background indexing so the library is populated without the user
     # needing to run a separate CLI command.
-    _start_background_index(request.app, p)
+    from takeout_rater.api.jobs import _start_index_job
+
+    _start_index_job(request.app, p)
 
     return JSONResponse({"status": "ok", "takeout_path": str(p)})
 
@@ -115,6 +118,8 @@ def open_picker() -> JSONResponse:
         import tkinter as tk  # noqa: PLC0415
         from tkinter import filedialog  # noqa: PLC0415
     except ImportError as exc:
+        from fastapi import HTTPException
+
         raise HTTPException(
             status_code=501,
             detail="tkinter is not available; please enter the path manually.",
@@ -133,61 +138,3 @@ def open_picker() -> JSONResponse:
     if selected:
         return JSONResponse({"path": selected, "cancelled": False})
     return JSONResponse({"path": None, "cancelled": True})
-
-
-# ---------------------------------------------------------------------------
-# Background indexing helpers
-# ---------------------------------------------------------------------------
-
-
-def _start_background_index(app: object, library_root: Path) -> None:
-    """Launch a background index run for *library_root*.
-
-    This is a thin wrapper around :func:`takeout_rater.api.jobs._start_index_job`
-    that stores progress in ``app.state.jobs["index"]`` so it is visible in
-    the unified job queue.  Kept for backward compatibility with call-sites in
-    this module and in tests.
-    """
-    from takeout_rater.api.jobs import _start_index_job  # noqa: PLC0415
-
-    _start_index_job(app, library_root)
-
-
-# ---------------------------------------------------------------------------
-# Index status (backward-compatible wrapper)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/api/index/status")
-def index_status(request: Request) -> JSONResponse:
-    """Return the current background indexing progress.
-
-    This endpoint is a backward-compatible wrapper around
-    ``GET /api/jobs/status?job_type=index``.  New callers should use the
-    jobs status endpoint directly.
-    """
-    from takeout_rater.api.jobs import JobProgress, _get_jobs  # noqa: PLC0415
-
-    jobs = _get_jobs(request.app)
-    p: JobProgress | None = jobs.get("index")
-    if p is None:
-        return JSONResponse(
-            {
-                "running": False,
-                "done": False,
-                "error": None,
-                "message": "",
-                "processed": 0,
-                "total": 0,
-            }
-        )
-    return JSONResponse(
-        {
-            "running": p.running,
-            "done": p.done,
-            "error": p.error,
-            "message": p.message,
-            "processed": p.processed,
-            "total": p.total,
-        }
-    )
