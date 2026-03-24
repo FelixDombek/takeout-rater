@@ -132,22 +132,26 @@
     inset: 0;
     z-index: 1000;
     display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.88);
+    background: rgba(0, 0, 0, 0.92);
   }
-  .lb-panel {
-    position: relative;
+  .lb-container {
+    display: flex;
+    width: 100%;
+    height: 100%;
+  }
+  .lb-img-col {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    max-width: min(90vw, 900px);
-    max-height: 92vh;
-    z-index: 1;
+    justify-content: center;
+    position: relative;
+    padding: 3rem 3.5rem 1rem;
   }
   #lb-img {
-    max-width: min(90vw, 900px);
-    max-height: 75vh;
+    max-width: 100%;
+    max-height: calc(100vh - 5rem);
     object-fit: contain;
     border-radius: 4px;
     display: block;
@@ -190,21 +194,126 @@
     transition: background 0.12s;
   }
   .lb-close:hover, .lb-prev:hover, .lb-next:hover { background: rgba(0,0,0,0.85); }
-  .lb-close { top: -1.2rem; right: -1.2rem; font-size: 1rem; }
-  .lb-prev  { left: -3.5rem; top: 50%; transform: translateY(-50%); font-size: 1.8rem; }
-  .lb-next  { right: -3.5rem; top: 50%; transform: translateY(-50%); font-size: 1.8rem; }
-  @media (max-width: 600px) {
-    .lb-prev { left: 0.25rem; }
-    .lb-next { right: 0.25rem; }
-    .lb-close { top: 0.25rem; right: 0.25rem; position: fixed; }
+  .lb-close { top: 0.6rem; right: 0.6rem; font-size: 1rem; }
+  .lb-prev  { left: 0.5rem; top: 50%; transform: translateY(-50%); font-size: 1.8rem; }
+  .lb-next  { right: 0.5rem; top: 50%; transform: translateY(-50%); font-size: 1.8rem; }
+
+  /* ── Lightbox detail panel ────────────────────────────────────────────── */
+  .lb-details-col {
+    width: 340px;
+    min-width: 260px;
+    max-width: 400px;
+    background: rgba(18, 18, 20, 0.97);
+    border-left: 1px solid rgba(255,255,255,0.08);
+    overflow-y: auto;
+    padding: 2.5rem 1rem 1.5rem;
+    color: #d0d0d0;
+    font-size: 0.82rem;
+    flex-shrink: 0;
+  }
+  .lb-detail-inner { padding-bottom: 1rem; }
+  .lb-detail-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #f0f0f0;
+    margin: 0 0 0.5rem;
+    word-break: break-word;
+  }
+  .lb-detail-desc {
+    color: #aaa;
+    font-size: 0.8rem;
+    margin: 0 0 0.75rem;
+  }
+  .lb-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.75rem;
+  }
+  .lb-detail-table td {
+    padding: 0.2rem 0.4rem;
+    vertical-align: top;
+    font-size: 0.78rem;
+  }
+  .lb-detail-table td:first-child {
+    color: #888;
+    white-space: nowrap;
+    padding-right: 0.75rem;
+    width: 6rem;
+  }
+  .lb-detail-table tr:nth-child(even) td { background: rgba(255,255,255,0.04); }
+  .lb-detail-section {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #aaa;
+    margin: 0.9rem 0 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .lb-dup-list {
+    margin: 0 0 0.5rem 1rem;
+    padding: 0;
+    font-size: 0.75rem;
+    color: #999;
+  }
+  .lb-muted { color: #777; }
+  .lb-sidecar-details {
+    margin-top: 0.75rem;
+  }
+  .lb-sidecar-details summary {
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: #888;
+    user-select: none;
+    padding: 0.2rem 0;
+  }
+  .lb-sidecar-details summary:hover { color: #bbb; }
+  .lb-sidecar-pre {
+    margin: 0.4rem 0 0;
+    padding: 0.5rem;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 3px;
+    font-size: 8pt;
+    line-height: 1.4;
+    overflow-x: auto;
+    white-space: pre;
+    max-height: 16rem;
+    overflow-y: auto;
+    color: #ccc;
+  }
+  .lb-details-col .json-key    { color: #7ec8e3; }
+  .lb-details-col .json-string { color: #98c379; }
+  .lb-details-col .json-number { color: #d19a66; }
+  .lb-details-col .json-bool   { color: #e5c07b; }
+  .lb-details-col .json-null   { color: #777; }
+  .lb-details-loading {
+    color: #666;
+    font-size: 0.8rem;
+    padding: 1rem 0.5rem;
   }
   .lb-detail-btn {
     background: rgba(255,255,255,0.15);
     border-color: rgba(255,255,255,0.3);
     color: #fff;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
   }
   .lb-detail-btn:hover { background: rgba(255,255,255,0.28); text-decoration: none; }
+  @media (max-width: 700px) {
+    .lb-container { flex-direction: column; }
+    .lb-details-col {
+      width: 100%;
+      max-width: 100%;
+      border-left: none;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      max-height: 45vh;
+      padding: 0.75rem 1rem;
+    }
+    .lb-img-col {
+      padding: 2.5rem 2.5rem 0.5rem;
+    }
+    #lb-img { max-height: 50vh; }
+  }
 </style>
 {% endblock %}
 
@@ -330,15 +439,20 @@
 
 {# ── Lightbox overlay ────────────────────────────────────────────────────── #}
 <div id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" aria-hidden="true">
-  <div class="lb-panel">
-    <button id="lb-close" class="lb-close" aria-label="Close viewer">✕</button>
-    <button id="lb-prev" class="lb-prev" aria-label="Previous image">‹</button>
-    <button id="lb-next" class="lb-next" aria-label="Next image">›</button>
-    <img id="lb-img" src="" alt="" tabindex="0">
-    <div class="lb-footer">
-      <span id="lb-title"></span>
-      <span id="lb-counter"></span>
-      <a id="lb-link" href="" class="btn lb-detail-btn">View details →</a>
+  <div class="lb-container">
+    <div class="lb-img-col">
+      <button id="lb-close" class="lb-close" aria-label="Close viewer">✕</button>
+      <button id="lb-prev" class="lb-prev" aria-label="Previous image">‹</button>
+      <button id="lb-next" class="lb-next" aria-label="Next image">›</button>
+      <img id="lb-img" src="" alt="" tabindex="0">
+      <div class="lb-footer">
+        <span id="lb-title"></span>
+        <span id="lb-counter"></span>
+        <a id="lb-link" href="" class="btn lb-detail-btn">Open page →</a>
+      </div>
+    </div>
+    <div class="lb-details-col" id="lb-details">
+      <div class="lb-details-loading">Loading…</div>
     </div>
   </div>
 </div>
@@ -453,10 +567,49 @@ function savePreset() {
   const lbTitle  = document.getElementById('lb-title');
   const lbLink   = document.getElementById('lb-link');
   const lbCounter = document.getElementById('lb-counter');
+  const lbDetails = document.getElementById('lb-details');
   let lbIndex = 0;
+  let lbDetailAbort = null;
+
+  function highlightJson(pre) {
+    const text = pre.textContent;
+    let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html = html.replace(
+      /("(?:\\.|[^"\\])*")(\s*:)|("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)/g,
+      function (m, key, colon, str, num, bool, nil) {
+        if (key && colon) return '<span class="json-key">' + key + '</span>' + colon;
+        if (str)  return '<span class="json-string">' + str + '</span>';
+        if (num)  return '<span class="json-number">' + num + '</span>';
+        if (bool) return '<span class="json-bool">' + bool + '</span>';
+        if (nil)  return '<span class="json-null">' + nil + '</span>';
+        return m;
+      }
+    );
+    pre.innerHTML = html;
+  }
 
   function getCards() {
     return Array.from(document.querySelectorAll('.card[data-lb-id]'));
+  }
+
+  function loadDetails(assetId) {
+    if (lbDetailAbort) lbDetailAbort.abort();
+    lbDetailAbort = new AbortController();
+    lbDetails.innerHTML = '<div class="lb-details-loading">Loading…</div>';
+    fetch('/assets/' + assetId + '?partial=1', { signal: lbDetailAbort.signal })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function (html) {
+        lbDetails.innerHTML = html;
+        lbDetails.querySelectorAll('.json-highlight').forEach(highlightJson);
+      })
+      .catch(function (err) {
+        if (err.name !== 'AbortError') {
+          lbDetails.innerHTML = '<div class="lb-details-loading">Could not load details.</div>';
+        }
+      });
   }
 
   function openLightbox(index) {
@@ -473,13 +626,16 @@ function savePreset() {
     lightbox.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
     lbImg.focus();
+    loadDetails(card.dataset.lbId);
   }
 
   function lbClose() {
+    if (lbDetailAbort) { lbDetailAbort.abort(); lbDetailAbort = null; }
     lightbox.style.display = 'none';
     lightbox.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
     lbImg.src = '';
+    lbDetails.innerHTML = '<div class="lb-details-loading">Loading…</div>';
   }
 
   function lbPrev() {
