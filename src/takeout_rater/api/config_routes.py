@@ -4,6 +4,7 @@ Endpoints
 ---------
 GET  /health                   – liveness probe (always returns 200)
 GET  /api/config               – current config state
+GET  /api/library/status       – library path, DB schema version, and scan version
 POST /api/config/takeout-path  – save a Takeout library path and start indexing
 POST /api/config/open-picker   – open a native OS directory picker (Tkinter)
 """
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 
 from takeout_rater.config import get_takeout_path, set_takeout_path
 from takeout_rater.db.connection import open_library_db
+from takeout_rater.db.queries import CURRENT_INDEXER_VERSION
 
 router = APIRouter()
 
@@ -46,6 +48,33 @@ def get_config() -> JSONResponse:
         {
             "takeout_path": str(path) if path else None,
             "configured": path is not None,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Library status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/library/status")
+def library_status(request: Request) -> JSONResponse:
+    """Return library path, DB schema version, and current scan version.
+
+    This endpoint is always available; when the library is not configured,
+    ``db_schema_version`` will be ``null``.
+    """
+    conn = request.app.state.db_conn
+    library_root = request.app.state.library_root
+    db_schema_version: int | None = None
+    if conn is not None:
+        db_schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    return JSONResponse(
+        {
+            "library_path": str(library_root) if library_root else None,
+            "db_schema_version": db_schema_version,
+            "db_scan_version": CURRENT_INDEXER_VERSION,
+            "configured": library_root is not None,
         }
     )
 
