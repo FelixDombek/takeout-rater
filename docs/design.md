@@ -193,7 +193,7 @@ Threshold and algorithm are stored as `params_json` on `clusters` rows so result
 
 HEIC is handled via a pluggable `ImageLoader` abstraction:
 - Default: Pillow (JPEG, PNG, WebP)
-- HEIC: `pillow-heif` (included in the base install)
+- HEIC: `pillow-heif`
 
 If HEIC decoding fails for a specific file, the asset is indexed but marked `unsupported/skipped` and excluded from scoring.
 
