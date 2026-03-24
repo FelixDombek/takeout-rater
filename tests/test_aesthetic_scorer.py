@@ -89,6 +89,50 @@ def test_is_available_false_when_torch_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# HuggingFace repo resolution
+# ---------------------------------------------------------------------------
+
+
+def test_hf_repo_candidates_env_first(monkeypatch) -> None:
+    from takeout_rater.scorers.adapters import laion
+
+    monkeypatch.setenv("TAKEOUT_RATER_AESTHETIC_REPO", "custom/repo")
+    candidates = laion.AestheticScorer._hf_repo_candidates()
+    assert candidates[0] == "custom/repo"
+    # No duplicates should be present
+    assert len(candidates) == len(set(candidates))
+
+
+def test_download_mlp_weights_uses_fallback(monkeypatch, tmp_path: Path) -> None:
+    import huggingface_hub  # noqa: PLC0415
+
+    from takeout_rater.scorers.adapters import laion
+
+    repos = ("broken/repo", "working/repo")
+    monkeypatch.setattr(
+        laion.AestheticScorer,
+        "_hf_repo_candidates",
+        staticmethod(lambda: repos),
+    )
+
+    calls: list[str] = []
+
+    def fake_download(*, repo_id: str, filename: str) -> str:
+        calls.append(repo_id)
+        if repo_id == "working/repo":
+            dest = tmp_path / filename
+            dest.write_bytes(b"ok")
+            return str(dest)
+        raise RuntimeError("not found")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+
+    weights_path = laion.AestheticScorer._download_mlp_weights()
+    assert weights_path == tmp_path / laion._HF_FILENAME
+    assert calls == list(repos)
+
+
+# ---------------------------------------------------------------------------
 # score_batch — empty input (no dependencies needed)
 # ---------------------------------------------------------------------------
 

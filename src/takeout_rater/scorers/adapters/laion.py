@@ -15,6 +15,7 @@ The MLP weights (~4 MB) are downloaded from the HuggingFace Hub and cached by
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,8 +28,15 @@ if TYPE_CHECKING:
 # Model identifiers
 # ---------------------------------------------------------------------------
 
-#: HuggingFace repo containing the MLP weights.
-_HF_REPO = "LAION-AI/aesthetic-predictor"
+#: HuggingFace repos containing the MLP weights (first accessible one wins).
+#:
+#: The original LAION repo was removed, so we try open mirrors first and fall
+#: back to the historic location for anyone who still has access.
+_HF_REPO_FALLBACKS = (
+    "camenduru/improved-aesthetic-predictor",
+    "ttj/sac-logos-ava1-l14-linearMSE",
+    "LAION-AI/aesthetic-predictor",
+)
 #: Filename of the MLP checkpoint inside the repo (trained with MSE loss on
 #: CLIP ViT-L/14 embeddings).
 _HF_FILENAME = "sac+logos+ava1-l14-linearMSE.pth"
@@ -50,7 +58,7 @@ def _build_mlp(input_dim: int) -> torch.nn.Module:
     """Return the MLP architecture used by the LAION aesthetic predictor.
 
     The architecture is a 5-layer MLP with dropout, matching the checkpoint
-    saved at ``LAION-AI/aesthetic-predictor`` on HuggingFace.
+    published as ``sac+logos+ava1-l14-linearMSE.pth`` on HuggingFace mirrors.
 
     Args:
         input_dim: Size of the input embedding (768 for ViT-L/14).
@@ -162,6 +170,44 @@ class AestheticScorer(BaseScorer):
     # Lazy model loading
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _hf_repo_candidates() -> tuple[str, ...]:
+        """Return ordered HuggingFace repo candidates for the aesthetic MLP.
+
+        Users can override the first candidate via ``TAKEOUT_RATER_AESTHETIC_REPO``.
+        """
+        env_repo = os.getenv("TAKEOUT_RATER_AESTHETIC_REPO")
+        repos = [env_repo] if env_repo else []
+        repos.extend(_HF_REPO_FALLBACKS)
+        # Preserve order while removing duplicates
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for repo in repos:
+            if repo not in seen:
+                seen.add(repo)
+                ordered.append(repo)
+        return tuple(ordered)
+
+    @classmethod
+    def _download_mlp_weights(cls) -> Path:
+        """Download the aesthetic MLP weights from the first reachable repo."""
+        from huggingface_hub import hf_hub_download  # noqa: PLC0415
+
+        errors: list[Exception] = []
+        for repo_id in cls._hf_repo_candidates():
+            try:
+                return Path(hf_hub_download(repo_id=repo_id, filename=_HF_FILENAME))
+            except Exception as exc:  # pragma: no cover - repr is surfaced below
+                errors.append(exc)
+                continue
+
+        if errors:
+            # Raise the last error to preserve the most relevant traceback while
+            # still surfacing that all candidates were attempted.
+            raise errors[-1]
+
+        raise RuntimeError("No HuggingFace repo candidates configured for aesthetic MLP download.")
+
     def _ensure_loaded(self) -> None:
         """Load the CLIP backbone and aesthetic MLP on first call (lazy init).
 
@@ -180,7 +226,6 @@ class AestheticScorer(BaseScorer):
 
         import open_clip  # noqa: PLC0415
         import torch  # noqa: PLC0415
-        from huggingface_hub import hf_hub_download  # noqa: PLC0415
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -192,7 +237,7 @@ class AestheticScorer(BaseScorer):
         clip_model.to(device)
 
         # Download and load the aesthetic MLP weights
-        weights_path = hf_hub_download(repo_id=_HF_REPO, filename=_HF_FILENAME)
+        weights_path = self._download_mlp_weights()
         mlp = _build_mlp(_EMBEDDING_DIM)
         state_dict = torch.load(weights_path, map_location=device, weights_only=True)
         mlp.load_state_dict(state_dict)
