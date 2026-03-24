@@ -221,36 +221,28 @@ def test_assets_redirects_to_setup_for_html_client(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Index status endpoint
+# Index job triggering after setting path
 # ---------------------------------------------------------------------------
 
 
-def test_index_status_before_any_indexing(client: TestClient) -> None:
-    """GET /api/index/status returns a not-running, not-done response by default."""
-    resp = client.get("/api/index/status")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["running"] is False
-    assert data["done"] is False
-    assert data["error"] is None
-
-
-def test_index_status_after_setting_path_triggers_background_index(
+def test_set_path_triggers_index_job(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """After POST /api/config/takeout-path a background index run is started."""
+    """After POST /api/config/takeout-path an index job is started."""
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
     monkeypatch.setattr(routes_mod, "set_takeout_path", lambda p: None)
 
-    # Capture that _start_background_index is called
+    # Capture that _start_index_job is called
     calls: list[Path] = []
 
     def _fake_start(app: object, library_root: Path) -> None:
         calls.append(library_root)
         # Don't actually spawn a thread in unit tests
 
-    monkeypatch.setattr(routes_mod, "_start_background_index", _fake_start)
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
+
+    monkeypatch.setattr(jobs_mod, "_start_index_job", _fake_start)
 
     resp = client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
     assert resp.status_code == 200
@@ -258,57 +250,45 @@ def test_index_status_after_setting_path_triggers_background_index(
     assert calls[0] == tmp_path.resolve()
 
 
-def test_index_status_returns_progress_fields(client: TestClient) -> None:
-    """GET /api/index/status returns all expected progress fields including new phase fields."""
-    resp = client.get("/api/index/status")
+# ---------------------------------------------------------------------------
+# Jobs API for index status
+# ---------------------------------------------------------------------------
+
+
+def test_index_status_via_jobs_api(client: TestClient) -> None:
+    """GET /api/jobs/status?job_type=index returns index status."""
+    resp = client.get("/api/jobs/status?job_type=index")
     assert resp.status_code == 200
     data = resp.json()
-    assert "running" in data
-    assert "done" in data
-    assert "error" in data
-    assert "found" in data
-    assert "indexed" in data
-    assert "thumbs_ok" in data
-    assert "thumbs_skip" in data
-    assert "phase" in data
-    assert "total_dirs" in data
-    assert "dirs_scanned" in data
-    assert "current_dir" in data
+    assert data["job_type"] == "index"
+    assert data["running"] is False
+    assert data["done"] is False
+    assert data["error"] is None
+    assert "current_item" in data
 
 
-def test_index_status_default_phase_is_scanning(client: TestClient) -> None:
-    """Before any indexing starts the phase must default to 'scanning'."""
-    resp = client.get("/api/index/status")
-    data = resp.json()
-    assert data["phase"] == "scanning"
-    assert data["total_dirs"] == 0
-    assert data["dirs_scanned"] == 0
-    assert data["current_dir"] == ""
+def test_index_status_reflects_stored_job_progress(client: TestClient) -> None:
+    """The jobs status endpoint reflects whatever is stored in app.state.jobs['index']."""
+    from takeout_rater.api.jobs import JobProgress  # noqa: E402
 
-
-def test_index_status_reflects_stored_progress(client: TestClient) -> None:
-    """The status endpoint reflects whatever is stored in app.state.index_progress."""
-    from takeout_rater.indexing.run import IndexProgress  # noqa: E402
-
-    progress = IndexProgress(
+    progress = JobProgress(
+        job_type="index",
         running=False,
         done=True,
-        found=42,
-        indexed=42,
-        phase="indexing",
-        total_dirs=5,
-        dirs_scanned=5,
-        current_dir="Photos from 2023",
+        processed=42,
+        total=42,
+        message="Indexed 42 photo(s).",
+        current_item="",
     )
-    client.app.state.index_progress = progress  # type: ignore[union-attr]
+    from takeout_rater.api.jobs import _get_jobs  # noqa: E402
 
-    resp = client.get("/api/index/status")
+    _get_jobs(client.app)["index"] = progress  # type: ignore[union-attr]
+
+    resp = client.get("/api/jobs/status?job_type=index")
     assert resp.status_code == 200
     data = resp.json()
     assert data["done"] is True
-    assert data["found"] == 42
-    assert data["indexed"] == 42
-    assert data["phase"] == "indexing"
-    assert data["total_dirs"] == 5
-    assert data["dirs_scanned"] == 5
-    assert data["current_dir"] == "Photos from 2023"
+    assert data["processed"] == 42
+    assert data["total"] == 42
+    assert data["message"] == "Indexed 42 photo(s)."
+    assert data["current_item"] == ""
