@@ -227,10 +227,16 @@ def browse_assets(
 def asset_detail(
     asset_id: int,
     request: Request,
+    partial: str = "0",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
     takeout_root: Path | None = Depends(_get_takeout_root),  # noqa: B008
 ) -> HTMLResponse:
-    """Render the detail page for a single asset."""
+    """Render the detail page for a single asset.
+
+    Query parameters:
+    - ``partial``: ``"1"`` to return only the detail fragment (for the
+      lightbox panel); ``"0"`` (default) to return the full page.
+    """
     asset: AssetRow | None = get_asset_by_id(conn, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
@@ -251,17 +257,17 @@ def asset_detail(
     ]
 
     templates = request.app.state.templates
-    return templates.TemplateResponse(
-        "detail.html",
-        {
-            "request": request,
-            "asset": asset,
-            "scores": scores,
-            "duplicates": duplicates,
-            "sidecar_json": sidecar_json,
-            "duplicate_sidecars": duplicate_sidecars,
-        },
-    )
+    ctx = {
+        "request": request,
+        "asset": asset,
+        "scores": scores,
+        "duplicates": duplicates,
+        "sidecar_json": sidecar_json,
+        "duplicate_sidecars": duplicate_sidecars,
+    }
+    if partial == "1":
+        return templates.TemplateResponse("detail_partial.html", ctx)
+    return templates.TemplateResponse("detail.html", ctx)
 
 
 @router.get("/thumbs/{asset_id}")

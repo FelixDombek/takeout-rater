@@ -204,6 +204,27 @@ def test_asset_detail_contains_filename(client_with_assets: TestClient) -> None:
     assert "img0.jpg" in resp.text
 
 
+def test_asset_detail_partial_returns_fragment(client_with_assets: TestClient) -> None:
+    """detail_partial.html should return HTML fragment without full page chrome."""
+    resp = client_with_assets.get("/assets/1?partial=1")
+    assert resp.status_code == 200
+    assert "img0.jpg" in resp.text
+    # Fragment must not include base-page elements
+    assert "<html" not in resp.text
+    assert "lb-detail-inner" in resp.text
+
+
+def test_asset_detail_partial_not_found_returns_404(client: TestClient) -> None:
+    resp = client.get("/assets/99999?partial=1")
+    assert resp.status_code == 404
+
+
+def test_browse_lightbox_has_details_panel(client_with_assets: TestClient) -> None:
+    """Browse page must include the lightbox details panel."""
+    resp = client_with_assets.get("/assets")
+    assert 'id="lb-details"' in resp.text
+
+
 # ── GET /thumbs/{id} ─────────────────────────────────────────────────────────
 
 
