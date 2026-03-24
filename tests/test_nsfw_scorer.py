@@ -44,9 +44,9 @@ def test_nsfw_scorer_has_variant() -> None:
     assert spec.default_variant_id == "falconsai_vit"
 
 
-def test_nsfw_scorer_requires_nsfw_extra() -> None:
+def test_nsfw_scorer_requires_no_extras() -> None:
     spec = NSFWScorer.spec()
-    assert "nsfw" in spec.requires_extras
+    assert spec.requires_extras == ()
 
 
 # ── is_available ──────────────────────────────────────────────────────────────

@@ -64,7 +64,7 @@ class MyScorer(BaseScorer):
                 ),
             ),
             default_variant_id="default",
-            requires_extras=("index",),     # use the existing "index" extra if only Pillow is needed
+            requires_extras=(),
         )
 
     @classmethod
@@ -212,19 +212,19 @@ class MyMLScorer(BaseScorer):
 
 ---
 
-## 3. Declare optional dependencies (if any)
+## 3. Add dependencies to the base install
 
-In `pyproject.toml`, add an entry under `[project.optional-dependencies]`:
+New scorers should have their dependencies added to the `[project] dependencies`
+list in `pyproject.toml`.  Every feature is part of the base install — optional
+extras are reserved for exceptional cases only.
 
 ```toml
-my_extra = [
-    "some-optional-dep>=1.0",
-    "Pillow>=10.0",
+[project]
+dependencies = [
+    ...
+    "some-new-dep>=1.0",
 ]
 ```
-
-If the scorer only needs Pillow, reuse the existing `"index"` extra instead of
-adding a new one.
 
 ---
 

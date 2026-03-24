@@ -54,7 +54,7 @@ class BlurScorer(BaseScorer):
                 ),
             ),
             default_variant_id="default",
-            requires_extras=("index",),
+            requires_extras=(),
         )
 
     @classmethod
