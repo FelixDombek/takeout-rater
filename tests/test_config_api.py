@@ -88,6 +88,47 @@ def test_get_config_configured(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/library/status
+# ---------------------------------------------------------------------------
+
+
+def test_library_status_unconfigured(client: TestClient) -> None:
+    resp = client.get("/api/library/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["configured"] is False
+    assert data["library_path"] is None
+    assert data["db_schema_version"] is None
+
+
+def test_library_status_scan_version_present(client: TestClient) -> None:
+    from takeout_rater.db.queries import CURRENT_INDEXER_VERSION  # noqa: E402
+
+    resp = client.get("/api/library/status")
+    assert resp.status_code == 200
+    assert resp.json()["db_scan_version"] == CURRENT_INDEXER_VERSION
+
+
+def test_library_status_configured(tmp_path: Path) -> None:
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.db.queries import CURRENT_INDEXER_VERSION  # noqa: E402
+
+    conn = open_library_db(tmp_path)
+    app = create_app(tmp_path, conn)
+    c = TestClient(app, follow_redirects=False)
+
+    resp = c.get("/api/library/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["configured"] is True
+    assert data["library_path"] == str(tmp_path)
+    assert isinstance(data["db_schema_version"], int)
+    assert data["db_schema_version"] > 0
+    assert data["db_scan_version"] == CURRENT_INDEXER_VERSION
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
 # POST /api/config/takeout-path
 # ---------------------------------------------------------------------------
 
