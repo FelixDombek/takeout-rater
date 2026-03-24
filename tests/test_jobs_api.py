@@ -166,6 +166,48 @@ def test_start_score_job_sets_progress_in_app_state(
     assert jobs["score"].running is True
 
 
+def test_score_worker_runs_to_completion_with_empty_library(tmp_path: Path) -> None:
+    """The score worker must complete without errors on an empty library.
+
+    This test actually executes the worker thread (rather than patching it away)
+    to ensure that every lazy import inside ``_worker`` resolves correctly and
+    that the worker finishes cleanly when there are no assets to score.
+    """
+    import threading  # noqa: E402
+
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.ui.app import create_app  # noqa: E402
+
+    app = create_app(tmp_path, open_library_db(tmp_path))
+    client = TestClient(app, follow_redirects=False)
+
+    threads: list[threading.Thread] = []
+    original_thread = threading.Thread
+
+    class _TrackingThread(original_thread):
+        def start(self) -> None:
+            threads.append(self)
+            super().start()
+
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
+
+    orig = jobs_mod.threading.Thread
+    jobs_mod.threading.Thread = _TrackingThread  # type: ignore[assignment]
+    try:
+        resp = client.post("/api/jobs/score/start", json={})
+        assert resp.status_code == 200
+    finally:
+        jobs_mod.threading.Thread = orig  # type: ignore[assignment]
+
+    # Wait for the worker thread to finish (up to 5 s)
+    assert len(threads) == 1
+    threads[0].join(timeout=5)
+
+    jobs = app.state.jobs  # type: ignore[union-attr]
+    assert jobs["score"].done is True
+    assert jobs["score"].error is None
+
+
 # ---------------------------------------------------------------------------
 # POST /api/jobs/cluster/start
 # ---------------------------------------------------------------------------
