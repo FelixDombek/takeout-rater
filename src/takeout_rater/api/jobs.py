@@ -328,7 +328,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             open_library_db,  # noqa: PLC0415
         )
         from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
-        from takeout_rater.scoring.phash import compute_phashes  # noqa: PLC0415
+        from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
         from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
@@ -336,7 +336,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         try:
             # Compute pHashes first (needed for clustering later)
             progress.message = "Computing perceptual hashes…"
-            compute_phashes(worker_conn, thumbs_dir)
+            compute_phash_all(worker_conn, thumbs_dir)
 
             # Determine which scorers to run
             if scorer_id:
