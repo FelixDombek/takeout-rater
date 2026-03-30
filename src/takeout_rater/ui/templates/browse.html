@@ -402,9 +402,10 @@ function savePreset() {
   const grid = document.getElementById('photo-grid');
   let scrollLoading = false;
 
-  function loadNextPage(sentinel) {
+  function loadNextPage(sentinel, onSuccess) {
     if (scrollLoading) return;
     scrollLoading = true;
+    const originalText = sentinel.textContent;
     sentinel.textContent = 'Loading…';
     const nextPage = sentinel.dataset.nextPage;
     const url = new URL(window.location.href);
@@ -428,9 +429,10 @@ function savePreset() {
           scrollObserver.observe(newSentinel);
         }
         scrollLoading = false;
+        if (onSuccess) onSuccess();
       })
       .catch(function () {
-        sentinel.textContent = 'Could not load more photos — scroll up and try again.';
+        sentinel.textContent = originalText || 'Could not load more photos — scroll up and try again.';
         scrollLoading = false;
       });
   }
@@ -488,7 +490,19 @@ function savePreset() {
 
   function lbNext() {
     const cards = getCards();
-    if (lbIndex < cards.length - 1) openLightbox(lbIndex + 1);
+    if (lbIndex < cards.length - 1) {
+      openLightbox(lbIndex + 1);
+    } else {
+      // At the last image - check if there are more pages to load
+      const sentinel = document.querySelector('.scroll-sentinel');
+      if (sentinel && !scrollLoading) {
+        // Load the next page, then advance to the first new image
+        const currentCount = cards.length;
+        loadNextPage(sentinel, function () {
+          openLightbox(currentCount);
+        });
+      }
+    }
   }
 
   // Attach button listeners (avoids inline onclick attributes)
