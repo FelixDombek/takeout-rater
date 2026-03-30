@@ -371,13 +371,15 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
 
             total_scorers = len(scorer_ids)
             for idx, sid in enumerate(scorer_ids):
-                progress.message = f"Scoring with {sid!r} ({idx + 1}/{total_scorers})…"
+                _scorer_label = f"{sid!r} ({idx + 1}/{total_scorers})"
+                progress.message = f"Scoring with {_scorer_label}…"
                 progress.processed = 0
                 progress.total = 0
 
-                def _cb(scored: int, total: int) -> None:
+                def _cb(scored: int, total: int, _label: str = _scorer_label) -> None:
                     progress.processed = scored
                     progress.total = total
+                    progress.message = f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
 
                 run_scorer_by_id(
                     worker_conn,

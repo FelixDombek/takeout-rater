@@ -142,9 +142,7 @@ def compute_phash_all(
                 upsert_phash(conn, aid, phash_hex, algo=_DHASH_ALGO)
                 written += 1
             except OSError as exc:
-                logger.warning(
-                    "Could not compute dhash for asset %d (%s): %s", aid, thumb, exc
-                )
+                logger.warning("Could not compute dhash for asset %d (%s): %s", aid, thumb, exc)
         if on_progress is not None:
             on_progress(processed, total)
 
