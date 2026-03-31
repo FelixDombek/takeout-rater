@@ -2,7 +2,8 @@
 <div class="card"
      data-lb-id="{{ asset.id }}"
      data-lb-src="/thumbs/{{ asset.id }}"
-     data-lb-title="{{ asset.title or asset.filename }}">
+     data-lb-title="{{ asset.title or asset.filename }}"
+     data-ts="{{ asset.taken_at or '' }}">
   <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
     <img
       class="card-thumb"

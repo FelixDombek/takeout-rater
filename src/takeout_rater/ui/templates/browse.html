@@ -314,10 +314,101 @@
     }
     #lb-img { max-height: 50vh; }
   }
+
+  /* ── Timeline scrollbar ───────────────────────────────────────────────── */
+  #timeline-bar {
+    position: fixed;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 52px;
+    z-index: 40;
+    display: none;
+    cursor: pointer;
+    user-select: none;
+    padding-top: 52px; /* clear the site header */
+  }
+  #timeline-bar:hover { background: rgba(245,245,245,0.92); }
+  #timeline-track {
+    position: absolute;
+    right: 14px;
+    top: 60px;
+    bottom: 8px;
+    width: 2px;
+    background: #d0d0d0;
+    border-radius: 1px;
+  }
+  .tl-year-tick {
+    position: absolute;
+    right: 0;
+    width: 10px;
+    height: 2px;
+    margin-right: -10px;
+    background: #888;
+    transform: translateY(-50%);
+  }
+  .tl-month-dash {
+    position: absolute;
+    right: 0;
+    width: 5px;
+    height: 1px;
+    margin-right: -5px;
+    background: #bbb;
+    transform: translateY(-50%);
+  }
+  .tl-year-label {
+    position: absolute;
+    right: 18px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #777;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    line-height: 1;
+    pointer-events: none;
+  }
+  #timeline-thumb {
+    position: absolute;
+    right: -4px;
+    width: 10px;
+    height: 10px;
+    background: #1a5cdb;
+    border-radius: 50%;
+    cursor: grab;
+    transform: translateY(-50%);
+    box-shadow: 0 1px 3px rgba(0,0,0,.3);
+    transition: transform 0.05s;
+  }
+  #timeline-thumb:active { cursor: grabbing; transform: translateY(-50%) scale(1.3); }
+  #timeline-year-tooltip {
+    position: fixed;
+    right: 58px;
+    background: rgba(30,30,30,0.88);
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    pointer-events: none;
+    display: none;
+    white-space: nowrap;
+    z-index: 41;
+  }
+  /* Push main content left of the timeline bar */
+  @media (min-width: 600px) {
+    body.has-timeline main { padding-right: 60px; }
+  }
 </style>
 {% endblock %}
 
 {% block content %}
+{# ── Timeline scrollbar ──────────────────────────────────────────────────── #}
+<div id="timeline-bar" role="navigation" aria-label="Timeline navigation">
+  <div id="timeline-track">
+    <div id="timeline-thumb" title="Drag to navigate by date"></div>
+  </div>
+</div>
+<div id="timeline-year-tooltip"></div>
+
 <div class="toolbar">
   <span class="toolbar-count">
     {% if total == 0 %}
@@ -400,7 +491,8 @@
     <div class="card"
          data-lb-id="{{ asset.id }}"
          data-lb-src="/thumbs/{{ asset.id }}"
-         data-lb-title="{{ asset.title or asset.filename }}">
+         data-lb-title="{{ asset.title or asset.filename }}"
+         data-ts="{{ asset.taken_at or '' }}">
       <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
         <img
           class="card-thumb"
@@ -678,6 +770,246 @@ function savePreset() {
     if (e.key === 'ArrowRight')  { e.preventDefault(); lbNext(); }
   });
 })();
+
+// ── Timeline scrollbar ─────────────────────────────────────────────────────
+(function () {
+  'use strict';
+
+  const bar      = document.getElementById('timeline-bar');
+  const track    = document.getElementById('timeline-track');
+  const thumb    = document.getElementById('timeline-thumb');
+  const tooltip  = document.getElementById('timeline-year-tooltip');
+  if (!bar || !track || !thumb) return;
+
+  // Read current page filters so the seek API mirrors the browse query.
+  const pageParams = new URLSearchParams(window.location.search);
+  const favParam   = pageParams.get('favorited') || '';
+  const dedupeParam = pageParams.get('dedupe') || '1';
+  const sortByParam = pageParams.get('sort_by') || '';
+
+  // Build the base query string to append to seek navigations.
+  function browseParams(page) {
+    const p = new URLSearchParams();
+    p.set('page', page);
+    if (favParam)   p.set('favorited', favParam);
+    if (dedupeParam !== '1') p.set('dedupe', dedupeParam);
+    if (sortByParam) p.set('sort_by', sortByParam);
+    const minS = pageParams.get('min_score');
+    const maxS = pageParams.get('max_score');
+    if (minS) p.set('min_score', minS);
+    if (maxS) p.set('max_score', maxS);
+    return p.toString();
+  }
+
+  // Fetch year range from the API.
+  const apiParams = new URLSearchParams();
+  if (favParam)               apiParams.set('favorited', favParam);
+  if (dedupeParam !== '1')    apiParams.set('dedupe', dedupeParam);
+
+  // The timeline is only meaningful when browsing by date (no score sort).
+  // Skip it for score-sorted views so the page numbers remain accurate.
+  if (sortByParam) return;
+
+  fetch('/api/timeline?' + apiParams.toString())
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.has_data) return;
+
+      const minYear   = data.min_year;
+      const maxYear   = data.max_year;
+      const numYears  = maxYear - minYear + 1;
+
+      // Render year labels and month dashes onto the track.
+      // Layout: top=maxYear (newest, page 1), bottom=minYear (oldest, last page).
+      for (let year = maxYear; year >= minYear; year--) {
+        const pct = ((maxYear - year) / numYears) * 100;
+
+        // Year tick
+        const tick = document.createElement('div');
+        tick.className = 'tl-year-tick';
+        tick.style.top = pct + '%';
+        track.appendChild(tick);
+
+        // Year label
+        const label = document.createElement('div');
+        label.className = 'tl-year-label';
+        label.textContent = year;
+        label.style.top = pct + '%';
+        track.appendChild(label);
+
+        // 11 month dashes for Feb–Dec within this year's slice.
+        const sliceH = 100 / numYears; // height in % of one year's slice
+        for (let month = 2; month <= 12; month++) {
+          const dash = document.createElement('div');
+          dash.className = 'tl-month-dash';
+          dash.style.top = (pct + (month - 1) / 12 * sliceH) + '%';
+          track.appendChild(dash);
+        }
+      }
+
+      // Show the bar and mark body for padding.
+      bar.style.display = 'block';
+      document.body.classList.add('has-timeline');
+
+      // ── Coordinate helpers ────────────────────────────────────────────
+      // Convert a Unix timestamp → fraction [0..1] along the track.
+      // Fraction 0 = top = maxYear Jan 1 (newest); 1 = bottom = minYear Jan 1 (oldest).
+      function tsToFrac(ts) {
+        const maxTs = Date.UTC(maxYear + 1, 0, 1) / 1000;
+        const minTs = Date.UTC(minYear,     0, 1) / 1000;
+        return 1 - (ts - minTs) / (maxTs - minTs);
+      }
+
+      // Convert a track fraction → approximate Unix timestamp.
+      function fracToTs(frac) {
+        const maxTs = Date.UTC(maxYear + 1, 0, 1) / 1000;
+        const minTs = Date.UTC(minYear,     0, 1) / 1000;
+        return Math.round(minTs + (1 - frac) * (maxTs - minTs));
+      }
+
+      // Convert a track fraction → human-readable "Mon YYYY" label.
+      const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun',
+                      'Jul','Aug','Sep','Oct','Nov','Dec'];
+      function fracToLabel(frac) {
+        const ts   = fracToTs(frac);
+        const d    = new Date(ts * 1000);
+        return MONTHS[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+      }
+
+      // Return the fractional position (0..1) from a clientY within the track.
+      function clientYToFrac(clientY) {
+        const rect = track.getBoundingClientRect();
+        return Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+      }
+
+      // ── Thumb position ────────────────────────────────────────────────
+      function setThumbFrac(frac) {
+        const clamp = Math.max(0, Math.min(1, frac));
+        const rect  = track.getBoundingClientRect();
+        thumb.style.top = (clamp * rect.height) + 'px';
+      }
+
+      function getThumbFrac() {
+        const rect   = track.getBoundingClientRect();
+        const top    = parseFloat(thumb.style.top) || 0;
+        return rect.height > 0 ? top / rect.height : 0;
+      }
+
+      // ── Update thumb from scroll ──────────────────────────────────────
+      function updateThumbFromScroll() {
+        const cards = Array.from(document.querySelectorAll('.card[data-ts]'))
+          .filter(function (c) { return c.dataset.ts; });
+        if (!cards.length) return;
+
+        // Find the card nearest the centre of the viewport.
+        const mid = window.innerHeight / 2;
+        let best = null, bestDist = Infinity;
+        for (const card of cards) {
+          const r    = card.getBoundingClientRect();
+          const dist = Math.abs(r.top + r.height / 2 - mid);
+          if (dist < bestDist) { bestDist = dist; best = card; }
+        }
+        if (best) {
+          setThumbFrac(tsToFrac(parseInt(best.dataset.ts, 10)));
+        }
+      }
+
+      window.addEventListener('scroll', updateThumbFromScroll, { passive: true });
+      // Run once on load so the thumb starts at the right position.
+      updateThumbFromScroll();
+
+      // ── Seek: navigate to a date ──────────────────────────────────────
+      function seekToFrac(frac) {
+        const ts = fracToTs(frac);
+        const sp = new URLSearchParams();
+        sp.set('timestamp', ts);
+        if (favParam)              sp.set('favorited', favParam);
+        if (dedupeParam !== '1')   sp.set('dedupe', dedupeParam);
+
+        fetch('/api/timeline/seek?' + sp.toString())
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            window.location.href = '/assets?' + browseParams(d.page);
+          })
+          .catch(function () { /* ignore network errors */ });
+      }
+
+      // Show tooltip near the thumb while dragging / hovering.
+      function showTooltip(clientY, frac) {
+        tooltip.textContent = fracToLabel(frac);
+        tooltip.style.top   = clientY + 'px';
+        tooltip.style.display = 'block';
+      }
+      function hideTooltip() { tooltip.style.display = 'none'; }
+
+      // ── Mouse drag ────────────────────────────────────────────────────
+      let dragging = false;
+
+      track.addEventListener('mousedown', function (e) {
+        dragging = true;
+        const frac = clientYToFrac(e.clientY);
+        setThumbFrac(frac);
+        showTooltip(e.clientY, frac);
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', function (e) {
+        if (!dragging) return;
+        const frac = clientYToFrac(e.clientY);
+        setThumbFrac(frac);
+        showTooltip(e.clientY, frac);
+      });
+
+      document.addEventListener('mouseup', function (e) {
+        if (!dragging) return;
+        dragging = false;
+        hideTooltip();
+        seekToFrac(clientYToFrac(e.clientY));
+      });
+
+      // ── Touch drag ───────────────────────────────────────────────────
+      track.addEventListener('touchstart', function (e) {
+        dragging = true;
+        e.preventDefault();
+      }, { passive: false });
+
+      document.addEventListener('touchmove', function (e) {
+        if (!dragging) return;
+        const touch = e.touches[0];
+        const frac  = clientYToFrac(touch.clientY);
+        setThumbFrac(frac);
+        showTooltip(touch.clientY, frac);
+      }, { passive: true });
+
+      document.addEventListener('touchend', function (e) {
+        if (!dragging) return;
+        dragging = false;
+        hideTooltip();
+        if (e.changedTouches.length > 0) {
+          seekToFrac(clientYToFrac(e.changedTouches[0].clientY));
+        }
+      });
+
+      // ── Scroll wheel on the bar ───────────────────────────────────────
+      bar.addEventListener('wheel', function (e) {
+        e.preventDefault();
+        const step  = e.deltaY > 0 ? 0.015 : -0.015;
+        const newFrac = Math.max(0, Math.min(1, getThumbFrac() + step));
+        setThumbFrac(newFrac);
+        showTooltip(thumb.getBoundingClientRect().top, newFrac);
+      }, { passive: false });
+
+      // Seek on wheel end (debounced 400 ms).
+      let wheelTimer = null;
+      bar.addEventListener('wheel', function (e) {
+        clearTimeout(wheelTimer);
+        wheelTimer = setTimeout(function () {
+          hideTooltip();
+          seekToFrac(getThumbFrac());
+        }, 400);
+      }, { passive: true });
+    })
+    .catch(function () { /* ignore if API is unavailable */ });
+})();
 </script>
 {% endblock %}
-
