@@ -437,6 +437,79 @@ def get_duplicate_assets(conn: sqlite3.Connection, sha256: str) -> list[AssetRow
     return [_row_to_asset(r) for r in rows]
 
 
+# ---------------------------------------------------------------------------
+# Timeline helpers
+# ---------------------------------------------------------------------------
+
+
+def get_taken_at_range(
+    conn: sqlite3.Connection,
+) -> tuple[int | None, int | None]:
+    """Return ``(min_taken_at, max_taken_at)`` for assets with a non-NULL ``taken_at``.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        A tuple of Unix timestamps, or ``(None, None)`` if no assets have
+        ``taken_at`` data.
+    """
+    row = conn.execute(
+        "SELECT MIN(taken_at), MAX(taken_at) FROM assets WHERE taken_at IS NOT NULL"
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None, None
+    return row[0], row[1]
+
+
+def count_assets_newer_than(
+    conn: sqlite3.Connection,
+    timestamp: int,
+    *,
+    favorited: bool | None = None,
+    deduped: bool = False,
+) -> int:
+    """Count assets with ``taken_at`` strictly greater than *timestamp*.
+
+    Used to compute the 1-based page number for a given date when assets are
+    sorted by ``taken_at DESC`` (newest first).  The page a timestamp falls on
+    is ``count_assets_newer_than(...) // page_size + 1``.
+
+    Args:
+        conn: Open database connection.
+        timestamp: Unix timestamp threshold.  Assets taken *after* this time
+            are counted.
+        favorited: Optional favorited filter.
+        deduped: If ``True``, count only the representative (lowest ``id``) of
+            each SHA-256 group, matching the behaviour of
+            :func:`list_assets_deduped`.
+
+    Returns:
+        Number of assets with ``taken_at > timestamp``.
+    """
+    conditions: list[str] = ["taken_at > ?"]
+    params: list[Any] = [timestamp]
+
+    if favorited is not None:
+        conditions.append("favorited = ?")
+        params.append(1 if favorited else 0)
+
+    where = f"WHERE {' AND '.join(conditions)}"
+
+    if deduped:
+        sql = (  # noqa: S608
+            f"SELECT COUNT(*) FROM ("
+            f"  SELECT 1"
+            f"  FROM assets {where}"
+            f"  GROUP BY COALESCE(sha256, CAST(id AS TEXT))"
+            f")"
+        )
+    else:
+        sql = f"SELECT COUNT(*) FROM assets {where}"  # noqa: S608
+
+    return conn.execute(sql, params).fetchone()[0]
+
+
 def insert_scorer_run(
     conn: sqlite3.Connection,
     scorer_id: str,

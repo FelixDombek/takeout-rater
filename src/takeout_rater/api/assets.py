@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import sqlite3
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from takeout_rater.db.queries import (
     AssetRow,
     count_assets,
     count_assets_deduped,
+    count_assets_newer_than,
     count_assets_with_score,
     get_asset_by_id,
     get_asset_scores,
     get_duplicate_assets,
+    get_taken_at_range,
     list_assets,
     list_assets_by_score,
     list_assets_deduped,
@@ -284,3 +287,67 @@ def serve_thumbnail(
     if not thumb.exists():
         raise HTTPException(status_code=404, detail=f"Thumbnail for asset {asset_id} not found")
     return FileResponse(str(thumb), media_type="image/jpeg")
+
+
+@router.get("/api/timeline")
+def get_timeline(
+    request: Request,
+    favorited: str | None = None,
+    dedupe: str = "1",
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return the year range of photos available in the library.
+
+    Query parameters mirror those of ``/assets`` so the timeline always reflects
+    the currently active view filter.
+
+    - ``favorited``: ``"1"`` to restrict to favorited assets.
+    - ``dedupe``: ``"0"`` to include duplicate files; defaults to ``"1"``.
+
+    Returns a JSON object with:
+    - ``has_data``: ``false`` when no photos have ``taken_at`` metadata.
+    - ``min_year``: integer – oldest year with photos.
+    - ``max_year``: integer – newest year with photos.
+    """
+    min_ts, max_ts = get_taken_at_range(conn)
+    if min_ts is None or max_ts is None:
+        return JSONResponse({"has_data": False})
+
+    min_year = datetime.datetime.fromtimestamp(min_ts, tz=datetime.UTC).year
+    max_year = datetime.datetime.fromtimestamp(max_ts, tz=datetime.UTC).year
+
+    return JSONResponse({"has_data": True, "min_year": min_year, "max_year": max_year})
+
+
+@router.get("/api/timeline/seek")
+def timeline_seek(
+    request: Request,
+    timestamp: int,
+    favorited: str | None = None,
+    dedupe: str = "1",
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return the 1-based page number for the given Unix timestamp.
+
+    Assets are sorted by ``taken_at DESC`` (newest first), so this counts the
+    number of assets *newer* than *timestamp* and divides by the page size.
+
+    Query parameters:
+    - ``timestamp``: Unix timestamp (seconds) to seek to.
+    - ``favorited``: ``"1"`` to restrict to favorited assets.
+    - ``dedupe``: ``"0"`` to include duplicate files; defaults to ``"1"``.
+
+    Returns ``{"page": N}`` where *N* is the 1-based page that contains photos
+    taken around the requested time.
+    """
+    fav_filter: bool | None = True if favorited == "1" else None
+    dedup_enabled = dedupe != "0"
+
+    count = count_assets_newer_than(
+        conn,
+        timestamp,
+        favorited=fav_filter,
+        deduped=dedup_enabled,
+    )
+    page = max(1, count // _PAGE_SIZE + 1)
+    return JSONResponse({"page": page})

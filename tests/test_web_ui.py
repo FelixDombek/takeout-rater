@@ -691,3 +691,152 @@ def test_asset_detail_shows_duplicate_sidecar_panels(tmp_path: Path) -> None:
     assert "album2 copy" in resp.text
     # Both paths labelled in the duplicate sidecars section
     assert "album2/img.jpg" in resp.text
+
+
+# ── GET /api/timeline ─────────────────────────────────────────────────────────
+
+
+def test_timeline_no_data_returns_has_data_false(client: TestClient) -> None:
+    """With no indexed photos the timeline endpoint reports has_data=False."""
+    resp = client.get("/api/timeline")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["has_data"] is False
+
+
+def test_timeline_returns_year_range(tmp_path: Path) -> None:
+    """Timeline endpoint should report the correct min/max years from taken_at."""
+    import calendar
+
+    conn = _make_db()
+    # 2018-06-15
+    ts_2018 = int(calendar.timegm((2018, 6, 15, 0, 0, 0, 0, 0, 0)))
+    # 2022-01-01
+    ts_2022 = int(calendar.timegm((2022, 1, 1, 0, 0, 0, 0, 0, 0)))
+
+    from takeout_rater.db.queries import upsert_asset  # noqa: F811
+
+    upsert_asset(
+        conn,
+        {
+            "relpath": "a/img1.jpg",
+            "filename": "img1.jpg",
+            "ext": ".jpg",
+            "size_bytes": 1,
+            "mime": "image/jpeg",
+            "indexed_at": int(time.time()),
+            "taken_at": ts_2018,
+        },
+    )
+    upsert_asset(
+        conn,
+        {
+            "relpath": "a/img2.jpg",
+            "filename": "img2.jpg",
+            "ext": ".jpg",
+            "size_bytes": 1,
+            "mime": "image/jpeg",
+            "indexed_at": int(time.time()),
+            "taken_at": ts_2022,
+        },
+    )
+
+    app = create_app(tmp_path, conn)
+    cl = TestClient(app, follow_redirects=True)
+    resp = cl.get("/api/timeline")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["has_data"] is True
+    assert data["min_year"] == 2018
+    assert data["max_year"] == 2022
+
+
+# ── GET /api/timeline/seek ────────────────────────────────────────────────────
+
+
+def test_timeline_seek_returns_page_1_for_newest_timestamp(tmp_path: Path) -> None:
+    """Seeking to the newest photo's timestamp should return page 1."""
+    import calendar
+
+    conn = _make_db()
+    ts_new = int(calendar.timegm((2023, 1, 1, 0, 0, 0, 0, 0, 0)))
+    ts_old = int(calendar.timegm((2010, 1, 1, 0, 0, 0, 0, 0, 0)))
+
+    from takeout_rater.db.queries import upsert_asset  # noqa: F811
+
+    upsert_asset(
+        conn,
+        {
+            "relpath": "a/new.jpg",
+            "filename": "new.jpg",
+            "ext": ".jpg",
+            "size_bytes": 1,
+            "mime": "image/jpeg",
+            "indexed_at": int(time.time()),
+            "taken_at": ts_new,
+        },
+    )
+    upsert_asset(
+        conn,
+        {
+            "relpath": "a/old.jpg",
+            "filename": "old.jpg",
+            "ext": ".jpg",
+            "size_bytes": 1,
+            "mime": "image/jpeg",
+            "indexed_at": int(time.time()),
+            "taken_at": ts_old,
+        },
+    )
+
+    app = create_app(tmp_path, conn)
+    cl = TestClient(app, follow_redirects=True)
+
+    # Seeking to a time before all photos → no photos are newer → page 1
+    resp = cl.get(f"/api/timeline/seek?timestamp={ts_old - 1}")
+    assert resp.status_code == 200
+    assert resp.json()["page"] == 1
+
+    # Seeking to a very recent timestamp → all photos are older → page 1
+    resp2 = cl.get(f"/api/timeline/seek?timestamp={ts_new + 1}")
+    assert resp2.status_code == 200
+    assert resp2.json()["page"] == 1
+
+
+def test_timeline_seek_page_advances_for_older_timestamp(tmp_path: Path) -> None:
+    """Seeking to an older timestamp should return a later page than a recent one."""
+    import calendar
+
+    conn = _make_db()
+
+    from takeout_rater.db.queries import upsert_asset  # noqa: F811
+
+    # Insert 60 photos spread across two years so they span two pages (page size 50).
+    for i in range(60):
+        year = 2020 if i < 30 else 2019
+        ts = int(calendar.timegm((year, 6, i % 28 + 1, 0, 0, 0, 0, 0, 0)))
+        upsert_asset(
+            conn,
+            {
+                "relpath": f"a/img{i}.jpg",
+                "filename": f"img{i}.jpg",
+                "ext": ".jpg",
+                "size_bytes": 1,
+                "mime": "image/jpeg",
+                "indexed_at": int(time.time()),
+                "taken_at": ts,
+            },
+        )
+
+    app = create_app(tmp_path, conn)
+    cl = TestClient(app, follow_redirects=True)
+
+    ts_recent = int(calendar.timegm((2020, 7, 1, 0, 0, 0, 0, 0, 0)))
+    ts_older = int(calendar.timegm((2019, 1, 1, 0, 0, 0, 0, 0, 0)))
+
+    resp_recent = cl.get(f"/api/timeline/seek?timestamp={ts_recent}")
+    resp_older = cl.get(f"/api/timeline/seek?timestamp={ts_older}")
+    assert resp_recent.status_code == 200
+    assert resp_older.status_code == 200
+    # Older timestamp → more photos are newer → higher page number
+    assert resp_older.json()["page"] >= resp_recent.json()["page"]
