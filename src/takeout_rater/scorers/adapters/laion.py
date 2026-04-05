@@ -48,6 +48,10 @@ _CLIP_PRETRAINED = "openai"
 #: Embedding dimension produced by ViT-L/14.
 _EMBEDDING_DIM = 768
 
+#: Number of images processed in a single GPU forward pass.
+#: Tune down if you hit VRAM OOM errors; tune up on high-VRAM GPUs.
+_SCORE_BATCH_SIZE = 32
+
 
 # ---------------------------------------------------------------------------
 # MLP architecture (must match the saved checkpoint)
@@ -273,8 +277,15 @@ class AestheticScorer(BaseScorer):
     ) -> list[dict[str, float]]:
         """Score a batch of images for aesthetic quality.
 
-        Images are processed one at a time (each PIL open + CLIP forward pass).
-        If a file cannot be opened or processed, the score defaults to ``0.0``.
+        Images are processed in chunks of :data:`_SCORE_BATCH_SIZE` so that
+        each chunk is forwarded through CLIP and the aesthetic MLP in a single
+        GPU pass, making full use of hardware parallelism.
+
+        If a file cannot be opened (``OSError``, ``ValueError``), a zero tensor
+        placeholder keeps the batch shape intact and the score defaults to
+        ``0.0``.  If a whole-chunk forward pass raises ``RuntimeError`` (e.g.
+        VRAM OOM), the chunk falls back to per-image scoring so that a single
+        failure never silently zeros out an entire batch.
 
         Args:
             image_paths: Paths to image files.  Thumbnails (512 px) work well
@@ -294,20 +305,59 @@ class AestheticScorer(BaseScorer):
         self._ensure_loaded()
 
         results: list[dict[str, float]] = []
-        for path in image_paths:
+
+        for chunk_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
+            chunk = image_paths[chunk_start : chunk_start + _SCORE_BATCH_SIZE]
+
+            # Load and preprocess each image; record failures.
+            tensors: list[Any] = []
+            failed: set[int] = set()
+            for i, path in enumerate(chunk):
+                try:
+                    img = Image.open(path).convert("RGB")
+                    tensors.append(self._preprocess(img))
+                except (OSError, ValueError):
+                    failed.add(i)
+                    tensors.append(None)
+
+            # Find the shape of a valid tensor to fill None placeholders.
+            valid_shape = next((t.shape for t in tensors if t is not None), None)
+            if valid_shape is None:
+                # Every image in this chunk failed — skip the forward pass.
+                results.extend({"aesthetic": 0.0} for _ in chunk)
+                continue
+
+            padded: list[Any] = [t if t is not None else torch.zeros(valid_shape) for t in tensors]
+
             try:
-                img = Image.open(path).convert("RGB")
-                tensor = self._preprocess(img).unsqueeze(0).to(self._device)
-
+                batch = torch.stack(padded).to(self._device)
                 with torch.no_grad():
-                    embedding = self._clip_model.encode_image(tensor)
+                    embedding = self._clip_model.encode_image(batch)
                     embedding = embedding / embedding.norm(dim=-1, keepdim=True)
-                    raw: float = self._mlp(embedding.float()).item()
+                    raw_scores: list[float] = self._mlp(embedding.float()).reshape(-1).tolist()
 
-                score = max(0.0, min(10.0, float(raw)))
-            except (OSError, ValueError, RuntimeError):
-                score = 0.0
+                for i, raw in enumerate(raw_scores):
+                    if i in failed:
+                        results.append({"aesthetic": 0.0})
+                    else:
+                        results.append({"aesthetic": max(0.0, min(10.0, float(raw)))})
 
-            results.append({"aesthetic": score})
+            except RuntimeError:
+                # Fallback: score each image individually (e.g. on VRAM OOM).
+                for i, path in enumerate(chunk):
+                    if i in failed:
+                        results.append({"aesthetic": 0.0})
+                        continue
+                    try:
+                        img = Image.open(path).convert("RGB")
+                        tensor = self._preprocess(img).unsqueeze(0).to(self._device)
+                        with torch.no_grad():
+                            embedding = self._clip_model.encode_image(tensor)
+                            embedding = embedding / embedding.norm(dim=-1, keepdim=True)
+                            raw_single: float = self._mlp(embedding.float()).item()
+                        score = max(0.0, min(10.0, float(raw_single)))
+                    except (OSError, ValueError, RuntimeError):
+                        score = 0.0
+                    results.append({"aesthetic": score})
 
         return results
