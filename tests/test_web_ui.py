@@ -148,7 +148,7 @@ def test_browse_partial_no_sentinel_when_single_page(tmp_path: Path) -> None:
     resp = client.get("/assets?partial=1")
     assert "scroll-sentinel" not in resp.text
     # New design: partial carries metadata instead of a sentinel element
-    assert 'data-partial-meta' in resp.text
+    assert "data-partial-meta" in resp.text
     assert 'data-total-pages="1"' in resp.text
 
 
@@ -164,7 +164,7 @@ def test_browse_partial_has_meta_when_multi_page(tmp_path: Path) -> None:
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets?partial=1&page=1")
     assert "scroll-sentinel" not in resp.text
-    assert 'data-partial-meta' in resp.text
+    assert "data-partial-meta" in resp.text
     assert 'data-total-pages="2"' in resp.text
 
 

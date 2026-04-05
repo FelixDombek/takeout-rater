@@ -33,3 +33,4 @@ A contribution is complete when **all** of the following are true.
 - [ ] PR title is descriptive (e.g. `feat: add LaionAestheticScorer`)
 - [ ] PR description references the relevant issue or iteration
 - [ ] No debug print statements, commented-out code, or TODO without an issue reference
+- [ ] **UI changes** include at least one screenshot in the PR description
