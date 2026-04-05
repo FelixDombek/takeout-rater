@@ -49,8 +49,9 @@ _CLIP_PRETRAINED = "openai"
 _EMBEDDING_DIM = 768
 
 #: Number of images processed in a single GPU forward pass.
-#: Tune down if you hit VRAM OOM errors; tune up on high-VRAM GPUs.
-_SCORE_BATCH_SIZE = 32
+#: 64 is well within the VRAM budget of an 8 GB GPU (CLIP ViT-L/14 uses ~1.8 GB,
+#: leaving ample headroom).  Tune down if you hit VRAM OOM errors.
+_SCORE_BATCH_SIZE = 64
 
 
 # ---------------------------------------------------------------------------
