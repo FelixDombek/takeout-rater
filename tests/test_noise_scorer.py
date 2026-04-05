@@ -74,7 +74,6 @@ def test_uniform_image_low_noise(tmp_path: Path) -> None:
     pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
-    p = tmp_path / "uniform.jpg"
     # Use PNG to avoid JPEG compression artefacts introducing false noise
     p = tmp_path / "uniform.png"
     Image.new("RGB", (64, 64), color=(128, 128, 128)).save(p, "PNG")
