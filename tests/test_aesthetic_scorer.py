@@ -151,7 +151,6 @@ def test_score_batch_empty_returns_empty() -> None:
 
 def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
     """Return an AestheticScorer whose model is fully mocked (no network, no torch)."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     # Create a small test image
@@ -161,7 +160,7 @@ def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
     scorer = AestheticScorer.create()
 
     # Build a tiny torch tensor mock that behaves like a real embedding
-    import torch  # noqa: PLC0415  (skip test if torch not available)
+    import torch  # noqa: PLC0415
 
     # Fake CLIP model: returns a fixed unit embedding
     fake_clip = MagicMock()
@@ -186,13 +185,8 @@ def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
     return scorer
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
     """score_batch must return exactly one result per input path."""
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     paths = []
@@ -206,13 +200,8 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
     assert len(results) == len(paths)
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_batch_returns_aesthetic_key(tmp_path: Path) -> None:
     """Each result dict must contain the 'aesthetic' key."""
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -224,13 +213,8 @@ def test_score_batch_returns_aesthetic_key(tmp_path: Path) -> None:
     assert "aesthetic" in results[0]
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_batch_score_in_range(tmp_path: Path) -> None:
     """Score must be in [0, 10]."""
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -241,13 +225,8 @@ def test_score_batch_score_in_range(tmp_path: Path) -> None:
     assert 0.0 <= results[0]["aesthetic"] <= 10.0
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_batch_mock_returns_expected_value(tmp_path: Path) -> None:
     """The mocked scorer should return the value injected by the fake MLP (7.5)."""
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -258,27 +237,16 @@ def test_score_batch_mock_returns_expected_value(tmp_path: Path) -> None:
     assert results[0]["aesthetic"] == pytest.approx(7.5)
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
     """A missing image file should yield aesthetic = 0.0, not raise."""
-    pytest.importorskip("torch")
-
     scorer = _make_mock_scorer(tmp_path)
     result = scorer.score_batch([tmp_path / "does_not_exist.jpg"])
     assert len(result) == 1
     assert result[0]["aesthetic"] == pytest.approx(0.0)
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_batch_clamps_above_ten(tmp_path: Path) -> None:
     """Scores above 10 must be clamped to 10.0."""
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
     from PIL import Image  # noqa: PLC0415
 
@@ -292,13 +260,8 @@ def test_score_batch_clamps_above_ten(tmp_path: Path) -> None:
     assert results[0]["aesthetic"] == pytest.approx(10.0)
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_batch_clamps_below_zero(tmp_path: Path) -> None:
     """Scores below 0 must be clamped to 0.0."""
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
     from PIL import Image  # noqa: PLC0415
 
@@ -317,13 +280,8 @@ def test_score_batch_clamps_below_zero(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_score_one(tmp_path: Path) -> None:
     """score_one must return a dict with 'aesthetic' in [0, 10]."""
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -340,13 +298,8 @@ def test_score_one(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_build_mlp_output_shape() -> None:
     """_build_mlp(768) must map a (1, 768) tensor to a (1, 1) output."""
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
 
     mlp = _build_mlp(_EMBEDDING_DIM)
@@ -357,10 +310,6 @@ def test_build_mlp_output_shape() -> None:
     assert out.shape == (1, 1)
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_build_mlp_state_dict_keys_use_layers_prefix() -> None:
     """All MLP state_dict keys must start with 'layers.' to match the published checkpoint.
 
@@ -369,8 +318,6 @@ def test_build_mlp_state_dict_keys_use_layers_prefix() -> None:
     ``layers.`` (e.g. ``layers.0.weight``).  A bare ``nn.Sequential`` would instead
     produce keys like ``0.weight``, causing ``load_state_dict`` to fail.
     """
-    pytest.importorskip("torch")
-
     mlp = _build_mlp(_EMBEDDING_DIM)
     keys = list(mlp.state_dict().keys())
 
@@ -380,17 +327,12 @@ def test_build_mlp_state_dict_keys_use_layers_prefix() -> None:
     )
 
 
-@pytest.mark.skipif(
-    not AestheticScorer.is_available(),
-    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
-)
 def test_build_mlp_state_dict_round_trip(tmp_path: Path) -> None:
     """The MLP state_dict must be loadable back into a fresh instance without errors.
 
     This guards against architecture mismatches where saving and reloading the
     weights (as the real checkpoint loading does) would raise a RuntimeError.
     """
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
 
     mlp = _build_mlp(_EMBEDDING_DIM)
