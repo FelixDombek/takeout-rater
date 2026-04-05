@@ -13,17 +13,25 @@ from __future__ import annotations
 # Explicit scorer class list
 # Add your scorer class here after creating it.
 # ---------------------------------------------------------------------------
+from takeout_rater.scorers.adapters.brisque import BRISQUEScorer
+from takeout_rater.scorers.adapters.clip_iqa import CLIPIQAScorer
 from takeout_rater.scorers.adapters.laion import AestheticScorer
 from takeout_rater.scorers.adapters.nsfw import NSFWScorer
 from takeout_rater.scorers.base import BaseScorer, ScorerSpec
 from takeout_rater.scorers.heuristics.blur import BlurScorer
 from takeout_rater.scorers.heuristics.dummy import DummyScorer
+from takeout_rater.scorers.heuristics.luminosity import LuminosityScorer
+from takeout_rater.scorers.heuristics.noise import NoiseScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
     DummyScorer,
     BlurScorer,
+    LuminosityScorer,
+    NoiseScorer,
     AestheticScorer,
     NSFWScorer,
+    BRISQUEScorer,
+    CLIPIQAScorer,
 ]
 
 
