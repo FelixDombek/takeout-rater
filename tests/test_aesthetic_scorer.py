@@ -355,3 +355,48 @@ def test_build_mlp_output_shape() -> None:
         x = torch.randn(1, _EMBEDDING_DIM)
         out = mlp(x)
     assert out.shape == (1, 1)
+
+
+@pytest.mark.skipif(
+    not AestheticScorer.is_available(),
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
+)
+def test_build_mlp_state_dict_keys_use_layers_prefix() -> None:
+    """All MLP state_dict keys must start with 'layers.' to match the published checkpoint.
+
+    The checkpoint (sac+logos+ava1-l14-linearMSE.pth) was saved from a model with
+    ``self.layers = nn.Sequential(...)``, so every parameter key is prefixed with
+    ``layers.`` (e.g. ``layers.0.weight``).  A bare ``nn.Sequential`` would instead
+    produce keys like ``0.weight``, causing ``load_state_dict`` to fail.
+    """
+    pytest.importorskip("torch")
+
+    mlp = _build_mlp(_EMBEDDING_DIM)
+    keys = list(mlp.state_dict().keys())
+
+    assert keys, "_build_mlp returned a model with no parameters"
+    assert all(k.startswith("layers.") for k in keys), (
+        f"Expected all state_dict keys to start with 'layers.', got: {keys}"
+    )
+
+
+@pytest.mark.skipif(
+    not AestheticScorer.is_available(),
+    reason="aesthetic scorer dependencies (torch + open_clip + huggingface_hub + PIL) not installed",
+)
+def test_build_mlp_state_dict_round_trip(tmp_path: Path) -> None:
+    """The MLP state_dict must be loadable back into a fresh instance without errors.
+
+    This guards against architecture mismatches where saving and reloading the
+    weights (as the real checkpoint loading does) would raise a RuntimeError.
+    """
+    pytest.importorskip("torch")
+    import torch  # noqa: PLC0415
+
+    mlp = _build_mlp(_EMBEDDING_DIM)
+    weights_path = tmp_path / "weights.pth"
+    torch.save(mlp.state_dict(), str(weights_path))
+
+    mlp2 = _build_mlp(_EMBEDDING_DIM)
+    state = torch.load(str(weights_path), map_location="cpu", weights_only=True)
+    mlp2.load_state_dict(state)  # Must not raise
