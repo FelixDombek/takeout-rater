@@ -60,25 +60,37 @@ def _build_mlp(input_dim: int) -> torch.nn.Module:
     The architecture is a 5-layer MLP with dropout, matching the checkpoint
     published as ``sac+logos+ava1-l14-linearMSE.pth`` on HuggingFace mirrors.
 
+    The checkpoint stores weights under a ``layers`` submodule (e.g.
+    ``layers.0.weight``), so the returned module wraps the ``nn.Sequential``
+    in a container class that exposes it as ``self.layers``.
+
     Args:
         input_dim: Size of the input embedding (768 for ViT-L/14).
 
     Returns:
-        An uninitialised ``torch.nn.Sequential`` module.
+        An uninitialised ``MLP`` module whose ``layers`` attribute holds the
+        ``nn.Sequential`` stack.
     """
     import torch.nn as nn  # noqa: PLC0415
 
-    return nn.Sequential(
-        nn.Linear(input_dim, 1024),
-        nn.Dropout(0.2),
-        nn.Linear(1024, 128),
-        nn.Dropout(0.2),
-        nn.Linear(128, 64),
-        nn.Dropout(0.1),
-        nn.Linear(64, 16),
-        nn.Dropout(0.1),
-        nn.Linear(16, 1),
-    )
+    class MLP(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layers = nn.Sequential(
+                nn.Linear(input_dim, 1024),
+                nn.Dropout(0.2),
+                nn.Linear(1024, 128),
+                nn.Dropout(0.2),
+                nn.Linear(128, 64),
+                nn.Dropout(0.1),
+                nn.Linear(64, 16),
+                nn.Linear(16, 1),
+            )
+
+        def forward(self, x):  # type: ignore[override]
+            return self.layers(x)
+
+    return MLP()
 
 
 # ---------------------------------------------------------------------------

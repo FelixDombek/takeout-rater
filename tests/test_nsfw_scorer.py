@@ -67,19 +67,28 @@ def test_nsfw_scorer_score_batch_empty_returns_empty() -> None:
     assert result == []
 
 
-# ── integration: skip if deps not available ───────────────────────────────────
+# ── integration: score_batch with mocked pipeline ────────────────────────────
 
 
-@pytest.mark.skipif(not NSFWScorer.is_available(), reason="nsfw deps not installed")
-def test_nsfw_scorer_scores_real_image(tmp_path) -> None:
-    pytest.importorskip("PIL")
+def test_nsfw_scorer_score_batch_with_mock_pipeline(tmp_path) -> None:
+    """score_batch extracts the 'nsfw' label score from the pipeline output.
+
+    The transformers pipeline is replaced with a lightweight fake so this test
+    runs without downloading any model weights.
+    """
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64), color=(200, 150, 100)).save(img_path, "JPEG")
 
     scorer = NSFWScorer()
+    # Inject a fake pipeline that returns a fixed prediction (no network call).
+    scorer._pipeline = lambda img: [
+        {"label": "nsfw", "score": 0.1},
+        {"label": "normal", "score": 0.9},
+    ]
+
     results = scorer.score_batch([img_path])
     assert len(results) == 1
     score = results[0]["nsfw"]
-    assert 0.0 <= score <= 1.0
+    assert score == pytest.approx(0.1)
