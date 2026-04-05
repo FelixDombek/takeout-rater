@@ -384,3 +384,27 @@ def test_build_mlp_state_dict_round_trip(tmp_path: Path) -> None:
     mlp2 = _build_mlp(_EMBEDDING_DIM)
     state = torch.load(str(weights_path), map_location="cpu", weights_only=True)
     mlp2.load_state_dict(state)  # Must not raise
+
+
+# ---------------------------------------------------------------------------
+# Prefetch / pipelining tests
+# ---------------------------------------------------------------------------
+
+
+def test_score_batch_encode_image_called_once_per_chunk(tmp_path: Path) -> None:
+    """encode_image must be called exactly once per chunk (batching preserved after prefetch)."""
+    from PIL import Image  # noqa: PLC0415
+
+    n = _SCORE_BATCH_SIZE + 1  # forces two chunks
+    paths = []
+    for i in range(n):
+        p = tmp_path / f"img{i}.jpg"
+        Image.new("RGB", (64, 64), color=(i % 256, 100, 200)).save(p, "JPEG")
+        paths.append(p)
+
+    scorer = _make_mock_scorer(tmp_path)
+    results = scorer.score_batch(paths)
+
+    assert len(results) == n
+    # Two chunks → encode_image must have been called exactly twice.
+    assert scorer._clip_model.encode_image.call_count == 2
