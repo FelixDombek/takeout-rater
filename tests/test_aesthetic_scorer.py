@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.laion import _EMBEDDING_DIM, AestheticScorer, _build_mlp
+from takeout_rater.scorers.adapters.laion import (
+    _EMBEDDING_DIM,
+    _SCORE_BATCH_SIZE,
+    AestheticScorer,
+    _build_mlp,
+)
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -162,19 +167,23 @@ def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
     # Build a tiny torch tensor mock that behaves like a real embedding
     import torch  # noqa: PLC0415
 
-    # Fake CLIP model: returns a fixed unit embedding
+    # Fake CLIP model: returns a unit-vector embedding for each image in the batch.
     fake_clip = MagicMock()
-    fake_embedding = torch.zeros(1, _EMBEDDING_DIM)
-    fake_embedding[0, 0] = 1.0  # unit vector
-    fake_clip.encode_image.return_value = fake_embedding
+
+    def fake_encode_image(batch):  # type: ignore[no-untyped-def]
+        emb = torch.zeros(batch.shape[0], _EMBEDDING_DIM)
+        emb[:, 0] = 1.0  # unit vectors
+        return emb
+
+    fake_clip.encode_image.side_effect = fake_encode_image
 
     # Fake preprocess: just returns a zero tensor of the right shape
     def fake_preprocess(img):  # type: ignore[no-untyped-def]
         return torch.zeros(3, 224, 224)
 
-    # Fake MLP: returns a fixed aesthetic score of 7.5
+    # Fake MLP: returns a fixed aesthetic score of 7.5, shaped for the batch.
     fake_mlp = MagicMock()
-    fake_mlp.return_value = torch.tensor([[7.5]])
+    fake_mlp.side_effect = lambda x: torch.full((x.shape[0], 1), 7.5)
 
     device = torch.device("cpu")
     scorer._clip_model = fake_clip
@@ -255,7 +264,7 @@ def test_score_batch_clamps_above_ten(tmp_path: Path) -> None:
 
     scorer = _make_mock_scorer(tmp_path)
     # Override MLP to return a value above 10
-    scorer._mlp.return_value = torch.tensor([[15.0]])
+    scorer._mlp.side_effect = lambda x: torch.full((x.shape[0], 1), 15.0)
     results = scorer.score_batch([img_path])
     assert results[0]["aesthetic"] == pytest.approx(10.0)
 
@@ -270,9 +279,42 @@ def test_score_batch_clamps_below_zero(tmp_path: Path) -> None:
 
     scorer = _make_mock_scorer(tmp_path)
     # Override MLP to return a negative value
-    scorer._mlp.return_value = torch.tensor([[-3.0]])
+    scorer._mlp.side_effect = lambda x: torch.full((x.shape[0], 1), -3.0)
     results = scorer.score_batch([img_path])
     assert results[0]["aesthetic"] == pytest.approx(0.0)
+
+
+def test_score_batch_uses_batched_inference(tmp_path: Path) -> None:
+    """CLIP encode_image must be called once for N images that fit in one chunk."""
+    from PIL import Image  # noqa: PLC0415
+
+    paths = []
+    for i in range(5):
+        p = tmp_path / f"img{i}.jpg"
+        Image.new("RGB", (64, 64), color=(i * 40, 100, 200)).save(p, "JPEG")
+        paths.append(p)
+
+    scorer = _make_mock_scorer(tmp_path)
+    scorer.score_batch(paths)
+    assert scorer._clip_model.encode_image.call_count == 1
+
+
+def test_score_batch_multiple_chunks(tmp_path: Path) -> None:
+    """With _SCORE_BATCH_SIZE + 1 images, encode_image must be called exactly twice."""
+    from PIL import Image  # noqa: PLC0415
+
+    n = _SCORE_BATCH_SIZE + 1
+    paths = []
+    for i in range(n):
+        p = tmp_path / f"img{i}.jpg"
+        Image.new("RGB", (64, 64), color=(i % 256, 100, 200)).save(p, "JPEG")
+        paths.append(p)
+
+    scorer = _make_mock_scorer(tmp_path)
+    results = scorer.score_batch(paths)
+
+    assert len(results) == n
+    assert scorer._clip_model.encode_image.call_count == 2
 
 
 # ---------------------------------------------------------------------------
