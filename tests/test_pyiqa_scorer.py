@@ -140,8 +140,8 @@ def _make_mock_scorer(raw_score: float = 70.0, variant_id: str = "musiq") -> PyI
 
     scorer = PyIQAScorer.create(variant_id=variant_id)
 
-    # Inject a fake metric callable
-    fake_metric = MagicMock(return_value=torch.tensor(raw_score))
+    # Return per-image scores of shape (N, 1) to match the batched score_batch.
+    fake_metric = MagicMock(side_effect=lambda t: torch.full((t.shape[0], 1), raw_score))
     scorer._metric = fake_metric
     return scorer
 
@@ -200,7 +200,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
         paths.append(p)
 
     scorer = PyIQAScorer.create(variant_id="musiq")
-    scorer._metric = MagicMock(return_value=torch.tensor(50.0))
+    scorer._metric = MagicMock(side_effect=lambda t: torch.full((t.shape[0], 1), 50.0))
     results = scorer.score_batch(paths)
     assert len(results) == len(paths)
 

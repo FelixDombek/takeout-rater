@@ -63,6 +63,11 @@ def _to_higher_is_better(variant_id: str, raw: float) -> float:
     return max(0.0, min(1.0, raw))
 
 
+#: Number of images to stack into a single metric call.  Most pyiqa metrics
+#: accept a ``(N, C, H, W)`` batch tensor.  Tune down if you hit VRAM OOM.
+_SCORE_BATCH_SIZE = 32
+
+
 # ---------------------------------------------------------------------------
 # Scorer class
 # ---------------------------------------------------------------------------
@@ -192,13 +197,17 @@ class PyIQAScorer(BaseScorer):
     ) -> list[dict[str, float]]:
         """Score a batch of images using the selected pyiqa metric.
 
-        Each image is opened via Pillow, converted to a float32 torch tensor,
-        and passed through the pyiqa metric function.  The raw score is
-        normalised to [0, 1] (higher = better) using a variant-specific
-        transformation.
+        Images are processed in chunks of :data:`_SCORE_BATCH_SIZE`.  Within
+        each chunk, valid images are stacked into a single ``(N, C, H, W)``
+        tensor and passed to the pyiqa metric in one call, amortising model
+        overhead across many images.
 
-        If a file cannot be opened or the metric computation fails, the score
-        defaults to ``0.0`` rather than raising an exception.
+        If the pyiqa metric returns a per-image tensor (shape ``(N,)`` or
+        ``(N, 1)``), each value is normalised individually.  If it returns a
+        scalar (some metrics only support N=1), the chunk falls back to
+        per-image processing.
+
+        A failed image (``OSError``, ``ValueError``) defaults to ``0.0``.
 
         Args:
             image_paths: Absolute paths to image files.
@@ -212,20 +221,51 @@ class PyIQAScorer(BaseScorer):
         if not image_paths:
             return []
 
+        import torch  # noqa: PLC0415
         from PIL import Image  # noqa: PLC0415
         from torchvision.transforms.functional import to_tensor  # noqa: PLC0415
 
         self._ensure_loaded()
 
-        results: list[dict[str, float]] = []
-        for path in image_paths:
-            try:
-                img = Image.open(path).convert("RGB")
-                # pyiqa metrics typically accept a (1, C, H, W) float32 tensor in [0, 1]
-                tensor = to_tensor(img).unsqueeze(0)
-                raw = float(self._metric(tensor).item())
-                quality = _to_higher_is_better(self.variant_id, raw)
-            except (OSError, ValueError, RuntimeError):
-                quality = 0.0
-            results.append({"iqa_quality": quality})
-        return results
+        scores: list[float] = []
+
+        for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
+            chunk = image_paths[batch_start : batch_start + _SCORE_BATCH_SIZE]
+            tensors: list[torch.Tensor] = []
+            valid_indices: list[int] = []
+
+            for i, path in enumerate(chunk):
+                try:
+                    img = Image.open(path).convert("RGB")
+                    tensors.append(to_tensor(img))
+                    valid_indices.append(i)
+                except (OSError, ValueError):
+                    pass
+
+            sub_scores = [0.0] * len(chunk)
+
+            if tensors:
+                try:
+                    batch = torch.stack(tensors)  # (N, C, H, W) — on CPU for pyiqa
+                    raw_out = self._metric(batch)
+                    # pyiqa metrics return (N, 1) or (N,); fall back if scalar.
+                    if raw_out.dim() == 0:
+                        raise RuntimeError("scalar output — fall back to per-image")
+                    raw_values: list[float] = raw_out.squeeze(-1).tolist()
+                    for j, idx in enumerate(valid_indices):
+                        sub_scores[idx] = _to_higher_is_better(self.variant_id, raw_values[j])
+                except (RuntimeError, IndexError):
+                    # Fallback: score each image individually
+                    for _j, idx in enumerate(valid_indices):
+                        path = chunk[idx]
+                        try:
+                            img = Image.open(path).convert("RGB")
+                            tensor = to_tensor(img).unsqueeze(0)
+                            raw = float(self._metric(tensor).item())
+                            sub_scores[idx] = _to_higher_is_better(self.variant_id, raw)
+                        except (OSError, ValueError, RuntimeError):
+                            pass
+
+            scores.extend(sub_scores)
+
+        return [{"iqa_quality": s} for s in scores]

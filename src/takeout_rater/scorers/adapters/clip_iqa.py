@@ -37,6 +37,11 @@ _PROMPT_BAD = "Bad photo."
 _CLIP_MODEL_NAME = "ViT-L-14"
 _CLIP_PRETRAINED = "openai"
 
+#: Number of images to encode in a single GPU forward pass.
+#: 64 fits comfortably within the VRAM budget of an 8 GB GPU alongside
+#: the ViT-L/14 weights (~900 MB).  Tune down if you hit VRAM OOM errors.
+_SCORE_BATCH_SIZE = 64
+
 
 class CLIPIQAScorer(BaseScorer):
     """Zero-shot perceptual quality scorer using CLIP text–image similarity.
@@ -159,17 +164,14 @@ class CLIPIQAScorer(BaseScorer):
     ) -> list[dict[str, float]]:
         """Score a batch of images for perceptual quality using CLIP-IQA.
 
-        Each image is encoded by CLIP ViT-L/14 and compared against the
-        pre-encoded text features for "Good photo." and "Bad photo." via
-        cosine similarity.  A softmax over the two similarities yields a
-        quality probability in [0, 1].
+        Images are processed in chunks of :data:`_SCORE_BATCH_SIZE` so that
+        each chunk is forwarded through CLIP ViT-L/14 in a single GPU pass,
+        making full use of hardware parallelism.
 
-        Images are processed individually (not in one GPU batch) to keep
-        memory use predictable.  For throughput-critical use, batching can
-        be added in a future optimisation pass.
-
-        If a file cannot be opened or the forward pass fails, the score
-        defaults to ``0.0`` rather than raising.
+        Within each chunk, images that fail to open are skipped and receive a
+        score of ``0.0``.  If the whole-chunk forward pass raises
+        ``RuntimeError`` (e.g. VRAM OOM), the chunk falls back to per-image
+        scoring so that a single failure never silently zeros an entire batch.
 
         Args:
             image_paths: Absolute paths to image files.
@@ -187,20 +189,51 @@ class CLIPIQAScorer(BaseScorer):
 
         self._ensure_loaded()
 
-        results: list[dict[str, float]] = []
-        for path in image_paths:
-            try:
-                img = Image.open(path).convert("RGB")
-                tensor: torch.Tensor = self._preprocess(img).unsqueeze(0).to(self._device)
-                with torch.no_grad():
-                    img_features = self._clip_model.encode_image(tensor)
-                    img_features = img_features / img_features.norm(dim=-1, keepdim=True)
-                    # Cosine similarities with each text prompt: shape (2,)
-                    sims = (img_features @ self._text_features.T).squeeze(0)
-                    # Softmax → probability that the image is "good"
-                    probs = torch.softmax(sims, dim=0)
-                    quality = float(probs[0].item())
-            except (OSError, ValueError, RuntimeError):
-                quality = 0.0
-            results.append({"clip_quality": max(0.0, min(1.0, quality))})
-        return results
+        scores: list[float] = []
+
+        for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
+            chunk = image_paths[batch_start : batch_start + _SCORE_BATCH_SIZE]
+            tensors: list[torch.Tensor] = []
+            valid_indices: list[int] = []
+
+            for i, path in enumerate(chunk):
+                try:
+                    img = Image.open(path).convert("RGB")
+                    tensors.append(self._preprocess(img))
+                    valid_indices.append(i)
+                except (OSError, ValueError):
+                    pass
+
+            sub_scores = [0.0] * len(chunk)
+
+            if tensors:
+                try:
+                    batch = torch.stack(tensors).to(self._device)
+                    with torch.no_grad():
+                        img_features = self._clip_model.encode_image(batch)  # (N, D)
+                        img_features = img_features / img_features.norm(dim=-1, keepdim=True)
+                        # sims: (N, 2) — column 0 = "Good photo.", column 1 = "Bad photo."
+                        sims = img_features @ self._text_features.T
+                        probs = torch.softmax(sims, dim=-1)  # (N, 2)
+                        quality_values: list[float] = probs[:, 0].tolist()
+                    for j, idx in enumerate(valid_indices):
+                        sub_scores[idx] = max(0.0, min(1.0, quality_values[j]))
+                except RuntimeError:
+                    # Fallback: score each valid image individually (e.g. VRAM OOM)
+                    for _j, idx in enumerate(valid_indices):
+                        path = chunk[idx]
+                        try:
+                            img = Image.open(path).convert("RGB")
+                            tensor = self._preprocess(img).unsqueeze(0).to(self._device)
+                            with torch.no_grad():
+                                img_feat = self._clip_model.encode_image(tensor)
+                                img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
+                                sim = img_feat @ self._text_features.T  # (1, 2)
+                                prob = torch.softmax(sim, dim=-1)
+                                sub_scores[idx] = max(0.0, min(1.0, float(prob[0, 0].item())))
+                        except (OSError, ValueError, RuntimeError):
+                            pass
+
+            scores.extend(sub_scores)
+
+        return [{"clip_quality": s} for s in scores]

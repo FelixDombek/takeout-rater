@@ -52,6 +52,10 @@ _RATING_VALUES = list(range(1, _NUM_CLASSES + 1))
 #: Input size expected by the MobileNet-V2 backbone.
 _INPUT_SIZE = 224
 
+#: Number of images to forward through MobileNet-V2 in a single GPU pass.
+#: MobileNet-V2 is lightweight; 64 images fit easily on an 8 GB GPU.
+_SCORE_BATCH_SIZE = 64
+
 # ---------------------------------------------------------------------------
 # MobileNet-V2 NIMA head
 # ---------------------------------------------------------------------------
@@ -246,14 +250,16 @@ class NIMAScorer(BaseScorer):
     ) -> list[dict[str, float]]:
         """Score a batch of images using NIMA.
 
-        Each image is preprocessed with the standard ImageNet normalisation and
-        passed through the NIMA model, which outputs a 10-bin probability
-        distribution over rating values 1–10.  The expected rating (mean) of
-        this distribution is returned as the ``nima_score``.
+        Images are processed in chunks of :data:`_SCORE_BATCH_SIZE` so that
+        each chunk is forwarded through the MobileNet-V2 backbone in a single
+        GPU pass.  For each image the model outputs a 10-bin probability
+        distribution over rating values 1–10; the expected rating (mean) of
+        that distribution is the ``nima_score``.
 
-        Images are scored individually to keep memory usage predictable.  A
-        failed image (``OSError``, ``ValueError``, ``RuntimeError``) yields the
-        minimum score (``1.0``) rather than raising an exception.
+        Within each chunk, images that fail to open are skipped and receive the
+        minimum score (``1.0``).  If the whole-chunk forward pass raises
+        ``RuntimeError`` (e.g. VRAM OOM), the chunk falls back to per-image
+        scoring.
 
         Args:
             image_paths: Absolute paths to image files.
@@ -273,17 +279,47 @@ class NIMAScorer(BaseScorer):
         self._ensure_loaded()
 
         rating_tensor = torch.tensor(_RATING_VALUES, dtype=torch.float32, device=self._device)
+        scores: list[float] = []
 
-        results: list[dict[str, float]] = []
-        for path in image_paths:
-            try:
-                img = Image.open(path).convert("RGB")
-                tensor: torch.Tensor = self._preprocess(img).unsqueeze(0).to(self._device)
-                with torch.no_grad():
-                    probs = self._model(tensor).squeeze(0)  # shape (10,)
-                    score = float((probs * rating_tensor).sum().item())
-                    score = max(1.0, min(10.0, score))
-            except (OSError, ValueError, RuntimeError):
-                score = 1.0
-            results.append({"nima_score": score})
-        return results
+        for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
+            chunk = image_paths[batch_start : batch_start + _SCORE_BATCH_SIZE]
+            tensors: list[torch.Tensor] = []
+            valid_indices: list[int] = []
+
+            for i, path in enumerate(chunk):
+                try:
+                    img = Image.open(path).convert("RGB")
+                    tensors.append(self._preprocess(img))
+                    valid_indices.append(i)
+                except (OSError, ValueError):
+                    pass
+
+            sub_scores = [1.0] * len(chunk)  # default: minimum score
+
+            if tensors:
+                try:
+                    batch = torch.stack(tensors).to(self._device)
+                    with torch.no_grad():
+                        probs = self._model(batch)  # (N, 10)
+                        # Expected rating: sum(rating * prob) per image
+                        raw_scores = (probs * rating_tensor).sum(dim=-1)  # (N,)
+                        score_values: list[float] = raw_scores.tolist()
+                    for j, idx in enumerate(valid_indices):
+                        sub_scores[idx] = max(1.0, min(10.0, float(score_values[j])))
+                except RuntimeError:
+                    # Fallback: score each valid image individually (e.g. VRAM OOM)
+                    for _j, idx in enumerate(valid_indices):
+                        path = chunk[idx]
+                        try:
+                            img = Image.open(path).convert("RGB")
+                            tensor = self._preprocess(img).unsqueeze(0).to(self._device)
+                            with torch.no_grad():
+                                probs_single = self._model(tensor).squeeze(0)  # (10,)
+                                score_single = float((probs_single * rating_tensor).sum().item())
+                            sub_scores[idx] = max(1.0, min(10.0, score_single))
+                        except (OSError, ValueError, RuntimeError):
+                            pass
+
+            scores.extend(sub_scores)
+
+        return [{"nima_score": s} for s in scores]

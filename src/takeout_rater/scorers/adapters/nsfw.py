@@ -26,6 +26,11 @@ from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, Varia
 #: HuggingFace model identifier for the ViT-based NSFW classifier.
 _HF_MODEL = "Falconsai/nsfw_image_detection"
 
+#: Number of images to forward through the ViT classifier in a single GPU
+#: pass.  The transformers ``pipeline`` handles internal chunking when the
+#: input list is longer than this value.
+_SCORE_BATCH_SIZE = 32
+
 
 # ---------------------------------------------------------------------------
 # Scorer class
@@ -131,9 +136,12 @@ class NSFWScorer(BaseScorer):
     ) -> list[dict[str, float]]:
         """Score a batch of images for NSFW content.
 
-        Each image is opened via Pillow and passed through the ViT classifier.
-        If a file cannot be opened or processed the score defaults to ``0.0``
-        (treated as safe).
+        All images are opened first and then passed to the ViT classifier as a
+        single list so the ``transformers`` pipeline can batch them internally
+        (controlled by :data:`_SCORE_BATCH_SIZE`).  This amortises pipeline
+        overhead and keeps the GPU busy between images.
+
+        Images that cannot be opened default to a score of ``0.0`` (safe).
 
         Args:
             image_paths: Paths to image files.  Thumbnails (512 px) are
@@ -151,19 +159,43 @@ class NSFWScorer(BaseScorer):
 
         self._ensure_loaded()
 
-        results: list[dict[str, float]] = []
-        for path in image_paths:
+        # Pre-load all images; track which indices failed so we can fill in 0.0.
+        imgs: list[Any] = []
+        failed: set[int] = set()
+        for i, path in enumerate(image_paths):
             try:
-                img = Image.open(path).convert("RGB")
-                preds: list[dict[str, Any]] = self._pipeline(img)
-                # preds is a list of {"label": str, "score": float}
-                nsfw_score: float = next(
-                    (float(p["score"]) for p in preds if p["label"].lower() == "nsfw"),
-                    0.0,
-                )
+                imgs.append(Image.open(path).convert("RGB"))
             except (OSError, ValueError, RuntimeError):
-                nsfw_score = 0.0
+                failed.add(i)
+                imgs.append(None)
 
-            results.append({"nsfw": float(nsfw_score)})
+        valid_imgs = [img for img in imgs if img is not None]
+        valid_indices = [i for i, img in enumerate(imgs) if img is not None]
 
-        return results
+        nsfw_scores = [0.0] * len(image_paths)
+
+        if valid_imgs:
+            try:
+                # Pass the full list; the pipeline batches it using batch_size internally.
+                all_preds: list[list[dict[str, Any]]] = self._pipeline(
+                    valid_imgs, batch_size=_SCORE_BATCH_SIZE
+                )
+                for j, idx in enumerate(valid_indices):
+                    preds = all_preds[j]
+                    nsfw_scores[idx] = next(
+                        (float(p["score"]) for p in preds if p["label"].lower() == "nsfw"),
+                        0.0,
+                    )
+            except RuntimeError:  # noqa: BLE001
+                # Fallback: score each image individually if bulk call fails.
+                for _j, idx in enumerate(valid_indices):
+                    try:
+                        preds = self._pipeline(imgs[idx])
+                        nsfw_scores[idx] = next(
+                            (float(p["score"]) for p in preds if p["label"].lower() == "nsfw"),
+                            0.0,
+                        )
+                    except (OSError, ValueError, RuntimeError):
+                        pass
+
+        return [{"nsfw": s} for s in nsfw_scores]
