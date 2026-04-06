@@ -147,10 +147,13 @@ def test_browse_partial_no_sentinel_when_single_page(tmp_path: Path) -> None:
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets?partial=1")
     assert "scroll-sentinel" not in resp.text
+    # New design: partial carries metadata instead of a sentinel element
+    assert "data-partial-meta" in resp.text
+    assert 'data-total-pages="1"' in resp.text
 
 
-def test_browse_partial_has_sentinel_when_multi_page(tmp_path: Path) -> None:
-    """When there are more pages, partial response should include a scroll sentinel."""
+def test_browse_partial_has_meta_when_multi_page(tmp_path: Path) -> None:
+    """When there are more pages, partial response should carry the total-pages meta."""
     from takeout_rater.api.assets import _PAGE_SIZE  # noqa: PLC0415
 
     conn = _make_db()
@@ -160,8 +163,9 @@ def test_browse_partial_has_sentinel_when_multi_page(tmp_path: Path) -> None:
     app = create_app(tmp_path, conn)
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets?partial=1&page=1")
-    assert "scroll-sentinel" in resp.text
-    assert 'data-next-page="2"' in resp.text
+    assert "scroll-sentinel" not in resp.text
+    assert "data-partial-meta" in resp.text
+    assert 'data-total-pages="2"' in resp.text
 
 
 def test_browse_full_page_has_lightbox_data_attrs(client_with_assets: TestClient) -> None:

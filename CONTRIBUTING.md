@@ -69,6 +69,13 @@ migration script.
 | PR title | `feat: add LaionAestheticScorer`, `fix: handle missing sidecar` |
 | PR description | Reference the issue or iteration; tick the Definition of Done checklist |
 
+### UI changes
+
+Any PR that touches the appearance or behaviour of the web UI **must** include at
+least one screenshot in the PR description showing the change.  This applies to
+changes in templates (`src/takeout_rater/ui/templates/`), CSS, and any
+JavaScript that affects the rendered output.
+
 ---
 
 ## Definition of Done
