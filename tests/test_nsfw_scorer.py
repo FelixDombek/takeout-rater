@@ -82,11 +82,16 @@ def test_nsfw_scorer_score_batch_with_mock_pipeline(tmp_path) -> None:
     Image.new("RGB", (64, 64), color=(200, 150, 100)).save(img_path, "JPEG")
 
     scorer = NSFWScorer()
+
     # Inject a fake pipeline that returns a fixed prediction (no network call).
-    scorer._pipeline = lambda img: [
-        {"label": "nsfw", "score": 0.1},
-        {"label": "normal", "score": 0.9},
-    ]
+    # The batched score_batch passes a list of images; return a list-of-lists.
+    def fake_pipeline(imgs, batch_size=None):  # type: ignore[no-untyped-def]
+        single_result = [{"label": "nsfw", "score": 0.1}, {"label": "normal", "score": 0.9}]
+        if isinstance(imgs, list):
+            return [single_result for _ in imgs]
+        return single_result
+
+    scorer._pipeline = fake_pipeline
 
     results = scorer.score_batch([img_path])
     assert len(results) == 1

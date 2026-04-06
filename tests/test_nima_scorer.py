@@ -161,11 +161,12 @@ def _make_mock_scorer(fixed_score: float = 7.0, variant_id: str = "aesthetic") -
     # Build a distribution that concentrates all probability on the rating bin
     # nearest to fixed_score.  Since ratings are integers 1–10, we round.
     rating_idx = max(0, min(_NUM_CLASSES - 1, round(fixed_score) - 1))
-    probs = torch.zeros(1, _NUM_CLASSES)
-    probs[0, rating_idx] = 1.0  # one-hot → expected score = rating_idx + 1
+    probs_row = torch.zeros(1, _NUM_CLASSES)
+    probs_row[0, rating_idx] = 1.0  # one-hot → expected score = rating_idx + 1
 
     fake_model = MagicMock()
-    fake_model.return_value = probs
+    # Return probs with the correct batch dimension so batched score_batch works.
+    fake_model.side_effect = lambda batch_tensor: probs_row.expand(batch_tensor.shape[0], -1)
 
     scorer._model = fake_model
     scorer._preprocess = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor()])
