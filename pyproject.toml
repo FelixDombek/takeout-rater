@@ -24,6 +24,10 @@ dependencies = [
     "huggingface-hub>=0.20",
     # NSFW scorer
     "transformers>=4.35",
+    # BRISQUE scorer (classical NR-IQA, CPU-only)
+    "piq>=0.8",
+    # pyiqa scorer (MUSIQ, TOPIQ, NIQE via IQA-PyTorch)
+    "pyiqa>=0.1.12",
     # HEIC image support
     "pillow-heif>=0.16",
 ]
@@ -33,10 +37,6 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
     "httpx>=0.26",
-]
-brisque = [
-    "scikit-image>=0.21",
-    "scipy>=1.10",
 ]
 
 [project.scripts]

@@ -1,9 +1,11 @@
+<div data-partial-meta data-total-pages="{{ total_pages }}" style="display:none"></div>
 {% for asset in assets %}
 <div class="card"
      data-lb-id="{{ asset.id }}"
      data-lb-src="/thumbs/{{ asset.id }}"
      data-lb-title="{{ asset.title or asset.filename }}"
-     data-ts="{{ asset.taken_at or '' }}">
+     data-ts="{{ asset.taken_at or '' }}"
+     data-page="{{ page }}">
   <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
     <img
       class="card-thumb"
@@ -22,6 +24,3 @@
   </a>
 </div>
 {% endfor %}
-{% if page < total_pages %}
-<div class="scroll-sentinel" data-next-page="{{ page + 1 }}"></div>
-{% endif %}

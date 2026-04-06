@@ -1,24 +1,14 @@
-"""CLIP-IQA scorer: no-reference image quality using CLIP text-image similarity.
+"""CLIP-IQA scorer: zero-shot perceptual quality via CLIP text–image similarity.
 
-CLIP-IQA measures perceptual image quality by comparing image embeddings against
-paired text prompts ("a high quality photo" vs "a low quality photo") using a
-CLIP model.  The score is the softmax probability that the image matches the
-high-quality prompt, mapped to 0–100.  **Higher is better.**
+CLIP-IQA (Wang et al., 2022) scores image quality by measuring the cosine
+similarity between an image embedding and two antonym text prompts —
+``"Good photo."`` and ``"Bad photo."`` — using a pre-trained CLIP backbone.
+The softmax probability assigned to the positive prompt is the quality score.
 
-The scorer leverages the ``open_clip`` library which is already a core
-dependency of takeout-rater (used by the Aesthetic scorer).
-
-Two model variants are provided:
-
-* ``vitb32`` — ViT-B/32 (~350 MB download).  Lighter and faster.  Good default
-  for machines with limited VRAM.
-* ``vitl14`` — ViT-L/14 (~900 MB download).  Same backbone used by the Aesthetic
-  scorer; if it is already cached the download is skipped.
-
-References
-----------
-Wang, J. et al., "Exploring CLIP for Assessing the Look and Feel of Images,"
-AAAI 2023. arXiv:2207.12396.
+Because ``open-clip-torch`` is already a core dependency of this project (used
+by the aesthetic scorer), this scorer incurs **no additional package download**.
+The CLIP ViT-L/14 backbone (~900 MB) is shared with the aesthetic scorer and
+cached by ``open_clip`` in the standard Torch hub cache (``~/.cache/torch/hub``).
 """
 
 from __future__ import annotations
@@ -32,32 +22,39 @@ if TYPE_CHECKING:
     import torch
 
 # ---------------------------------------------------------------------------
-# Variant → (model_name, pretrained) mapping
+# Text prompts used as quality anchors
 # ---------------------------------------------------------------------------
 
-_VARIANTS: dict[str, tuple[str, str]] = {
-    "vitb32": ("ViT-B-32", "openai"),
-    "vitl14": ("ViT-L-14", "openai"),
-}
-_DEFAULT_VARIANT = "vitb32"
+#: Positive-quality anchor — the probability assigned to this prompt is the score.
+_PROMPT_GOOD = "Good photo."
+#: Negative-quality anchor — paired with the positive prompt in a softmax.
+_PROMPT_BAD = "Bad photo."
 
-# Text prompts used to anchor the quality axis.
-_PROMPT_HIGH = "a high quality photo"
-_PROMPT_LOW = "a low quality photo"
+# ---------------------------------------------------------------------------
+# CLIP backbone identifier (shared with the aesthetic scorer)
+# ---------------------------------------------------------------------------
 
-# How many images to process per forward pass through the CLIP vision encoder.
-_SCORE_BATCH_SIZE = 64
+_CLIP_MODEL_NAME = "ViT-L-14"
+_CLIP_PRETRAINED = "openai"
 
 
 class CLIPIQAScorer(BaseScorer):
-    """No-reference quality scorer using CLIP text-image similarity (CLIP-IQA)."""
+    """Zero-shot perceptual quality scorer using CLIP text–image similarity.
+
+    Computes the cosine similarity between a CLIP image embedding and two text
+    prompts ("Good photo." / "Bad photo."), then applies a softmax to obtain
+    a quality probability in [0, 1].
+
+    No separate model download is required beyond the CLIP ViT-L/14 backbone
+    that is already used by the aesthetic scorer.
+    """
 
     def __init__(self, variant_id: str | None = None, **kwargs: Any) -> None:
         super().__init__(variant_id=variant_id, **kwargs)
-        # Lazy-loaded state
+        # Lazy-loaded state — populated by _ensure_loaded()
         self._clip_model: Any = None
         self._preprocess: Any = None
-        self._text_features: Any = None  # torch.Tensor, shape (2, dim)
+        self._text_features: Any = None  # pre-encoded text prompts, shape (2, 768)
         self._device: Any = None
 
     # ------------------------------------------------------------------
@@ -68,51 +65,42 @@ class CLIPIQAScorer(BaseScorer):
     def spec(cls) -> ScorerSpec:
         return ScorerSpec(
             scorer_id="clip_iqa",
-            display_name="CLIP-IQA",
+            display_name="CLIP-IQA Quality",
             description=(
-                "No-reference image quality assessment using CLIP text-image similarity.  "
-                "Images are scored by comparing their CLIP embedding against the prompts "
-                "'a high quality photo' and 'a low quality photo'.  "
-                "Scores range from 0 (poor) to 100 (excellent).  Higher is better."
+                "Estimates perceptual image quality using zero-shot CLIP text–image "
+                "similarity.  The score is the softmax probability that the image "
+                "matches 'Good photo.' over 'Bad photo.' using CLIP ViT-L/14."
             ),
             metrics=(
                 MetricSpec(
-                    key="clip_iqa",
-                    display_name="CLIP-IQA",
+                    key="clip_quality",
+                    display_name="CLIP Quality",
                     description=(
-                        "Softmax probability of matching 'a high quality photo', "
-                        "normalised to 0–100.  Higher values indicate better "
-                        "perceived image quality."
+                        "Zero-shot perceptual quality score (0–1, higher is better). "
+                        "Derived from CLIP ViT-L/14 text–image cosine similarity."
                     ),
                     min_value=0.0,
-                    max_value=100.0,
+                    max_value=1.0,
                     higher_is_better=True,
                 ),
             ),
             variants=(
                 VariantSpec(
-                    variant_id="vitb32",
-                    display_name="ViT-B/32 (lightweight)",
+                    variant_id="vit_l14_openai",
+                    display_name="CLIP ViT-L/14 (OpenAI)",
                     description=(
-                        "CLIP ViT-B/32 backbone (~350 MB download).  "
-                        "Faster and more memory-efficient."
-                    ),
-                ),
-                VariantSpec(
-                    variant_id="vitl14",
-                    display_name="ViT-L/14 (accurate)",
-                    description=(
-                        "CLIP ViT-L/14 backbone (~900 MB download).  "
-                        "Same model used by the Aesthetic scorer; cached if already downloaded."
+                        "CLIP ViT-L/14 pre-trained on OpenAI's WIT dataset. "
+                        "Shared backbone with the aesthetic scorer."
                     ),
                 ),
             ),
-            default_variant_id=_DEFAULT_VARIANT,
+            default_variant_id="vit_l14_openai",
             requires_extras=(),
         )
 
     @classmethod
     def is_available(cls) -> bool:
+        """Return ``True`` when CLIP dependencies are importable."""
         try:
             import open_clip  # noqa: F401
             import PIL  # noqa: F401
@@ -127,33 +115,37 @@ class CLIPIQAScorer(BaseScorer):
     # ------------------------------------------------------------------
 
     def _ensure_loaded(self) -> None:
-        """Load the CLIP model and pre-compute text features if not already done."""
+        """Load the CLIP backbone and pre-encode the quality text prompts.
+
+        The CLIP weights (~900 MB) are downloaded once to the standard Torch
+        hub cache (``~/.cache/torch/hub``) and reused on subsequent runs.
+        The text features for "Good photo." / "Bad photo." are encoded once
+        here and cached on ``self._text_features`` for all subsequent calls.
+        """
         if self._clip_model is not None:
             return
 
         import open_clip  # noqa: PLC0415
         import torch  # noqa: PLC0415
 
-        vid = self.variant_id or _DEFAULT_VARIANT
-        model_name, pretrained = _VARIANTS.get(vid, _VARIANTS[_DEFAULT_VARIANT])
-
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            model_name, pretrained=pretrained
+        clip_model, _, preprocess = open_clip.create_model_and_transforms(
+            _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED
         )
-        model = model.to(device).eval()
+        clip_model.eval()
+        clip_model.to(device)
 
-        tokenizer = open_clip.get_tokenizer(model_name)
-        text_tokens = tokenizer([_PROMPT_HIGH, _PROMPT_LOW]).to(device)
+        tokenizer = open_clip.get_tokenizer(_CLIP_MODEL_NAME)
+        tokens = tokenizer([_PROMPT_GOOD, _PROMPT_BAD]).to(device)
         with torch.no_grad():
-            text_features = model.encode_text(text_tokens)
+            text_features = clip_model.encode_text(tokens)
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
-        self._clip_model = model
-        self._preprocess = preprocess
-        self._text_features = text_features
         self._device = device
+        self._clip_model = clip_model
+        self._preprocess = preprocess
+        self._text_features = text_features  # shape (2, D), float
 
     # ------------------------------------------------------------------
     # Scoring
@@ -165,58 +157,50 @@ class CLIPIQAScorer(BaseScorer):
         *,
         variant_id: str | None = None,
     ) -> list[dict[str, float]]:
-        """Score a batch of images using CLIP-IQA.
+        """Score a batch of images for perceptual quality using CLIP-IQA.
+
+        Each image is encoded by CLIP ViT-L/14 and compared against the
+        pre-encoded text features for "Good photo." and "Bad photo." via
+        cosine similarity.  A softmax over the two similarities yields a
+        quality probability in [0, 1].
+
+        Images are processed individually (not in one GPU batch) to keep
+        memory use predictable.  For throughput-critical use, batching can
+        be added in a future optimisation pass.
+
+        If a file cannot be opened or the forward pass fails, the score
+        defaults to ``0.0`` rather than raising.
 
         Args:
-            image_paths: Paths to image files (can be thumbnails).
-            variant_id: Ignored after instantiation; use
-                :meth:`~takeout_rater.scorers.base.BaseScorer.create` with
-                *variant_id* to select the model variant.
+            image_paths: Absolute paths to image files.
+            variant_id: Ignored; only one variant exists.
 
         Returns:
-            List of dicts with key ``"clip_iqa"`` → float in ``[0, 100]``.
-            If a file cannot be opened, ``clip_iqa`` is set to ``0.0``.
+            List (same length as *image_paths*) of dicts with key
+            ``"clip_quality"`` → float in ``[0.0, 1.0]``.
         """
+        if not image_paths:
+            return []
+
         import torch  # noqa: PLC0415
         from PIL import Image  # noqa: PLC0415
 
         self._ensure_loaded()
-        assert self._clip_model is not None
-        assert self._preprocess is not None
-        assert self._text_features is not None
-        assert self._device is not None
 
-        scores: list[float] = []
-
-        for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
-            batch_paths = image_paths[batch_start : batch_start + _SCORE_BATCH_SIZE]
-            tensors: list[Any] = []
-            valid_indices: list[int] = []
-
-            for i, path in enumerate(batch_paths):
-                try:
-                    img = Image.open(path).convert("RGB")
-                    tensors.append(self._preprocess(img))
-                    valid_indices.append(i)
-                except (OSError, ValueError):
-                    pass
-
-            # Prepare output for this sub-batch (default 0.0 for failed images)
-            sub_scores = [0.0] * len(batch_paths)
-
-            if tensors:
-                img_batch: torch.Tensor = torch.stack(tensors).to(self._device)
+        results: list[dict[str, float]] = []
+        for path in image_paths:
+            try:
+                img = Image.open(path).convert("RGB")
+                tensor: torch.Tensor = self._preprocess(img).unsqueeze(0).to(self._device)
                 with torch.no_grad():
-                    img_features = self._clip_model.encode_image(img_batch)
+                    img_features = self._clip_model.encode_image(tensor)
                     img_features = img_features / img_features.norm(dim=-1, keepdim=True)
-                    # logits shape: (N, 2) — columns are [high_quality, low_quality]
-                    logits = img_features @ self._text_features.T
-                    probs = logits.softmax(dim=-1)
-                    high_quality_probs = probs[:, 0].tolist()
-
-                for j, idx in enumerate(valid_indices):
-                    sub_scores[idx] = float(high_quality_probs[j]) * 100.0
-
-            scores.extend(sub_scores)
-
-        return [{"clip_iqa": s} for s in scores]
+                    # Cosine similarities with each text prompt: shape (2,)
+                    sims = (img_features @ self._text_features.T).squeeze(0)
+                    # Softmax → probability that the image is "good"
+                    probs = torch.softmax(sims, dim=0)
+                    quality = float(probs[0].item())
+            except (OSError, ValueError, RuntimeError):
+                quality = 0.0
+            results.append({"clip_quality": max(0.0, min(1.0, quality))})
+        return results
