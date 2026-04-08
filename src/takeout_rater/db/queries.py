@@ -406,14 +406,12 @@ def count_assets_deduped(
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     # Count distinct sha256 groups (NULL-sha256 assets each count as 1 via COALESCE).
+    # Uses COUNT(DISTINCT …) to avoid a subquery that can return NULL on some
+    # SQLite/platform combinations, causing fetchone() to return None.
     sql = (  # noqa: S608
-        f"SELECT COUNT(*) FROM ("
-        f"  SELECT MIN(id)"
-        f"  FROM assets {where}"
-        f"  GROUP BY COALESCE(sha256, CAST(id AS TEXT))"
-        f")"
+        f"SELECT COUNT(DISTINCT COALESCE(sha256, CAST(id AS TEXT))) FROM assets {where}"
     )
-    return conn.execute(sql, params).fetchone()[0]
+    return (conn.execute(sql, params).fetchone() or (0,))[0]
 
 
 def get_duplicate_assets(conn: sqlite3.Connection, sha256: str) -> list[AssetRow]:
