@@ -31,7 +31,7 @@ class BlurScorer(BaseScorer):
             display_name="Blur / Sharpness",
             description=(
                 "Detects how sharp or blurry a photo is. It looks for abrupt changes between "
-                "neighbouring pixels (edges), which are abundant in sharp photos and absent in "
+                "neighboring pixels (edges), which are abundant in sharp photos and absent in "
                 "blurry ones. No model download required — runs entirely on the CPU using "
                 "standard image processing."
             ),
