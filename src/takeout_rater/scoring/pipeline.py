@@ -17,6 +17,7 @@ returns the run ID.  ``finish_scorer_run()`` is always called via a
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +30,57 @@ from takeout_rater.db.queries import (
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 from takeout_rater.scorers.base import BaseScorer
+
+_logger = logging.getLogger(__name__)
+
+
+def _score_batch_with_context(
+    scorer: BaseScorer,
+    paths: list[Path],
+    scorer_id: str,
+    variant_id: str,
+) -> list[dict[str, float]]:
+    """Call ``scorer.score_batch(paths)`` and re-raise with scorer/asset context.
+
+    If ``score_batch`` raises any exception, the error is logged at ERROR level
+    with the scorer ID, variant, and the paths of the failing batch, then
+    re-raised as a :exc:`RuntimeError` whose message includes the same context.
+    This ensures that the job-panel error message identifies both the scorer and
+    the affected assets rather than showing a bare library-level traceback.
+
+    Args:
+        scorer: Instantiated scorer.
+        paths: Batch of thumbnail paths to score.
+        scorer_id: Scorer identifier used in error messages.
+        variant_id: Variant identifier used in error messages.
+
+    Returns:
+        List of score dicts as returned by ``scorer.score_batch``.
+
+    Raises:
+        RuntimeError: When ``score_batch`` raises, wrapping the original error
+            with scorer and asset path context.
+    """
+    try:
+        return scorer.score_batch(paths)
+    except Exception as exc:  # noqa: BLE001
+        # Build a compact asset list for the error message.
+        _MAX_SHOWN = 3
+        shown = [str(p) for p in paths[:_MAX_SHOWN]]
+        suffix = f", … (+{len(paths) - _MAX_SHOWN} more)" if len(paths) > _MAX_SHOWN else ""
+        asset_summary = ", ".join(shown) + suffix
+        _logger.error(
+            "Scorer %r (variant %r) failed on %d asset(s) [%s]: %s",
+            scorer_id,
+            variant_id,
+            len(paths),
+            asset_summary,
+            exc,
+        )
+        raise RuntimeError(
+            f"Scorer {scorer_id!r} (variant {variant_id!r}) failed on "
+            f"{len(paths)} asset(s) [{asset_summary}]: {exc}"
+        ) from exc
 
 
 def run_scorer(
@@ -109,7 +161,7 @@ def run_scorer(
 
                 if valid_pairs:
                     paths = [p for _, p in valid_pairs]
-                    score_dicts = scorer.score_batch(paths)
+                    score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
 
                     rows: list[tuple[int, str, float]] = []
                     for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):
@@ -140,7 +192,7 @@ def run_scorer(
 
                 if valid_pairs:
                     paths = [p for _, p in valid_pairs]
-                    score_dicts = scorer.score_batch(paths)
+                    score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
 
                     rows = []
                     for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):

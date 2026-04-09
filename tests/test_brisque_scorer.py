@@ -188,6 +188,54 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
         assert 0.0 <= r["brisque_quality"] <= 100.0
 
 
+def test_score_batch_assertion_error_returns_zero(tmp_path: Path) -> None:
+    """AssertionError from piq (e.g. AGGD assertion on uniform images) is caught gracefully."""
+    pytest.importorskip("piq")
+    pytest.importorskip("torch")
+    from PIL import Image  # noqa: PLC0415
+
+    img_path = tmp_path / "uniform.jpg"
+    Image.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path, "JPEG")
+
+    scorer = _make_mock_scorer()
+
+    with patch(
+        "piq.brisque",
+        side_effect=AssertionError(
+            "Expected input tensor (pairwise products of neighboring MSCN coefficients)"
+            "  with values below zero to compute parameters of AGGD"
+        ),
+    ):
+        results = scorer.score_batch([img_path])
+
+    assert len(results) == 1
+    assert results[0]["brisque_quality"] == pytest.approx(0.0)
+
+
+def test_score_batch_assertion_error_logs_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AssertionError from piq is logged at WARNING with scorer id and asset path."""
+    import logging  # noqa: PLC0415
+
+    pytest.importorskip("piq")
+    pytest.importorskip("torch")
+    from PIL import Image  # noqa: PLC0415
+
+    img_path = tmp_path / "uniform.jpg"
+    Image.new("RGB", (64, 64), color=(0, 0, 0)).save(img_path, "JPEG")
+
+    scorer = _make_mock_scorer()
+
+    with (
+        caplog.at_level(logging.WARNING, logger="takeout_rater.scorers.heuristics.brisque"),
+        patch("piq.brisque", side_effect=AssertionError("AGGD assertion")),
+    ):
+        scorer.score_batch([img_path])
+
+    assert any("brisque" in r.message and str(img_path) in r.message for r in caplog.records)
+
+
 def test_score_one(tmp_path: Path) -> None:
     pytest.importorskip("piq")
     pytest.importorskip("torch")

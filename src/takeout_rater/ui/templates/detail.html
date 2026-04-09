@@ -27,18 +27,47 @@
   .detail-meta td:first-child { color: #666; white-space: nowrap; padding-right: 1rem; }
   .detail-meta tr:nth-child(even) td { background: #f9f9f9; }
   .back-link { margin-bottom: 1rem; display: inline-block; }
-  .metadata-panel { margin-top: 1.25rem; }
-  .metadata-panel summary {
-    cursor: pointer;
-    font-size: 1rem;
-    color: #444;
-    font-weight: 500;
-    user-select: none;
-    padding: 0.25rem 0;
+
+  /* ── Info tabs ──────────────────────────────────────────────────────── */
+  .info-tabs { margin-top: 1.25rem; }
+  .info-tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid #ddd;
   }
-  .metadata-panel summary:hover { color: #222; }
+  .info-tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #777;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .info-tab-btn:hover { color: #333; }
+  .info-tab-btn.active { color: #1a5cdb; border-bottom-color: #1a5cdb; }
+  .info-tab-panel { display: none; padding-top: 0.75rem; }
+  .info-tab-panel.active { display: block; }
+
+  /* Scores tab */
+  .scores-table { border-collapse: collapse; width: 100%; }
+  .scores-table th {
+    text-align: left; padding: 0.3rem 0.5rem;
+    color: #666; font-weight: normal; border-bottom: 1px solid #eee;
+  }
+  .scores-table th:last-child { text-align: right; }
+  .scores-table td { padding: 0.3rem 0.5rem; vertical-align: top; }
+  .scores-table tr:nth-child(even) td { background: #f9f9f9; }
+  .muted { color: #999; }
+
+  /* JSON / EXIF tabs */
   .metadata-pre {
-    margin: 0.5rem 0 0;
+    margin: 0;
     padding: 0.75rem;
     background: #f5f5f5;
     border: 1px solid #ddd;
@@ -47,8 +76,15 @@
     line-height: 1.5;
     overflow-x: auto;
     white-space: pre;
-    max-height: 24rem;
+    max-height: 28rem;
     overflow-y: auto;
+  }
+  .metadata-subsection { margin-bottom: 1rem; }
+  .metadata-subsection-label {
+    font-size: 0.75rem;
+    color: #888;
+    margin-bottom: 0.25rem;
+    font-style: italic;
   }
   .json-key    { color: #0b5394; }
   .json-string { color: #38761d; }
@@ -124,30 +160,60 @@
     </table>
     {% endif %}
 
-    {% if scores %}
-    <h2 style="font-size:1rem; margin-top:1.25rem; margin-bottom:0.5rem; color:#444;">Scores</h2>
-    <table>
-      <tr>
-        <th style="text-align:left; padding:0.3rem 0.5rem; color:#666; font-weight:normal;">Scorer</th>
-        <th style="text-align:left; padding:0.3rem 0.5rem; color:#666; font-weight:normal;">Metric</th>
-        <th style="text-align:right; padding:0.3rem 0.5rem; color:#666; font-weight:normal;">Value</th>
-      </tr>
-      {% for score in scores %}
-      <tr>
-        <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="muted">({{ score.variant_id }})</span>{% endif %}</td>
-        <td>{{ score.metric_key }}</td>
-        <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% endif %}
+    {# ── Info tabs: SCORES / JSON / EXIF ─────────────────────────────── #}
+    <div class="info-tabs">
+      <div class="info-tab-bar" role="tablist">
+        <button class="info-tab-btn active" role="tab" aria-selected="true"
+                aria-controls="tab-scores" id="tbtn-scores"
+                onclick="switchTab('scores')">Scores</button>
+        <button class="info-tab-btn" role="tab" aria-selected="false"
+                aria-controls="tab-json" id="tbtn-json"
+                onclick="switchTab('json')">JSON</button>
+        <button class="info-tab-btn" role="tab" aria-selected="false"
+                aria-controls="tab-exif" id="tbtn-exif"
+                onclick="switchTab('exif')">EXIF</button>
+      </div>
 
-    {% if sidecar_json %}
-    <details class="metadata-panel">
-      <summary>Raw metadata (sidecar JSON)</summary>
-      <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
-    </details>
-    {% endif %}
+      {# SCORES tab #}
+      <div id="tab-scores" class="info-tab-panel active" role="tabpanel" aria-labelledby="tbtn-scores">
+        {% if scores %}
+        <table class="scores-table">
+          <tr>
+            <th>Scorer</th>
+            <th>Metric</th>
+            <th style="text-align:right">Value</th>
+          </tr>
+          {% for score in scores %}
+          <tr>
+            <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="muted">({{ score.variant_id }})</span>{% endif %}</td>
+            <td>{{ score.metric_key }}</td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No scores recorded yet.</p>
+        {% endif %}
+      </div>
+
+      {# JSON tab #}
+      <div id="tab-json" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-json">
+        {% if sidecar_json %}
+        <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
+        {% else %}
+        <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No sidecar JSON available.</p>
+        {% endif %}
+      </div>
+
+      {# EXIF tab #}
+      <div id="tab-exif" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-exif">
+        {% if exif_data %}
+        <pre class="metadata-pre json-highlight">{{ exif_data }}</pre>
+        {% else %}
+        <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No EXIF data available.</p>
+        {% endif %}
+      </div>
+    </div>{# /info-tabs #}
   </div>
 </div>
 
@@ -170,9 +236,20 @@
     pre.innerHTML = html;
   }
 
-  document.querySelectorAll(".json-highlight").forEach((pre) => {
+  document.querySelectorAll(".json-highlight").forEach(function (pre) {
     highlightJson(pre);
   });
 })();
+
+function switchTab(name) {
+  document.querySelectorAll(".info-tab-btn").forEach(function (btn) {
+    const active = btn.id === "tbtn-" + name;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".info-tab-panel").forEach(function (panel) {
+    panel.classList.toggle("active", panel.id === "tab-" + name);
+  });
+}
 </script>
 {% endblock %}

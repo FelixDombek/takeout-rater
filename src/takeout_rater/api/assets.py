@@ -74,6 +74,85 @@ def _read_sidecar_json(takeout_root: Path | None, asset: AssetRow) -> str | None
         return None
 
 
+def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
+    """Return a pretty-printed JSON string of all EXIF data for *asset*, or ``None``.
+
+    Reads EXIF tags from the original image file using Pillow, including the
+    main IFD, EXIF sub-IFD, and GPS sub-IFD.  Tag IDs are resolved to their
+    human-readable names where possible.  Returns ``None`` on any error so
+    that the UI can gracefully degrade.
+    """
+    if takeout_root is None or asset.relpath is None:
+        return None
+    image_path = takeout_root / asset.relpath
+    if not image_path.exists():
+        return None
+    try:
+        from PIL import ExifTags, Image  # noqa: PLC0415
+    except ImportError:
+        return None
+
+    def _make_serializable(value: object) -> object:
+        """Recursively convert a value to a JSON-serialisable type."""
+        if isinstance(value, bytes):
+            # Try UTF-8 first; fall back to Latin-1 which guarantees every byte
+            # round-trips without loss (unlike UTF-8, which may raise on arbitrary bytes).
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError:
+                return value.decode("latin-1")
+        if isinstance(value, (list, tuple)):
+            return [_make_serializable(v) for v in value]
+        if isinstance(value, dict):
+            return {str(k): _make_serializable(v) for k, v in value.items()}
+        # IFDRational (Pillow) → float; anything else that is numeric stays as-is.
+        try:
+            return float(value) if hasattr(value, "numerator") else value
+        except Exception:  # noqa: BLE001
+            return str(value)
+
+    try:
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+            if not exif:
+                return None
+
+            data: dict[str, object] = {}
+
+            # Main IFD tags.
+            for tag_id, value in exif.items():
+                tag_name = ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")
+                data[tag_name] = _make_serializable(value)
+
+            # EXIF sub-IFD.
+            try:
+                exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+                if exif_ifd:
+                    exif_section: dict[str, object] = {}
+                    for tag_id, value in exif_ifd.items():
+                        tag_name = ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")
+                        exif_section[tag_name] = _make_serializable(value)
+                    data["ExifIFD"] = exif_section
+            except Exception:  # noqa: BLE001
+                pass
+
+            # GPS sub-IFD.
+            try:
+                gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
+                if gps_ifd:
+                    gps_section: dict[str, object] = {}
+                    for tag_id, value in gps_ifd.items():
+                        tag_name = ExifTags.GPSTAGS.get(tag_id, f"Tag_{tag_id:#06x}")
+                        gps_section[tag_name] = _make_serializable(value)
+                    data["GPSIFD"] = gps_section
+            except Exception:  # noqa: BLE001
+                pass
+
+            return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _parse_score(raw: str | None) -> float | None:
     """Parse a score query parameter, treating blank/missing values as ``None``.
 
@@ -253,6 +332,9 @@ def asset_detail(
     # Load raw sidecar JSON for the main asset.
     sidecar_json = _read_sidecar_json(takeout_root, asset)
 
+    # Load EXIF data from the original image file.
+    exif_data = _read_exif_data(takeout_root, asset)
+
     templates = request.app.state.templates
     ctx = {
         "request": request,
@@ -260,6 +342,7 @@ def asset_detail(
         "scores": scores,
         "alias_paths": alias_paths,
         "sidecar_json": sidecar_json,
+        "exif_data": exif_data,
     }
     if partial == "1":
         return templates.TemplateResponse("detail_partial.html", ctx)

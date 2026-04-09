@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -239,3 +241,57 @@ def test_index_then_score_pipeline(tmp_path: Path) -> None:
     assert scored == len(thumbs), (
         f"Expected {len(thumbs)} score rows (one per thumbnail), got {scored}"
     )
+
+
+# ── error context ─────────────────────────────────────────────────────────────
+
+
+def test_run_scorer_error_includes_scorer_id(tmp_path: Path) -> None:
+    """When score_batch raises, the re-raised RuntimeError includes the scorer id."""
+    pytest.importorskip("PIL")
+    conn = _open_in_memory()
+    thumbs_dir = tmp_path / "thumbs"
+    asset_id = _add_asset(conn)
+    _make_thumbnail(thumbs_dir, asset_id)
+
+    scorer = DummyScorer.create()
+    with (
+        patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
+        pytest.raises(RuntimeError, match="dummy"),
+    ):
+        run_scorer(conn, scorer, thumbs_dir)
+
+
+def test_run_scorer_error_includes_asset_path(tmp_path: Path) -> None:
+    """When score_batch raises, the error message includes the affected asset path."""
+    pytest.importorskip("PIL")
+    conn = _open_in_memory()
+    thumbs_dir = tmp_path / "thumbs"
+    asset_id = _add_asset(conn)
+    thumb = _make_thumbnail(thumbs_dir, asset_id)
+
+    scorer = DummyScorer.create()
+    with (
+        patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
+        pytest.raises(RuntimeError, match=str(thumb)),
+    ):
+        run_scorer(conn, scorer, thumbs_dir)
+
+
+def test_run_scorer_error_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """When score_batch raises, an ERROR log record is emitted with scorer and asset info."""
+    pytest.importorskip("PIL")
+    conn = _open_in_memory()
+    thumbs_dir = tmp_path / "thumbs"
+    asset_id = _add_asset(conn)
+    _make_thumbnail(thumbs_dir, asset_id)
+
+    scorer = DummyScorer.create()
+    with (
+        caplog.at_level(logging.ERROR, logger="takeout_rater.scoring.pipeline"),
+        patch.object(scorer, "score_batch", side_effect=RuntimeError("boom")),
+        pytest.raises(RuntimeError),
+    ):
+        run_scorer(conn, scorer, thumbs_dir)
+
+    assert any("dummy" in r.message and r.levelno == logging.ERROR for r in caplog.records)

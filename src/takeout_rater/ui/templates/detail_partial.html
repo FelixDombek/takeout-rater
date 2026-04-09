@@ -41,22 +41,69 @@
   </ul>
   {% endif %}
 
-  {% if scores %}
-  <h3 class="lb-detail-section">Scores</h3>
-  <table class="lb-detail-table">
-    {% for score in scores %}
-    <tr>
-      <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="lb-muted">({{ score.variant_id }})</span>{% endif %} – {{ score.metric_key }}</td>
-      <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% endif %}
+  {# ── Info tabs: SCORES / JSON / EXIF ─────────────────────────────── #}
+  <div class="lb-info-tabs">
+    <div class="lb-tab-bar" role="tablist">
+      <button class="lb-tab-btn active" role="tab" aria-selected="true"
+              data-tab="scores">Scores</button>
+      <button class="lb-tab-btn" role="tab" aria-selected="false"
+              data-tab="json">JSON</button>
+      <button class="lb-tab-btn" role="tab" aria-selected="false"
+              data-tab="exif">EXIF</button>
+    </div>
 
-  {% if sidecar_json %}
-  <details class="lb-sidecar-details">
-    <summary>Raw sidecar JSON</summary>
-    <pre class="lb-sidecar-pre json-highlight">{{ sidecar_json }}</pre>
-  </details>
-  {% endif %}
+    {# SCORES tab #}
+    <div class="lb-tab-panel active" data-panel="scores">
+      {% if scores %}
+      <table class="lb-detail-table lb-scores-table">
+        {% for score in scores %}
+        <tr>
+          <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="lb-muted">({{ score.variant_id }})</span>{% endif %} – {{ score.metric_key }}</td>
+          <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <p class="lb-empty-note">No scores recorded yet.</p>
+      {% endif %}
+    </div>
+
+    {# JSON tab #}
+    <div class="lb-tab-panel" data-panel="json">
+      {% if sidecar_json %}
+      <pre class="lb-sidecar-pre json-highlight">{{ sidecar_json }}</pre>
+      {% else %}
+      <p class="lb-empty-note">No sidecar JSON available.</p>
+      {% endif %}
+    </div>
+
+    {# EXIF tab #}
+    <div class="lb-tab-panel" data-panel="exif">
+      {% if exif_data %}
+      <pre class="lb-sidecar-pre json-highlight">{{ exif_data }}</pre>
+      {% else %}
+      <p class="lb-empty-note">No EXIF data available.</p>
+      {% endif %}
+    </div>
+  </div>{# /lb-info-tabs #}
 </div>
+
+<script>
+(function () {
+  var root = document.currentScript.closest('.lb-detail-inner') || document;
+
+  root.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var tabName = btn.dataset.tab;
+      root.querySelectorAll('.lb-tab-btn').forEach(function (b) {
+        var active = b.dataset.tab === tabName;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      root.querySelectorAll('.lb-tab-panel').forEach(function (p) {
+        p.classList.toggle('active', p.dataset.panel === tabName);
+      });
+    });
+  });
+})();
+</script>
