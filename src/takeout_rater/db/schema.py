@@ -5,16 +5,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-# Directory containing numbered SQL migration files
+# Directory containing the schema SQL file
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 # The single schema version this codebase targets.
 CURRENT_SCHEMA_VERSION: int = 6
-
-# The one migration file that creates the complete schema from scratch.
-_MIGRATIONS: list[tuple[int, str]] = [
-    (CURRENT_SCHEMA_VERSION, "0001_initial_schema.sql"),
-]
 
 
 class SchemaMismatchError(RuntimeError):
@@ -63,9 +58,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     if current_version != 0:
         raise SchemaMismatchError(current_version)
 
-    # Fresh database – apply the single baseline schema.
-    for _version, filename in _MIGRATIONS:
-        sql = (_MIGRATIONS_DIR / filename).read_text(encoding="utf-8")
-        conn.executescript(sql)
-
+    # Fresh database – apply the baseline schema.
+    sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
+    conn.executescript(sql)
     conn.commit()
