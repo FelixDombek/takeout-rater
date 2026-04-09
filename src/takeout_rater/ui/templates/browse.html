@@ -298,17 +298,6 @@
     color: #999;
   }
   .lb-muted { color: #777; }
-  .lb-sidecar-details {
-    margin-top: 0.75rem;
-  }
-  .lb-sidecar-details summary {
-    cursor: pointer;
-    font-size: 0.78rem;
-    color: #888;
-    user-select: none;
-    padding: 0.2rem 0;
-  }
-  .lb-sidecar-details summary:hover { color: #bbb; }
   .lb-sidecar-pre {
     margin: 0.4rem 0 0;
     padding: 0.5rem;
@@ -341,6 +330,42 @@
     padding: 0.2rem 0.5rem;
   }
   .lb-detail-btn:hover { background: rgba(255,255,255,0.28); text-decoration: none; }
+
+  /* ── Lightbox info tabs ───────────────────────────────────────────────── */
+  .lb-info-tabs { margin-top: 0.75rem; }
+  .lb-tab-bar {
+    display: flex;
+    border-bottom: 1px solid rgba(255,255,255,0.15);
+  }
+  .lb-tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #777;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .lb-tab-btn:hover { color: #ccc; }
+  .lb-tab-btn.active { color: #7ec8e3; border-bottom-color: #7ec8e3; }
+  .lb-tab-panel { display: none; padding-top: 0.5rem; }
+  .lb-tab-panel.active { display: block; }
+  .lb-empty-note { color: #666; font-size: 0.75rem; margin: 0.4rem 0; }
+  .lb-meta-subsection { margin-bottom: 0.5rem; }
+  .lb-meta-sublabel {
+    font-size: 0.68rem;
+    color: #777;
+    margin-bottom: 0.2rem;
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   @media (max-width: 700px) {
     .lb-container { flex-direction: column; }
     .lb-details-col {
