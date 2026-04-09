@@ -104,10 +104,7 @@
 
 <script>
 (function () {
-  var inner = document.currentScript.closest
-    ? document.currentScript.closest('.lb-detail-inner')
-    : null;
-  var root = inner || document;
+  var root = document.currentScript.closest('.lb-detail-inner') || document;
 
   root.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {

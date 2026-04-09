@@ -95,8 +95,12 @@ def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
     def _make_serializable(value: object) -> object:
         """Recursively convert a value to a JSON-serialisable type."""
         if isinstance(value, bytes):
-            # Decode as Latin-1 so every byte round-trips without loss.
-            return value.decode("latin-1")
+            # Try UTF-8 first; fall back to Latin-1 which guarantees every byte
+            # round-trips without loss (unlike UTF-8, which may raise on arbitrary bytes).
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError:
+                return value.decode("latin-1")
         if isinstance(value, (list, tuple)):
             return [_make_serializable(v) for v in value]
         if isinstance(value, dict):
