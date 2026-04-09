@@ -30,11 +30,12 @@ class LuminosityScorer(BaseScorer):
             scorer_id="luminosity",
             display_name="Luminosity / Contrast",
             description=(
-                "Measures the overall brightness (mean luminance) and contrast "
-                "(greyscale standard deviation) of an image.  Both metrics are "
-                "computed from the greyscale representation using Pillow and "
-                "require no ML model."
+                "Measures two basic properties of a photo's lighting: how bright it is overall "
+                "(brightness) and how much tonal variety it contains (contrast). A very dark or "
+                "washed-out photo scores low on brightness; a flat, single-colour image scores "
+                "low on contrast. No model download required."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="brightness",

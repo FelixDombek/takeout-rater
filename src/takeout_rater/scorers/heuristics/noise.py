@@ -38,10 +38,13 @@ class NoiseScorer(BaseScorer):
             scorer_id="noise",
             display_name="Noise Level",
             description=(
-                "Estimates the perceptual noise level of an image by comparing it "
-                "with a Gaussian-blurred version.  The RMS of the difference image "
-                "is normalised to 0–100.  Lower values indicate a cleaner image."
+                "Detects graininess and digital noise in a photo, which often appears in "
+                "low-light or high-sensitivity shots. It works by lightly smoothing the image "
+                "and measuring how much detail disappeared — noise shows up as fine random "
+                "speckle that a gentle blur removes. Lower scores mean a cleaner image. "
+                "No model download required."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="noise",

@@ -55,6 +55,10 @@ class ScorerSpec:
         scorer_id: Stable machine-readable identifier (e.g. ``"aesthetic"``).
         display_name: Human-readable name shown in the UI.
         description: Short explanation of what this scorer measures.
+        version: Implementation version string (e.g. ``"1"``).  Increment this
+            whenever the scoring algorithm changes in a way that would produce
+            different scores for the same image, so that previously scored
+            images can be identified and re-scored.
         metrics: Ordered list of metrics the scorer outputs.
         variants: Available model/algorithm variants (may be empty if only one).
         default_variant_id: The variant used when none is specified.
@@ -64,6 +68,7 @@ class ScorerSpec:
     scorer_id: str
     display_name: str
     description: str = ""
+    version: str = "1"
     metrics: tuple[MetricSpec, ...] = field(default_factory=tuple)
     variants: tuple[VariantSpec, ...] = field(default_factory=tuple)
     default_variant_id: str = "default"
