@@ -15,9 +15,12 @@ Pillow is required to open images.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+
+_logger = logging.getLogger(__name__)
 
 #: Raw BRISQUE scores are in [0, 100] where 0 is best.
 #: We clamp at this upper bound before inverting.
@@ -96,6 +99,9 @@ class BRISQUEScorer(BaseScorer):
 
         If a file cannot be opened or the BRISQUE computation fails, the score
         defaults to ``0.0`` (worst quality) rather than raising an exception.
+        The failure is logged at WARNING level with the scorer name and asset
+        path to help diagnose edge-case images (e.g. fully uniform images that
+        cause an ``AssertionError`` inside ``piq._aggd_parameters``).
 
         Args:
             image_paths: Absolute paths to image files.
@@ -120,7 +126,13 @@ class BRISQUEScorer(BaseScorer):
                 # Clamp and invert: 0 raw → 100 quality; 100 raw → 0 quality
                 raw_clamped = max(0.0, min(_RAW_MAX, raw))
                 quality = _RAW_MAX - raw_clamped
-            except (OSError, ValueError, RuntimeError):
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning(
+                    "Scorer %r failed on %s: %s",
+                    self.spec().scorer_id,
+                    path,
+                    exc,
+                )
                 quality = 0.0
             results.append({"brisque_quality": quality})
         return results
