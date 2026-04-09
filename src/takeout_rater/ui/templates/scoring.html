@@ -341,10 +341,7 @@
     desc.className = 'scorer-desc';
     desc.dataset.simple = s.description || '';
     desc.dataset.technical = s.technical_description || s.description || '';
-    desc.textContent = _descMode === 'technical'
-      ? (desc.dataset.technical || desc.dataset.simple)
-      : desc.dataset.simple;
-    if (_descMode === 'technical') desc.classList.add('technical');
+    _applyDescMode(desc);
     card.appendChild(desc);
 
     // Variants selector (only when multiple variants)
@@ -565,17 +562,20 @@
   // Description mode toggle
   // ---------------------------------------------------------------------------
 
+  /** Apply the current description mode to a single .scorer-desc element. */
+  function _applyDescMode(el) {
+    var text = _descMode === 'technical'
+      ? (el.dataset.technical || el.dataset.simple || '')
+      : (el.dataset.simple || '');
+    el.textContent = text;
+    el.classList.toggle('technical', _descMode === 'technical');
+  }
+
   window.setDescMode = function (mode) {
     _descMode = mode;
     document.getElementById('btn-desc-simple').classList.toggle('active', mode === 'simple');
     document.getElementById('btn-desc-technical').classList.toggle('active', mode === 'technical');
-    document.querySelectorAll('.scorer-desc').forEach(function (el) {
-      var text = mode === 'technical'
-        ? (el.dataset.technical || el.dataset.simple || '')
-        : (el.dataset.simple || '');
-      el.textContent = text;
-      el.classList.toggle('technical', mode === 'technical');
-    });
+    document.querySelectorAll('.scorer-desc').forEach(_applyDescMode);
   };
 
   // ---------------------------------------------------------------------------

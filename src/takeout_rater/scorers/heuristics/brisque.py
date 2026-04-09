@@ -42,7 +42,8 @@ class BRISQUEScorer(BaseScorer):
                 "Uses a statistical model of what natural, undistorted images look like to "
                 "spot distortions such as blur, noise, and compression artefacts — without "
                 "needing a reference image. Photos that match natural image statistics score "
-                "higher. The model parameters are built in, so no download is required."
+                "higher. The algorithm parameters are pre-fitted and built in, so no download "
+                "is required."
             ),
             technical_description=(
                 "Estimates perceptual image quality using BRISQUE (Blind/Referenceless "
