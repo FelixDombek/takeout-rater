@@ -144,16 +144,16 @@
       <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
     </table>
 
-    {% if duplicates %}
+    {% if alias_paths %}
     <h2 style="font-size:1rem; margin-top:1.25rem; margin-bottom:0.5rem; color:#444;">Also stored at</h2>
     <p style="font-size:0.85rem; color:#666; margin-bottom:0.5rem;">
-      This image appears in {{ duplicates | length + 1 }} location{{ "s" if (duplicates | length + 1) != 1 else "" }} in your Takeout archive:
+      This image appears in {{ alias_paths | length + 1 }} location{{ "s" if (alias_paths | length + 1) != 1 else "" }} in your Takeout archive:
     </p>
     <table>
       <tr><td style="color:#888;">{{ asset.relpath }}</td><td style="color:#888;"><em>(this copy)</em></td></tr>
-      {% for dup in duplicates %}
+      {% for alias in alias_paths %}
       <tr>
-        <td><small><a href="/assets/{{ dup.id }}">{{ dup.relpath }}</a></small></td>
+        <td><small>{{ alias }}</small></td>
         <td></td>
       </tr>
       {% endfor %}
@@ -199,22 +199,8 @@
       {# JSON tab #}
       <div id="tab-json" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-json">
         {% if sidecar_json %}
-        <div class="metadata-subsection">
-          {% if duplicate_sidecars | selectattr('1') | list %}
-          <div class="metadata-subsection-label">{{ asset.relpath }}</div>
-          {% endif %}
-          <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
-        </div>
-        {% endif %}
-        {% for dup, dup_json in duplicate_sidecars %}
-          {% if dup_json %}
-          <div class="metadata-subsection">
-            <div class="metadata-subsection-label">{{ dup.relpath }}</div>
-            <pre class="metadata-pre json-highlight">{{ dup_json }}</pre>
-          </div>
-          {% endif %}
-        {% endfor %}
-        {% if not sidecar_json and not (duplicate_sidecars | selectattr('1') | list) %}
+        <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
+        {% else %}
         <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No sidecar JSON available.</p>
         {% endif %}
       </div>

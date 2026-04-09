@@ -110,8 +110,14 @@ def _row_to_asset(row: sqlite3.Row) -> AssetRow:
 def upsert_asset(conn: sqlite3.Connection, asset: dict[str, Any]) -> int:
     """Insert or update an asset row and return the asset ID.
 
-    Uses ``INSERT ... ON CONFLICT(relpath) DO UPDATE`` so re-indexing is
-    idempotent and the row's primary key is preserved across updates.
+    When a SHA-256 hash is provided and an existing asset already has the same
+    hash, the new path is recorded as an alias in ``asset_paths`` rather than
+    creating a second ``assets`` row.  This ensures each unique binary file has
+    exactly one ``assets`` entry regardless of how many locations it appears in
+    within the Takeout archive.
+
+    When no SHA-256 is available, falls back to ``INSERT … ON CONFLICT(relpath)
+    DO UPDATE`` so re-indexing is still idempotent.
 
     Args:
         conn: Open database connection.
@@ -119,11 +125,44 @@ def upsert_asset(conn: sqlite3.Connection, asset: dict[str, Any]) -> int:
             the current Unix timestamp if not provided.
 
     Returns:
-        The row ID of the inserted or updated row.
+        The row ID of the canonical ``assets`` row for this file.
     """
     asset = dict(asset)
     if "indexed_at" not in asset:
         asset["indexed_at"] = int(time.time())
+
+    sha256 = asset.get("sha256")
+    relpath = asset["relpath"]
+    indexed_at = asset["indexed_at"]
+
+    if sha256:
+        # Check whether a canonical asset with this SHA-256 already exists.
+        existing = conn.execute(
+            "SELECT id, relpath FROM assets WHERE sha256 = ? ORDER BY id LIMIT 1",
+            (sha256,),
+        ).fetchone()
+        if existing:
+            canonical_id: int = existing[0]
+            canonical_relpath: str = existing[1]
+            if relpath != canonical_relpath:
+                # This is a secondary (alias) path — record it and return the
+                # canonical asset's id without touching the assets table.
+                conn.execute(
+                    "INSERT INTO asset_paths (asset_id, relpath, indexed_at)"
+                    " VALUES (?, ?, ?)"
+                    " ON CONFLICT(relpath) DO UPDATE"
+                    "   SET asset_id = excluded.asset_id, indexed_at = excluded.indexed_at",
+                    (canonical_id, relpath, indexed_at),
+                )
+                conn.commit()
+                return canonical_id
+            # Fall through: this is the canonical path being re-indexed — update
+            # the assets row normally via the ON CONFLICT path below.
+
+    # If this relpath was previously recorded as an alias in asset_paths
+    # (e.g. the canonical was removed and this is now the only copy), clean it
+    # up so it can become a proper assets row.
+    conn.execute("DELETE FROM asset_paths WHERE relpath = ?", (relpath,))
 
     # Exclude 'id' from the insert columns to let SQLite assign it
     insert_cols = [k for k in asset if k != "id"]
@@ -156,7 +195,10 @@ def get_asset_by_id(conn: sqlite3.Connection, asset_id: int) -> AssetRow | None:
 
 
 def get_asset_by_relpath(conn: sqlite3.Connection, relpath: str) -> AssetRow | None:
-    """Fetch one asset by its unique relative path.
+    """Fetch one asset by its relative path.
+
+    Checks both the canonical ``assets.relpath`` column and the
+    ``asset_paths`` alias table, returning the canonical asset in either case.
 
     Args:
         conn: Open database connection.
@@ -166,7 +208,16 @@ def get_asset_by_relpath(conn: sqlite3.Connection, relpath: str) -> AssetRow | N
         An :class:`AssetRow`, or ``None`` if not found.
     """
     row = conn.execute("SELECT * FROM assets WHERE relpath = ?", (relpath,)).fetchone()
-    return _row_to_asset(row) if row else None
+    if row:
+        return _row_to_asset(row)
+    # Check alias paths — return the canonical asset for this alias.
+    alias = conn.execute(
+        "SELECT asset_id FROM asset_paths WHERE relpath = ?", (relpath,)
+    ).fetchone()
+    if alias:
+        row = conn.execute("SELECT * FROM assets WHERE id = ?", (alias[0],)).fetchone()
+        return _row_to_asset(row) if row else None
+    return None
 
 
 def list_assets(
@@ -435,6 +486,29 @@ def get_duplicate_assets(conn: sqlite3.Connection, sha256: str) -> list[AssetRow
     return [_row_to_asset(r) for r in rows]
 
 
+def get_asset_alias_paths(conn: sqlite3.Connection, asset_id: int) -> list[str]:
+    """Return all alias (secondary) paths stored for *asset_id*.
+
+    When binary-duplicate files are indexed they are merged into a single
+    ``assets`` row (the canonical one).  The other paths at which the same
+    file appeared in the Takeout archive are stored in ``asset_paths``.
+    This function returns those secondary paths in alphabetical order.
+
+    Args:
+        conn: Open database connection.
+        asset_id: Primary key of the canonical asset.
+
+    Returns:
+        List of relative-path strings.  Empty when the asset has no known
+        aliases (i.e. it appears in only one location).
+    """
+    rows = conn.execute(
+        "SELECT relpath FROM asset_paths WHERE asset_id = ? ORDER BY relpath",
+        (asset_id,),
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
 # ---------------------------------------------------------------------------
 # Timeline helpers
 # ---------------------------------------------------------------------------
@@ -562,16 +636,42 @@ def bulk_insert_asset_scores(
     run_id: int,
     scores: list[tuple[int, str, float]],
 ) -> None:
-    """Insert multiple ``asset_scores`` rows in a single transaction.
+    """Insert multiple ``asset_scores`` rows, replacing any previous scores.
 
-    Rows with duplicate ``(asset_id, scorer_run_id, metric_key)`` are ignored
-    (``INSERT OR IGNORE``).
+    For each ``(asset_id, metric_key)`` pair in *scores*, any existing rows
+    from earlier runs of the *same* scorer+variant are deleted first so that
+    re-running a scorer overwrites old results instead of accumulating
+    duplicates.  Within the same run, the first value for a given
+    ``(asset_id, metric_key)`` pair is preserved (``INSERT OR IGNORE``).
 
     Args:
         conn: Open database connection.
         run_id: Foreign key into ``scorer_runs``.
         scores: Iterable of ``(asset_id, metric_key, value)`` triples.
     """
+    if not scores:
+        return
+
+    # Fetch scorer identity so we can target only previous runs of this scorer.
+    run_row = conn.execute(
+        "SELECT scorer_id, variant_id FROM scorer_runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    if run_row:
+        scorer_id: str = run_row[0]
+        variant_id: str = run_row[1]
+        # Delete existing scores for these assets from any *previous* run of the
+        # same scorer+variant so re-runs overwrite rather than duplicate.
+        asset_ids = list({a for a, _, _ in scores})
+        placeholders = ",".join("?" * len(asset_ids))
+        conn.execute(
+            f"DELETE FROM asset_scores"  # noqa: S608
+            f" WHERE scorer_run_id IN ("
+            f"   SELECT id FROM scorer_runs WHERE scorer_id = ? AND variant_id = ? AND id != ?"
+            f" )"
+            f" AND asset_id IN ({placeholders})",
+            [scorer_id, variant_id, run_id, *asset_ids],
+        )
+
     conn.executemany(
         "INSERT OR IGNORE INTO asset_scores (asset_id, scorer_run_id, metric_key, value)"
         " VALUES (?, ?, ?, ?)",
@@ -584,7 +684,11 @@ def get_asset_scores(
     conn: sqlite3.Connection,
     asset_id: int,
 ) -> list[dict[str, Any]]:
-    """Return all scores for a single asset, across all scorer runs.
+    """Return the latest scores for a single asset, one per scorer metric.
+
+    When the same scorer has been run multiple times (e.g. via the re-score
+    option), only the most recent result for each ``(scorer_id, variant_id,
+    metric_key)`` combination is returned.
 
     Args:
         conn: Open database connection.
@@ -595,11 +699,19 @@ def get_asset_scores(
         ``value``, and ``finished_at``.  Ordered by ``finished_at DESC``.
     """
     rows = conn.execute(
-        "SELECT r.scorer_id, r.variant_id, s.metric_key, s.value, r.finished_at"
-        " FROM asset_scores s"
-        " JOIN scorer_runs r ON r.id = s.scorer_run_id"
-        " WHERE s.asset_id = ? AND r.finished_at IS NOT NULL"
-        " ORDER BY r.finished_at DESC",
+        "SELECT scorer_id, variant_id, metric_key, value, finished_at"
+        " FROM ("
+        "   SELECT r.scorer_id, r.variant_id, s.metric_key, s.value, r.finished_at,"
+        "          ROW_NUMBER() OVER ("
+        "            PARTITION BY r.scorer_id, r.variant_id, s.metric_key"
+        "            ORDER BY r.finished_at DESC, r.id DESC"
+        "          ) AS rn"
+        "   FROM asset_scores s"
+        "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
+        "   WHERE s.asset_id = ? AND r.finished_at IS NOT NULL"
+        " )"
+        " WHERE rn = 1"
+        " ORDER BY finished_at DESC",
         (asset_id,),
     ).fetchall()
     return [

@@ -11,6 +11,7 @@ from takeout_rater.db.queries import (
     AssetRow,
     count_assets,
     count_assets_deduped,
+    get_asset_alias_paths,
     get_asset_by_id,
     get_asset_by_relpath,
     get_duplicate_assets,
@@ -85,10 +86,10 @@ def test_schema_creates_asset_scores_table() -> None:
     assert "asset_scores" in tables
 
 
-def test_schema_user_version_is_4() -> None:
+def test_schema_user_version_is_5() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 4
+    assert version == 5
 
 
 def test_migrate_is_idempotent() -> None:
@@ -96,7 +97,7 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 4
+    assert version == 5
 
 
 # ── library_state_dir ────────────────────────────────────────────────────────
@@ -345,20 +346,101 @@ def test_list_asset_ids_without_sha256_empty_when_all_hashed() -> None:
 
 
 def test_get_duplicate_assets_returns_all_copies() -> None:
+    # With write-time dedup, only the canonical asset (first inserted) ends up in
+    # assets; the second path is stored in asset_paths.  get_duplicate_assets now
+    # returns just the canonical row.
     conn = _open_in_memory()
-    upsert_asset(conn, {**_minimal_asset("album1/img.jpg"), "sha256": "cafebabe"})
-    upsert_asset(conn, {**_minimal_asset("album2/img.jpg"), "sha256": "cafebabe"})
+    canonical_id = upsert_asset(conn, {**_minimal_asset("album1/img.jpg"), "sha256": "cafebabe"})
+    alias_id = upsert_asset(conn, {**_minimal_asset("album2/img.jpg"), "sha256": "cafebabe"})
     upsert_asset(conn, {**_minimal_asset("album3/other.jpg"), "sha256": "deadbeef"})
+    # Both upserts return the same (canonical) id; only one assets row was created.
+    assert alias_id == canonical_id
     dups = get_duplicate_assets(conn, "cafebabe")
-    assert len(dups) == 2
-    relpaths = {d.relpath for d in dups}
-    assert relpaths == {"album1/img.jpg", "album2/img.jpg"}
+    assert len(dups) == 1
+    assert dups[0].relpath == "album1/img.jpg"
 
 
 def test_get_duplicate_assets_returns_empty_for_unknown_hash() -> None:
     conn = _open_in_memory()
     upsert_asset(conn, {**_minimal_asset(), "sha256": "aaa"})
     assert get_duplicate_assets(conn, "zzz") == []
+
+
+# ── upsert_asset sha256 dedup ─────────────────────────────────────────────────
+
+
+def test_upsert_asset_sha256_duplicate_returns_canonical_id() -> None:
+    """Second upsert with same SHA-256 returns the canonical asset's ID."""
+    conn = _open_in_memory()
+    id1 = upsert_asset(conn, {**_minimal_asset("photos/img.jpg"), "sha256": "abc123"})
+    id2 = upsert_asset(conn, {**_minimal_asset("album/img.jpg"), "sha256": "abc123"})
+    assert id2 == id1
+
+
+def test_upsert_asset_sha256_duplicate_stored_in_asset_paths() -> None:
+    """Alias path from duplicate is stored in asset_paths."""
+    conn = _open_in_memory()
+    id1 = upsert_asset(conn, {**_minimal_asset("photos/img.jpg"), "sha256": "abc123"})
+    upsert_asset(conn, {**_minimal_asset("album/img.jpg"), "sha256": "abc123"})
+    aliases = get_asset_alias_paths(conn, id1)
+    assert aliases == ["album/img.jpg"]
+
+
+def test_upsert_asset_sha256_duplicate_not_in_assets_table() -> None:
+    """Alias path must NOT appear as a separate row in assets."""
+    conn = _open_in_memory()
+    upsert_asset(conn, {**_minimal_asset("photos/img.jpg"), "sha256": "abc123"})
+    upsert_asset(conn, {**_minimal_asset("album/img.jpg"), "sha256": "abc123"})
+    total = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    assert total == 1
+
+
+def test_upsert_asset_no_sha256_creates_separate_rows() -> None:
+    """Without SHA-256, each relpath still gets its own assets row."""
+    conn = _open_in_memory()
+    id1 = upsert_asset(conn, _minimal_asset("a/img.jpg"))
+    id2 = upsert_asset(conn, _minimal_asset("b/img.jpg"))
+    assert id1 != id2
+    total = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    assert total == 2
+
+
+def test_upsert_asset_reindex_canonical_updates_in_place() -> None:
+    """Re-indexing the canonical path still updates the assets row."""
+    conn = _open_in_memory()
+    id1 = upsert_asset(conn, {**_minimal_asset("photos/img.jpg"), "sha256": "abc123"})
+    id2 = upsert_asset(
+        conn, {**_minimal_asset("photos/img.jpg"), "sha256": "abc123", "title": "New"}
+    )
+    assert id2 == id1
+    row = conn.execute("SELECT title FROM assets WHERE id = ?", (id1,)).fetchone()
+    assert row["title"] == "New"
+
+
+def test_upsert_asset_multiple_aliases() -> None:
+    """Three files with same SHA-256: one canonical, two aliases."""
+    conn = _open_in_memory()
+    id1 = upsert_asset(conn, {**_minimal_asset("p/img.jpg"), "sha256": "fff"})
+    upsert_asset(conn, {**_minimal_asset("a1/img.jpg"), "sha256": "fff"})
+    upsert_asset(conn, {**_minimal_asset("a2/img.jpg"), "sha256": "fff"})
+    aliases = get_asset_alias_paths(conn, id1)
+    assert sorted(aliases) == ["a1/img.jpg", "a2/img.jpg"]
+    total = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    assert total == 1
+
+
+# ── get_asset_by_relpath (updated to check asset_paths) ───────────────────────
+
+
+def test_get_asset_by_relpath_alias_returns_canonical() -> None:
+    """Looking up an alias relpath returns the canonical asset."""
+    conn = _open_in_memory()
+    canonical_id = upsert_asset(conn, {**_minimal_asset("photos/img.jpg"), "sha256": "abc123"})
+    upsert_asset(conn, {**_minimal_asset("album/img.jpg"), "sha256": "abc123"})
+    row = get_asset_by_relpath(conn, "album/img.jpg")
+    assert row is not None
+    assert row.id == canonical_id
+    assert row.relpath == "photos/img.jpg"
 
 
 def test_count_assets_deduped_no_duplicates() -> None:
@@ -374,7 +456,7 @@ def test_count_assets_deduped_with_exact_duplicates() -> None:
     upsert_asset(conn, {**_minimal_asset("album1/img.jpg"), "sha256": "cafebabe"})
     upsert_asset(conn, {**_minimal_asset("album2/img.jpg"), "sha256": "cafebabe"})
     upsert_asset(conn, {**_minimal_asset("p/unique.jpg"), "sha256": "deadbeef"})
-    # 3 files but only 2 unique hashes
+    # Write-time dedup: album2 → asset_paths; only 2 rows in assets
     assert count_assets_deduped(conn) == 2
 
 
@@ -394,7 +476,7 @@ def test_list_assets_deduped_hides_duplicate() -> None:
     rows = list_assets_deduped(conn)
     assert len(rows) == 2
     relpaths = {r.relpath for r in rows}
-    # The canonical copy is always the lowest-id (first-inserted) one; album2 is hidden
+    # Write-time dedup: only album1 is in assets; album2 is in asset_paths
     assert "album1/img.jpg" in relpaths
     assert "album2/img.jpg" not in relpaths
 

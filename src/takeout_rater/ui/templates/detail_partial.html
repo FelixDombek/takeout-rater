@@ -32,11 +32,11 @@
     <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
   </table>
 
-  {% if duplicates %}
+  {% if alias_paths %}
   <h3 class="lb-detail-section">Also stored at</h3>
   <ul class="lb-dup-list">
-    {% for dup in duplicates %}
-    <li><small>{{ dup.relpath }}</small></li>
+    {% for alias in alias_paths %}
+    <li><small>{{ alias }}</small></li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -71,22 +71,8 @@
     {# JSON tab #}
     <div class="lb-tab-panel" data-panel="json">
       {% if sidecar_json %}
-      <div class="lb-meta-subsection">
-        {% if duplicate_sidecars | selectattr('1') | list %}
-        <div class="lb-meta-sublabel">{{ asset.relpath }}</div>
-        {% endif %}
-        <pre class="lb-sidecar-pre json-highlight">{{ sidecar_json }}</pre>
-      </div>
-      {% endif %}
-      {% for dup, dup_json in duplicate_sidecars %}
-        {% if dup_json %}
-        <div class="lb-meta-subsection">
-          <div class="lb-meta-sublabel">{{ dup.relpath }}</div>
-          <pre class="lb-sidecar-pre json-highlight">{{ dup_json }}</pre>
-        </div>
-        {% endif %}
-      {% endfor %}
-      {% if not sidecar_json and not (duplicate_sidecars | selectattr('1') | list) %}
+      <pre class="lb-sidecar-pre json-highlight">{{ sidecar_json }}</pre>
+      {% else %}
       <p class="lb-empty-note">No sidecar JSON available.</p>
       {% endif %}
     </div>
