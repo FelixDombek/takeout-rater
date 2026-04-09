@@ -120,7 +120,43 @@ def test_bulk_insert_asset_scores_ignores_duplicates() -> None:
     assert count == 1  # first value preserved
 
 
-def test_bulk_insert_asset_scores_multiple() -> None:
+def test_bulk_insert_asset_scores_new_run_overwrites_old() -> None:
+    """Scores from a new run replace those from a previous run of the same scorer."""
+    conn = _open_in_memory()
+    asset_id = _add_asset(conn)
+    run1 = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(conn, run1, [(asset_id, "sharpness", 10.0)])
+    finish_scorer_run(conn, run1)
+
+    run2 = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(conn, run2, [(asset_id, "sharpness", 99.0)])
+    finish_scorer_run(conn, run2)
+
+    # Only the run2 score should survive in asset_scores
+    total = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
+    assert total == 1
+    row = conn.execute("SELECT value FROM asset_scores WHERE scorer_run_id = ?", (run2,)).fetchone()
+    assert row is not None
+    assert row["value"] == pytest.approx(99.0)
+
+
+def test_get_asset_scores_no_duplicates_across_runs() -> None:
+    """get_asset_scores returns one score per metric even across multiple runs."""
+    conn = _open_in_memory()
+    asset_id = _add_asset(conn)
+
+    run1 = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(conn, run1, [(asset_id, "sharpness", 10.0)])
+    finish_scorer_run(conn, run1)
+
+    run2 = insert_scorer_run(conn, "blur", "default")
+    bulk_insert_asset_scores(conn, run2, [(asset_id, "sharpness", 99.0)])
+    finish_scorer_run(conn, run2)
+
+    scores = get_asset_scores(conn, asset_id)
+    assert len(scores) == 1
+    assert scores[0]["value"] == pytest.approx(99.0)
+
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
     run_id = insert_scorer_run(conn, "blur", "default")

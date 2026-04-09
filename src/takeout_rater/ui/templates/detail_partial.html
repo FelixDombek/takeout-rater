@@ -32,11 +32,11 @@
     <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
   </table>
 
-  {% if duplicates %}
+  {% if alias_paths %}
   <h3 class="lb-detail-section">Also stored at</h3>
   <ul class="lb-dup-list">
-    {% for dup in duplicates %}
-    <li><small>{{ dup.relpath }}</small></li>
+    {% for alias in alias_paths %}
+    <li><small>{{ alias }}</small></li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -59,13 +59,4 @@
     <pre class="lb-sidecar-pre json-highlight">{{ sidecar_json }}</pre>
   </details>
   {% endif %}
-
-  {% for dup, dup_json in duplicate_sidecars %}
-    {% if dup_json %}
-    <details class="lb-sidecar-details">
-      <summary>Sidecar – <small>{{ dup.relpath }}</small></summary>
-      <pre class="lb-sidecar-pre json-highlight">{{ dup_json }}</pre>
-    </details>
-    {% endif %}
-  {% endfor %}
 </div>

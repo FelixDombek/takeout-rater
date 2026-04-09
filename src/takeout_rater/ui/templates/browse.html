@@ -464,15 +464,9 @@
   </span>
 
   {% if favorited == "1" %}
-    <a class="btn" href="/assets?page=1{% if not dedupe %}&dedupe=0{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">All photos</a>
+    <a class="btn" href="/assets?page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">All photos</a>
   {% else %}
-    <a class="btn" href="/assets?favorited=1&page=1{% if not dedupe %}&dedupe=0{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">⭐ Favorites only</a>
-  {% endif %}
-
-  {% if dedupe %}
-    <a class="btn" href="/assets?dedupe=0&page=1{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}" title="Show all physical copies including duplicates">Show duplicates</a>
-  {% else %}
-    <a class="btn" href="/assets?page=1{% if favorited %}&favorited={{ favorited }}{% endif %}{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}" title="Hide exact duplicate files (same content)">Hide duplicates</a>
+    <a class="btn" href="/assets?favorited=1&page=1{% if sort_by %}&sort_by={{ sort_by | urlencode }}{% endif %}{% if min_score is not none %}&min_score={{ min_score }}{% endif %}{% if max_score is not none %}&max_score={{ max_score }}{% endif %}">⭐ Favorites only</a>
   {% endif %}
 
   {% if sort_options %}

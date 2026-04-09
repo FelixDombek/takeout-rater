@@ -108,16 +108,16 @@
       <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
     </table>
 
-    {% if duplicates %}
+    {% if alias_paths %}
     <h2 style="font-size:1rem; margin-top:1.25rem; margin-bottom:0.5rem; color:#444;">Also stored at</h2>
     <p style="font-size:0.85rem; color:#666; margin-bottom:0.5rem;">
-      This image appears in {{ duplicates | length + 1 }} location{{ "s" if (duplicates | length + 1) != 1 else "" }} in your Takeout archive:
+      This image appears in {{ alias_paths | length + 1 }} location{{ "s" if (alias_paths | length + 1) != 1 else "" }} in your Takeout archive:
     </p>
     <table>
       <tr><td style="color:#888;">{{ asset.relpath }}</td><td style="color:#888;"><em>(this copy)</em></td></tr>
-      {% for dup in duplicates %}
+      {% for alias in alias_paths %}
       <tr>
-        <td><small><a href="/assets/{{ dup.id }}">{{ dup.relpath }}</a></small></td>
+        <td><small>{{ alias }}</small></td>
         <td></td>
       </tr>
       {% endfor %}
@@ -148,15 +148,6 @@
       <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
     </details>
     {% endif %}
-
-    {% for dup, dup_json in duplicate_sidecars %}
-      {% if dup_json %}
-      <details class="metadata-panel">
-        <summary>Raw metadata – <small>{{ dup.relpath }}</small></summary>
-        <pre class="metadata-pre json-highlight">{{ dup_json }}</pre>
-      </details>
-      {% endif %}
-    {% endfor %}
   </div>
 </div>
 

@@ -16,9 +16,9 @@ from takeout_rater.db.queries import (
     count_assets_deduped,
     count_assets_newer_than,
     count_assets_with_score,
+    get_asset_alias_paths,
     get_asset_by_id,
     get_asset_scores,
-    get_duplicate_assets,
     get_taken_at_range,
     list_assets,
     list_assets_by_score,
@@ -246,27 +246,20 @@ def asset_detail(
 
     scores = get_asset_scores(conn, asset_id)
 
-    # Collect all physical copies that share the same SHA-256 hash so the
-    # detail view can list every path/album where this image appears.
-    duplicates: list[AssetRow] = []
-    if asset.sha256 is not None:
-        all_copies = get_duplicate_assets(conn, asset.sha256)
-        duplicates = [a for a in all_copies if a.id != asset_id]
+    # Collect alias paths — other locations in the Takeout archive where this
+    # exact binary file also appears (stored in asset_paths after dedup).
+    alias_paths: list[str] = get_asset_alias_paths(conn, asset_id)
 
-    # Load raw sidecar JSON for the main asset and each duplicate.
+    # Load raw sidecar JSON for the main asset.
     sidecar_json = _read_sidecar_json(takeout_root, asset)
-    duplicate_sidecars: list[tuple[AssetRow, str | None]] = [
-        (dup, _read_sidecar_json(takeout_root, dup)) for dup in duplicates
-    ]
 
     templates = request.app.state.templates
     ctx = {
         "request": request,
         "asset": asset,
         "scores": scores,
-        "duplicates": duplicates,
+        "alias_paths": alias_paths,
         "sidecar_json": sidecar_json,
-        "duplicate_sidecars": duplicate_sidecars,
     }
     if partial == "1":
         return templates.TemplateResponse("detail_partial.html", ctx)

@@ -554,16 +554,19 @@ def test_browse_dedupe_off_shows_all_files(client_with_duplicates: TestClient) -
     assert "3" in resp.text
 
 
-def test_browse_dedupe_toggle_link_present(client_with_duplicates: TestClient) -> None:
-    """Default view should include a link to show duplicates."""
+def test_browse_dedupe_toggle_removed(client_with_duplicates: TestClient) -> None:
+    """Dedup now happens at write time; the Show/Hide duplicates toggle is gone."""
     resp = client_with_duplicates.get("/assets")
-    assert "dedupe=0" in resp.text or "Show duplicates" in resp.text
+    assert resp.status_code == 200
+    assert "Show duplicates" not in resp.text
+    assert "Hide duplicates" not in resp.text
 
 
-def test_browse_dedupe_off_toggle_link_present(client_with_duplicates: TestClient) -> None:
-    """Non-dedupe view should include a link to hide duplicates."""
+def test_browse_dedupe_off_toggle_removed(client_with_duplicates: TestClient) -> None:
+    """Even with dedupe=0, the Hide duplicates toggle no longer appears."""
     resp = client_with_duplicates.get("/assets?dedupe=0")
-    assert "Hide duplicates" in resp.text
+    assert resp.status_code == 200
+    assert "Hide duplicates" not in resp.text
 
 
 def test_asset_detail_shows_duplicate_paths(tmp_path: Path) -> None:
@@ -635,27 +638,22 @@ def test_asset_detail_no_sidecar_panel_when_missing(tmp_path: Path) -> None:
     assert "Raw metadata" not in resp.text
 
 
-def test_asset_detail_shows_duplicate_sidecar_panels(tmp_path: Path) -> None:
-    """Detail page should show separate sidecar panels for each duplicate with a sidecar."""
+def test_asset_detail_shows_only_canonical_sidecar(tmp_path: Path) -> None:
+    """Detail page for a deduplicated image shows the canonical sidecar only.
+
+    The alias path (album2) is listed in the 'Also stored at' section but its
+    sidecar JSON is not loaded separately — only the canonical asset's sidecar
+    appears.
+    """
     conn = _make_db()
 
-    # Create sidecar for the first copy
+    # Create sidecar for the canonical copy
     sidecar1 = "Photos/album1/img.jpg.supplemental-metadata.json"
     sidecar1_path = tmp_path / sidecar1
     sidecar1_path.parent.mkdir(parents=True, exist_ok=True)
     sidecar1_path.write_text(
         '{"title":"img.jpg","description":"album1 copy","url":"",'
         '"creationTime":{"timestamp":"1000"},"imageViews":"1"}',
-        encoding="utf-8",
-    )
-
-    # Create sidecar for the second copy (duplicate)
-    sidecar2 = "Photos/album2/img.jpg.supplemental-metadata.json"
-    sidecar2_path = tmp_path / sidecar2
-    sidecar2_path.parent.mkdir(parents=True, exist_ok=True)
-    sidecar2_path.write_text(
-        '{"title":"img.jpg","description":"album2 copy","url":"",'
-        '"creationTime":{"timestamp":"2000"},"imageViews":"2"}',
         encoding="utf-8",
     )
 
@@ -672,6 +670,7 @@ def test_asset_detail_shows_duplicate_sidecar_panels(tmp_path: Path) -> None:
             "indexed_at": int(time.time()),
         },
     )
+    # This is a binary duplicate — goes to asset_paths, not a new assets row.
     upsert_asset(
         conn,
         {
@@ -681,7 +680,6 @@ def test_asset_detail_shows_duplicate_sidecar_panels(tmp_path: Path) -> None:
             "size_bytes": 512,
             "mime": "image/jpeg",
             "sha256": "aabbccdd",
-            "sidecar_relpath": sidecar2,
             "indexed_at": int(time.time()),
         },
     )
@@ -690,10 +688,9 @@ def test_asset_detail_shows_duplicate_sidecar_panels(tmp_path: Path) -> None:
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{id1}")
     assert resp.status_code == 200
-    # Both sidecar panels should appear
+    # Canonical sidecar content is shown
     assert "album1 copy" in resp.text
-    assert "album2 copy" in resp.text
-    # Both paths labelled in the duplicate sidecars section
+    # Alias path is listed in 'Also stored at'
     assert "album2/img.jpg" in resp.text
 
 

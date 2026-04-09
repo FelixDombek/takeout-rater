@@ -350,8 +350,13 @@ def test_index_command_sha256_is_valid_hex(library_root: Path) -> None:
             int(row.sha256, 16)  # raises ValueError if not valid hex
 
 
-def test_index_command_identical_files_get_same_sha256(tmp_path: Path) -> None:
-    """Two physically identical files (same bytes) must share the same sha256."""
+def test_index_command_identical_files_deduplicated(tmp_path: Path) -> None:
+    """Two physically identical files (same bytes) produce a single assets row.
+
+    The second path is stored as an alias in asset_paths.
+    """
+    from takeout_rater.db.queries import get_asset_alias_paths  # noqa: PLC0415
+
     takeout = tmp_path / "Takeout" / "Photos from 2024"
     takeout.mkdir(parents=True)
     content = b"\xff\xd8\xff" + b"\x00" * 100
@@ -361,7 +366,14 @@ def test_index_command_identical_files_get_same_sha256(tmp_path: Path) -> None:
     main(["index", "--no-thumbs", str(tmp_path)])
     conn = open_library_db(tmp_path)
     rows = list_assets(conn=conn, limit=1000)
+    # Only one assets row created; the duplicate is in asset_paths.
+    assert len(rows) == 1
+    assert rows[0].sha256 is not None
+    canonical_id = rows[0].id
+    aliases = get_asset_alias_paths(conn, canonical_id)
     conn.close()
-    hashes = [r.sha256 for r in rows if r.sha256 is not None]
-    assert len(hashes) == 2
-    assert hashes[0] == hashes[1]
+    # Exactly one alias (whichever of copy1/copy2 was indexed second).
+    assert len(aliases) == 1
+    all_relpaths = {rows[0].relpath} | set(aliases)
+    assert "Photos from 2024/copy1.jpg" in all_relpaths
+    assert "Photos from 2024/copy2.jpg" in all_relpaths
