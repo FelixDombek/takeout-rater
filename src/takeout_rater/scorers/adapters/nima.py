@@ -130,6 +130,12 @@ class NIMAScorer(BaseScorer):
                 "lighting, colour) and technical quality (sharpness, noise, exposure). "
                 "Requires ~20 MB model download per variant."
             ),
+            technical_description=(
+                "Neural Image Assessment (NIMA, Google 2018). Predicts the mean "
+                "human rating of image quality on a 1–10 scale using a MobileNet-V2 "
+                "backbone. Two variants: aesthetic quality (AVA dataset) and "
+                "technical quality (TID2013 / KADID-10k)."
+            ),
             version="1",
             metrics=(
                 MetricSpec(

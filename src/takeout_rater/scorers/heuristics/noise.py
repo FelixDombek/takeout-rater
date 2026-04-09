@@ -44,6 +44,11 @@ class NoiseScorer(BaseScorer):
                 "speckle that a gentle blur removes. Lower scores mean a cleaner image. "
                 "No model download required."
             ),
+            technical_description=(
+                "Estimates the perceptual noise level of an image by comparing it "
+                "with a Gaussian-blurred version. The RMS of the difference image "
+                "is normalised to 0–100. Lower values indicate a cleaner image."
+            ),
             version="1",
             metrics=(
                 MetricSpec(

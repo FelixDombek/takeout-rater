@@ -23,6 +23,7 @@ class DummyScorer(BaseScorer):
             scorer_id="dummy",
             display_name="Dummy (test)",
             description="Returns a constant 0.5 score. Used for scaffolding and tests only.",
+            technical_description="Returns a constant 0.5 score. Used for scaffolding and tests only.",
             version="1",
             metrics=(
                 MetricSpec(

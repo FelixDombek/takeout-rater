@@ -67,6 +67,11 @@ class NSFWScorer(BaseScorer):
                 "to 0 are safe; scores close to 1 suggest the image may be inappropriate. "
                 "Requires ~330 MB model download."
             ),
+            technical_description=(
+                "Predicts the probability that an image is Not Safe For Work (NSFW) "
+                "using a Vision Transformer (ViT) fine-tuned classifier. "
+                "Scores close to 0 are safe; scores close to 1 are likely NSFW."
+            ),
             version="1",
             metrics=(
                 MetricSpec(

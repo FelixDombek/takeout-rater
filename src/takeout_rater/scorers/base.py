@@ -54,7 +54,10 @@ class ScorerSpec:
     Attributes:
         scorer_id: Stable machine-readable identifier (e.g. ``"aesthetic"``).
         display_name: Human-readable name shown in the UI.
-        description: Short explanation of what this scorer measures.
+        description: Simplified, layman-friendly explanation shown by default in the UI.
+        technical_description: Concise technical description for readers familiar with
+            image-quality algorithms (e.g. cites the paper, algorithm, or metric formula).
+            Shown when the user toggles to "Technical" mode on the Scoring page.
         version: Implementation version string (e.g. ``"1"``).  Increment this
             whenever the scoring algorithm changes in a way that would produce
             different scores for the same image, so that previously scored
@@ -68,6 +71,7 @@ class ScorerSpec:
     scorer_id: str
     display_name: str
     description: str = ""
+    technical_description: str = ""
     version: str = "1"
     metrics: tuple[MetricSpec, ...] = field(default_factory=tuple)
     variants: tuple[VariantSpec, ...] = field(default_factory=tuple)

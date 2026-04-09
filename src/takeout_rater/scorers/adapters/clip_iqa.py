@@ -77,6 +77,11 @@ class CLIPIQAScorer(BaseScorer):
                 "'Good photo.' and 'Bad photo.' and reports how strongly the image resembles "
                 "the good one. Requires the aesthetic scorer's CLIP model (~900 MB)."
             ),
+            technical_description=(
+                "Estimates perceptual image quality using zero-shot CLIP text–image "
+                "similarity. The score is the softmax probability that the image "
+                "matches 'Good photo.' over 'Bad photo.' using CLIP ViT-L/14."
+            ),
             version="1",
             metrics=(
                 MetricSpec(

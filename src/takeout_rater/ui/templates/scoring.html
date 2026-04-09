@@ -82,6 +82,34 @@
     margin-bottom: 0.75rem;
     line-height: 1.55;
   }
+  .scorer-desc.technical { color: #444; font-style: italic; }
+
+  .desc-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .desc-toggle-wrap span { font-size: 0.8rem; color: #666; }
+  .desc-toggle {
+    display: inline-flex;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    overflow: hidden;
+    font-size: 0.78rem;
+  }
+  .desc-toggle button {
+    padding: 0.2rem 0.6rem;
+    border: none;
+    background: #fff;
+    color: #555;
+    cursor: pointer;
+    font-size: inherit;
+  }
+  .desc-toggle button.active {
+    background: #1a5cdb;
+    color: #fff;
+  }
 
   .scorer-variants {
     display: flex;
@@ -184,6 +212,15 @@
     <a href="/assets">browse view</a>.
   </p>
 
+  <!-- ── Description mode toggle ────────────────────────────────────────── -->
+  <div class="desc-toggle-wrap">
+    <span>Descriptions:</span>
+    <div class="desc-toggle" id="desc-toggle">
+      <button id="btn-desc-simple" class="active" onclick="setDescMode('simple')">Simple</button>
+      <button id="btn-desc-technical" onclick="setDescMode('technical')">Technical</button>
+    </div>
+  </div>
+
   <!-- ── Run all ─────────────────────────────────────────────────────────── -->
   <div class="run-all-card">
     <p>Run every available scorer in sequence over unscored photos.</p>
@@ -210,6 +247,7 @@
   var scorers = [];        // full scorer metadata from API
   var _poller = null;      // interval handle for status polling
   var _jobStats = {};      // {startTime, startProcessed}
+  var _descMode = 'simple';  // 'simple' | 'technical'
 
   // ---------------------------------------------------------------------------
   // Bootstrap: load scorer list then start polling
@@ -298,10 +336,15 @@
 
     card.appendChild(header);
 
-    // Description
+    // Description (stores both texts on the element)
     var desc = document.createElement('p');
     desc.className = 'scorer-desc';
-    desc.textContent = s.description;
+    desc.dataset.simple = s.description || '';
+    desc.dataset.technical = s.technical_description || s.description || '';
+    desc.textContent = _descMode === 'technical'
+      ? (desc.dataset.technical || desc.dataset.simple)
+      : desc.dataset.simple;
+    if (_descMode === 'technical') desc.classList.add('technical');
     card.appendChild(desc);
 
     // Variants selector (only when multiple variants)
@@ -517,6 +560,23 @@
       }, 8000);
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Description mode toggle
+  // ---------------------------------------------------------------------------
+
+  window.setDescMode = function (mode) {
+    _descMode = mode;
+    document.getElementById('btn-desc-simple').classList.toggle('active', mode === 'simple');
+    document.getElementById('btn-desc-technical').classList.toggle('active', mode === 'technical');
+    document.querySelectorAll('.scorer-desc').forEach(function (el) {
+      var text = mode === 'technical'
+        ? (el.dataset.technical || el.dataset.simple || '')
+        : (el.dataset.simple || '');
+      el.textContent = text;
+      el.classList.toggle('technical', mode === 'technical');
+    });
+  };
 
   // ---------------------------------------------------------------------------
   // Actions

@@ -44,6 +44,11 @@ class BRISQUEScorer(BaseScorer):
                 "needing a reference image. Photos that match natural image statistics score "
                 "higher. The model parameters are built in, so no download is required."
             ),
+            technical_description=(
+                "Estimates perceptual image quality using BRISQUE (Blind/Referenceless "
+                "Image Spatial Quality Evaluator). Detects compression artefacts, "
+                "noise, and blur from local luminance statistics — no ML model required."
+            ),
             version="1",
             metrics=(
                 MetricSpec(

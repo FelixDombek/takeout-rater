@@ -90,6 +90,8 @@ def test_list_scorers_returns_200(client_no_db: TestClient) -> None:
         assert "id" in item
         assert "name" in item
         assert "available" in item
+        assert "description" in item
+        assert "technical_description" in item
 
 
 # ---------------------------------------------------------------------------

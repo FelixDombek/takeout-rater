@@ -285,8 +285,8 @@ def start_index_job(request: Request) -> JSONResponse:
 def list_available_scorers() -> JSONResponse:
     """Return a list of scorers with metadata for the Scoring page.
 
-    Each item has ``id``, ``name``, ``description``, ``version``,
-    ``available``, and ``variants`` fields.
+    Each item has ``id``, ``name``, ``description``, ``technical_description``,
+    ``version``, ``available``, and ``variants`` fields.
     """
     from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
 
@@ -298,6 +298,7 @@ def list_available_scorers() -> JSONResponse:
                 "id": spec.scorer_id,
                 "name": spec.display_name,
                 "description": spec.description,
+                "technical_description": spec.technical_description,
                 "version": spec.version,
                 "available": cls.is_available(),
                 "requires_extras": list(spec.requires_extras),

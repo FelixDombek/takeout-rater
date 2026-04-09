@@ -35,6 +35,10 @@ class BlurScorer(BaseScorer):
                 "blurry ones. No model download required — runs entirely on the CPU using "
                 "standard image processing."
             ),
+            technical_description=(
+                "Estimates image focus using the variance of the FIND_EDGES filter output. "
+                "Higher sharpness means the image is more in-focus."
+            ),
             version="1",
             metrics=(
                 MetricSpec(

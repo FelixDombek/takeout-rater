@@ -35,6 +35,12 @@ class LuminosityScorer(BaseScorer):
                 "washed-out photo scores low on brightness; a flat, single-colour image scores "
                 "low on contrast. No model download required."
             ),
+            technical_description=(
+                "Measures the overall brightness (mean luminance) and contrast "
+                "(greyscale standard deviation) of an image. Both metrics are "
+                "computed from the greyscale representation using Pillow and "
+                "require no ML model."
+            ),
             version="1",
             metrics=(
                 MetricSpec(
