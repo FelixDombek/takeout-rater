@@ -619,20 +619,19 @@ def test_asset_detail_shows_sidecar_json_panel(tmp_path: Path) -> None:
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
-    assert "Raw metadata" in resp.text
     assert "imageViews" in resp.text
     assert "https://photos.google.com/x" in resp.text
 
 
 def test_asset_detail_no_sidecar_panel_when_missing(tmp_path: Path) -> None:
-    """Detail page should NOT show the raw metadata panel when no sidecar is indexed."""
+    """Detail page should show 'No sidecar JSON available' when no sidecar is indexed."""
     conn = _make_db()
     asset_id = _add_asset(conn, "Photos/nosidecar.jpg")
     app = create_app(tmp_path, conn)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
-    assert "Raw metadata" not in resp.text
+    assert "No sidecar JSON available" in resp.text
 
 
 def test_asset_detail_shows_duplicate_sidecar_panels(tmp_path: Path) -> None:
