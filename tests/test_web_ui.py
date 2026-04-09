@@ -7,16 +7,12 @@ import time
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
-pytest.importorskip("fastapi")
-pytest.importorskip("httpx")
-
-from fastapi.testclient import TestClient  # noqa: E402
-
-from takeout_rater.clustering.builder import build_clusters  # noqa: E402
-from takeout_rater.db.queries import upsert_asset, upsert_phash  # noqa: E402
-from takeout_rater.db.schema import migrate  # noqa: E402
-from takeout_rater.ui.app import create_app  # noqa: E402
+from takeout_rater.clustering.builder import build_clusters
+from takeout_rater.db.queries import upsert_asset, upsert_phash
+from takeout_rater.db.schema import migrate
+from takeout_rater.ui.app import create_app
 
 
 def _make_db() -> sqlite3.Connection:
@@ -239,7 +235,6 @@ def test_thumbnail_not_found_returns_404(client: TestClient) -> None:
 
 def test_thumbnail_serves_jpeg(tmp_path: Path) -> None:
     """When a thumbnail file exists, it should be served with image/jpeg content-type."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415

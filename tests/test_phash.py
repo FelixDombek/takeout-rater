@@ -41,7 +41,6 @@ def _make_thumbnail(
     thumbs_dir: Path, asset_id: int, color: tuple[int, int, int] = (100, 150, 200)
 ) -> Path:
     """Create a minimal JPEG thumbnail and return its path."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
@@ -56,7 +55,6 @@ def _make_thumbnail(
 
 
 def test_compute_dhash_returns_hex_string(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -68,7 +66,6 @@ def test_compute_dhash_returns_hex_string(tmp_path: Path) -> None:
 
 
 def test_compute_dhash_hex_chars_only(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -79,7 +76,6 @@ def test_compute_dhash_hex_chars_only(tmp_path: Path) -> None:
 
 
 def test_compute_dhash_identical_images_match(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     img = Image.new("RGB", (64, 64), color=(200, 100, 50))
@@ -92,7 +88,6 @@ def test_compute_dhash_identical_images_match(tmp_path: Path) -> None:
 
 
 def test_compute_dhash_different_images_differ(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     Image.new("RGB", (64, 64), color=(0, 0, 0)).save(tmp_path / "black.jpg", "JPEG")
@@ -109,7 +104,6 @@ def test_compute_dhash_different_images_differ(tmp_path: Path) -> None:
 
 
 def test_compute_dhash_missing_file_raises(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     with pytest.raises(OSError):
         compute_dhash(tmp_path / "nonexistent.jpg")
 
@@ -140,7 +134,6 @@ def test_hamming_distance_symmetric() -> None:
 
 
 def test_compute_phash_all_returns_count(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
@@ -152,7 +145,6 @@ def test_compute_phash_all_returns_count(tmp_path: Path) -> None:
 
 
 def test_compute_phash_all_stores_hashes(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     asset_id = _add_asset(conn)
@@ -167,7 +159,6 @@ def test_compute_phash_all_stores_hashes(tmp_path: Path) -> None:
 
 
 def test_compute_phash_all_skips_missing_thumbnails(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     _add_asset(conn)  # no thumbnail created
@@ -177,7 +168,6 @@ def test_compute_phash_all_skips_missing_thumbnails(tmp_path: Path) -> None:
 
 
 def test_compute_phash_all_skips_already_hashed(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
@@ -194,7 +184,6 @@ def test_compute_phash_all_skips_already_hashed(tmp_path: Path) -> None:
 
 
 def test_compute_phash_all_progress_callback(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     for i in range(4):
@@ -214,7 +203,6 @@ def test_compute_phash_all_progress_callback(tmp_path: Path) -> None:
 
 
 def test_compute_phash_all_on_item_callback(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     aids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]

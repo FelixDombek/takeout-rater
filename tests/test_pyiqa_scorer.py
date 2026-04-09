@@ -135,7 +135,6 @@ def test_score_batch_empty_returns_empty() -> None:
 
 def _make_mock_scorer(raw_score: float = 70.0, variant_id: str = "musiq") -> PyIQAScorer:
     """Return a PyIQAScorer with a mocked pyiqa metric that returns *raw_score*."""
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
 
     scorer = PyIQAScorer.create(variant_id=variant_id)

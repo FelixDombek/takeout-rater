@@ -66,7 +66,6 @@ def test_score_batch_missing_file_returns_zeros(tmp_path: Path) -> None:
 
 
 def test_score_batch_real_image_range(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     p = tmp_path / "test.jpg"
@@ -80,7 +79,6 @@ def test_score_batch_real_image_range(tmp_path: Path) -> None:
 
 
 def test_dark_image_lower_brightness_than_bright(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     dark = tmp_path / "dark.jpg"
@@ -95,7 +93,6 @@ def test_dark_image_lower_brightness_than_bright(tmp_path: Path) -> None:
 
 
 def test_uniform_image_lower_contrast_than_gradient(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     uniform = tmp_path / "uniform.jpg"
@@ -116,7 +113,6 @@ def test_uniform_image_lower_contrast_than_gradient(tmp_path: Path) -> None:
 
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     paths = []
@@ -134,7 +130,6 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 
 def test_score_one(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     p = tmp_path / "img.jpg"

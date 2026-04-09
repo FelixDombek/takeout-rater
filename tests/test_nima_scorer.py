@@ -152,7 +152,6 @@ def test_score_batch_missing_file_returns_one(tmp_path: Path) -> None:
 
 def _make_mock_scorer(fixed_score: float = 7.0, variant_id: str = "aesthetic") -> NIMAScorer:
     """Return a NIMAScorer whose model outputs a fixed expected score."""
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
     import torchvision.transforms as T  # noqa: PLC0415
 
