@@ -42,10 +42,18 @@ class BRISQUEScorer(BaseScorer):
             scorer_id="brisque",
             display_name="BRISQUE Quality",
             description=(
+                "Uses a statistical model of what natural, undistorted images look like to "
+                "spot distortions such as blur, noise, and compression artefacts — without "
+                "needing a reference image. Photos that match natural image statistics score "
+                "higher. The algorithm parameters are pre-fitted and built in, so no download "
+                "is required."
+            ),
+            technical_description=(
                 "Estimates perceptual image quality using BRISQUE (Blind/Referenceless "
-                "Image Spatial Quality Evaluator).  Detects compression artefacts, "
+                "Image Spatial Quality Evaluator). Detects compression artefacts, "
                 "noise, and blur from local luminance statistics — no ML model required."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="brisque_quality",

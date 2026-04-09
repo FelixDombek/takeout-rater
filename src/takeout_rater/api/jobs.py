@@ -27,7 +27,7 @@ POST /api/jobs/rescan/start      – start library rescan (update indexer_versio
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -60,8 +60,12 @@ class JobProgress:
         current_item: Current item being processed (e.g., directory path for
             ``"index"`` / ``"rescan"``, file path for ``"rehash"``).  Empty
             string if unavailable or not applicable for the job type.
+        current_scorer_id: For the ``"score"`` job, the scorer currently being
+            run.  Empty string when no specific scorer is active.
         job_type: One of ``"index"``, ``"score"``, ``"cluster"``,
             ``"export"``, ``"rehash"``, ``"rescan"``.
+        cancel_event: Set this event to request cancellation of the running
+            job.  The worker checks it between batches and exits early.
     """
 
     job_type: str = ""
@@ -72,6 +76,8 @@ class JobProgress:
     processed: int = 0
     total: int = 0
     current_item: str = ""
+    current_scorer_id: str = ""
+    cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
 def _get_jobs(app: object) -> dict[str, JobProgress]:
@@ -93,6 +99,8 @@ def _job_status_dict(p: JobProgress) -> dict:
         "processed": p.processed,
         "total": p.total,
         "current_item": p.current_item,
+        "current_scorer_id": p.current_scorer_id,
+        "cancelled": p.cancel_event.is_set(),
     }
 
 
@@ -140,6 +148,8 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "processed": 0,
                     "total": 0,
                     "current_item": "",
+                    "current_scorer_id": "",
+                    "cancelled": False,
                 }
             )
         return JSONResponse(_job_status_dict(p))
@@ -159,6 +169,8 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "processed": 0,
                     "total": 0,
                     "current_item": "",
+                    "current_scorer_id": "",
+                    "cancelled": False,
                 }
             )
         else:
@@ -271,9 +283,10 @@ def start_index_job(request: Request) -> JSONResponse:
 
 @router.get("/api/jobs/scorers")
 def list_available_scorers() -> JSONResponse:
-    """Return a list of available scorers.
+    """Return a list of scorers with metadata for the Scoring page.
 
-    Each item has ``id`` and ``name`` fields.
+    Each item has ``id``, ``name``, ``description``, ``technical_description``,
+    ``version``, ``available``, and ``variants`` fields.
     """
     from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
 
@@ -284,7 +297,15 @@ def list_available_scorers() -> JSONResponse:
             {
                 "id": spec.scorer_id,
                 "name": spec.display_name,
+                "description": spec.description,
+                "technical_description": spec.technical_description,
+                "version": spec.version,
                 "available": cls.is_available(),
+                "requires_extras": list(spec.requires_extras),
+                "variants": [
+                    {"id": v.variant_id, "name": v.display_name, "description": v.description}
+                    for v in spec.variants
+                ],
             }
         )
     return JSONResponse(result)
@@ -371,7 +392,10 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
 
             total_scorers = len(scorer_ids)
             for idx, sid in enumerate(scorer_ids):
+                if progress.cancel_event.is_set():
+                    break
                 _scorer_label = f"{sid!r} ({idx + 1}/{total_scorers})"
+                progress.current_scorer_id = sid
                 progress.message = f"Scoring with {_scorer_label}…"
                 progress.processed = 0
                 progress.total = 0
@@ -387,9 +411,14 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                     thumbs_dir,
                     skip_existing=not rerun,
                     on_progress=_cb,
+                    cancel_check=progress.cancel_event.is_set,
                 )
 
-            progress.message = "Scoring complete."
+            progress.current_scorer_id = ""
+            if progress.cancel_event.is_set():
+                progress.message = "Scoring cancelled."
+            else:
+                progress.message = "Scoring complete."
             progress.current_item = ""
             progress.running = False
             progress.done = True
@@ -397,6 +426,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             progress.error = str(exc)
             progress.message = f"Error: {exc}"
             progress.current_item = ""
+            progress.current_scorer_id = ""
             progress.running = False
             progress.done = True
         finally:
@@ -406,6 +436,26 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     thread.start()
 
     return JSONResponse({"status": "started"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/score/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/score/cancel")
+def cancel_score_job(request: Request) -> JSONResponse:
+    """Request cancellation of the currently running score job.
+
+    Sets the cancel event on the running job so the worker exits after the
+    current batch completes.  Returns ``404`` if no score job is running.
+    """
+    jobs = _get_jobs(request.app)
+    p = jobs.get("score")
+    if p is None or not p.running:
+        raise HTTPException(status_code=404, detail="No score job is currently running.")
+    p.cancel_event.set()
+    return JSONResponse({"status": "cancelling"})
 
 
 # ---------------------------------------------------------------------------

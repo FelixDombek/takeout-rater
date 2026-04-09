@@ -30,9 +30,16 @@ class BlurScorer(BaseScorer):
             scorer_id="blur",
             display_name="Blur / Sharpness",
             description=(
-                "Estimates image focus using the variance of the FIND_EDGES filter output.  "
+                "Detects how sharp or blurry a photo is. It looks for abrupt changes between "
+                "neighboring pixels (edges), which are abundant in sharp photos and absent in "
+                "blurry ones. No model download required — runs entirely on the CPU using "
+                "standard image processing."
+            ),
+            technical_description=(
+                "Estimates image focus using the variance of the FIND_EDGES filter output. "
                 "Higher sharpness means the image is more in-focus."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="sharpness",

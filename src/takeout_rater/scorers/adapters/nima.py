@@ -124,11 +124,19 @@ class NIMAScorer(BaseScorer):
             scorer_id="nima",
             display_name="NIMA Quality",
             description=(
-                "Neural Image Assessment (NIMA, Google 2018).  Predicts the mean "
+                "Neural Image Assessment (NIMA) predicts how human viewers would rate a photo "
+                "on a 1–10 scale, using a compact neural network (MobileNet-V2) trained on "
+                "professional photo ratings. Two variants: aesthetic quality (composition, "
+                "lighting, colour) and technical quality (sharpness, noise, exposure). "
+                "Requires ~20 MB model download per variant."
+            ),
+            technical_description=(
+                "Neural Image Assessment (NIMA, Google 2018). Predicts the mean "
                 "human rating of image quality on a 1–10 scale using a MobileNet-V2 "
-                "backbone.  Two variants: aesthetic quality (AVA dataset) and "
+                "backbone. Two variants: aesthetic quality (AVA dataset) and "
                 "technical quality (TID2013 / KADID-10k)."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="nima_score",

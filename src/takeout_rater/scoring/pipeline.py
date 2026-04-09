@@ -92,6 +92,7 @@ def run_scorer(
     batch_size: int = 32,
     skip_existing: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """Run *scorer* over assets and persist the results to the library DB.
 
@@ -116,6 +117,10 @@ def run_scorer(
             first metric as the primary "scored" indicator.
         on_progress: Optional callback invoked after each batch with
             ``(scored_so_far, total)`` integers.
+        cancel_check: Optional callable that returns ``True`` when the run
+            should be aborted.  Checked after each batch; when it returns
+            ``True`` the loop exits early and the scorer run is still finalised
+            in the DB.
 
     Returns:
         The integer primary key of the new ``scorer_runs`` row.
@@ -136,7 +141,7 @@ def run_scorer(
             stream_all_assets = True
 
     # Create scorer run record
-    run_id = insert_scorer_run(conn, scorer_id, variant_id)
+    run_id = insert_scorer_run(conn, scorer_id, variant_id, scorer_version=spec.version)
 
     try:
         if stream_all_assets:
@@ -147,6 +152,8 @@ def run_scorer(
 
             id_cur = conn.execute("SELECT id FROM assets ORDER BY id")
             while True:
+                if cancel_check is not None and cancel_check():
+                    break
                 id_rows = id_cur.fetchmany(batch_size)
                 if not id_rows:
                     break
@@ -181,6 +188,8 @@ def run_scorer(
             scored = 0
 
             for batch_start in range(0, total, batch_size):
+                if cancel_check is not None and cancel_check():
+                    break
                 batch_ids = asset_ids[batch_start : batch_start + batch_size]
 
                 # Build (asset_id, thumb_path) pairs, skipping missing thumbnails
@@ -222,6 +231,7 @@ def run_scorer_by_id(
     batch_size: int = 32,
     skip_existing: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """Look up *scorer_id* in the registry and call :func:`run_scorer`.
 
@@ -234,6 +244,7 @@ def run_scorer_by_id(
         batch_size: Batch size (see :func:`run_scorer`).
         skip_existing: Skip already-scored assets (see :func:`run_scorer`).
         on_progress: Progress callback (see :func:`run_scorer`).
+        cancel_check: Optional cancel callback (see :func:`run_scorer`).
 
     Returns:
         The ``scorer_runs`` run ID.
@@ -262,4 +273,5 @@ def run_scorer_by_id(
         batch_size=batch_size,
         skip_existing=skip_existing,
         on_progress=on_progress,
+        cancel_check=cancel_check,
     )

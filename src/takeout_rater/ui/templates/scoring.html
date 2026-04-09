@@ -1,0 +1,638 @@
+{% extends "base.html" %}
+
+{% block title %}Scoring – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .scoring-page { max-width: 860px; margin: 0 auto; }
+  .scoring-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .scoring-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
+
+  .scoring-top-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.75rem;
+    flex-wrap: wrap;
+  }
+  .scoring-top-bar .label { color: #555; font-size: 0.875rem; flex: 1; }
+
+  .scorer-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.1rem 1.4rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    transition: border-color 0.2s;
+  }
+  .scorer-card.running  { border-color: #93c5fd; }
+  .scorer-card.unavailable { opacity: 0.65; }
+
+  .scorer-card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    margin-bottom: 0.5rem;
+  }
+  .scorer-card-title {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .scorer-card-title h2 {
+    font-size: 0.975rem;
+    font-weight: 600;
+    margin: 0;
+  }
+  .badge-version {
+    display: inline-block;
+    background: #f0f4ff;
+    color: #3b4ea6;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .badge-unavailable {
+    display: inline-block;
+    background: #fff0f0;
+    color: #b91c1c;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  .badge-running {
+    display: inline-block;
+    background: #dbeafe;
+    color: #1e40af;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+
+  .scorer-desc {
+    color: #555;
+    font-size: 0.875rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.55;
+  }
+  .scorer-desc.technical { color: #444; font-style: italic; }
+
+  .desc-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .desc-toggle-wrap span { font-size: 0.8rem; color: #666; }
+  .desc-toggle {
+    display: inline-flex;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    overflow: hidden;
+    font-size: 0.78rem;
+  }
+  .desc-toggle button {
+    padding: 0.2rem 0.6rem;
+    border: none;
+    background: #fff;
+    color: #555;
+    cursor: pointer;
+    font-size: inherit;
+  }
+  .desc-toggle button.active {
+    background: #1a5cdb;
+    color: #fff;
+  }
+
+  .scorer-variants {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .scorer-variants label { font-size: 0.8rem; color: #555; }
+  .scorer-variants select {
+    font-size: 0.8rem;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+  }
+  .scorer-options {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .scorer-options label { font-size: 0.8rem; color: #555; }
+
+  .progress-bar-wrap {
+    height: 5px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    margin-top: 0.35rem;
+    display: none;
+  }
+  .progress-bar-wrap.visible { display: block; }
+  .progress-bar {
+    height: 100%;
+    background: #1a5cdb;
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  .scorer-status {
+    font-size: 0.8rem;
+    margin-top: 0.35rem;
+    min-height: 1.2em;
+    color: #444;
+  }
+  .scorer-status.ok    { color: #1e7e34; }
+  .scorer-status.error { color: #c0392b; }
+  .scorer-status.info  { color: #1a5cdb; }
+
+  .scorer-current-item {
+    font-size: 0.72rem;
+    color: #888;
+    margin-top: 0.15rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    min-height: 1em;
+  }
+
+  .btn-cancel {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: #fca5a5;
+  }
+  .btn-cancel:hover { background: #fee2e2; }
+
+  /* global run-all area */
+  .run-all-card {
+    background: #f0f4ff;
+    border: 1px solid #bfcfff;
+    border-radius: 8px;
+    padding: 1rem 1.4rem;
+    margin-bottom: 1.75rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .run-all-card p { flex: 1; font-size: 0.875rem; color: #444; margin: 0; }
+
+  .run-all-options {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .run-all-options label { font-size: 0.8rem; color: #555; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="scoring-page">
+  <h1>🎯 Scoring</h1>
+  <p class="subtitle">
+    Run image-quality scorers over your library. Each scorer analyses photos in the
+    background and stores the results so you can filter and sort by score in the
+    <a href="/assets">browse view</a>.
+  </p>
+
+  <!-- ── Description mode toggle ────────────────────────────────────────── -->
+  <div class="desc-toggle-wrap">
+    <span>Descriptions:</span>
+    <div class="desc-toggle" id="desc-toggle">
+      <button id="btn-desc-simple" class="active" onclick="setDescMode('simple')">Simple</button>
+      <button id="btn-desc-technical" onclick="setDescMode('technical')">Technical</button>
+    </div>
+  </div>
+
+  <!-- ── Run all ─────────────────────────────────────────────────────────── -->
+  <div class="run-all-card">
+    <p>Run every available scorer in sequence over unscored photos.</p>
+    <div class="run-all-options">
+      <label>
+        <input type="checkbox" id="global-rerun"> Re-score already-scored photos
+      </label>
+    </div>
+    <button class="btn btn-primary" id="btn-run-all" onclick="runAllScorers()">
+      ▶ Run all scorers
+    </button>
+    <button class="btn btn-cancel" id="btn-cancel-all" style="display:none;"
+            onclick="cancelScoring()">
+      ✕ Cancel
+    </button>
+  </div>
+
+  <!-- ── Scorer list (populated by JS) ──────────────────────────────────── -->
+  <div id="scorer-list"></div>
+</div>
+
+<script>
+(function () {
+  var scorers = [];        // full scorer metadata from API
+  var _poller = null;      // interval handle for status polling
+  var _jobStats = {};      // {startTime, startProcessed}
+  var _descMode = 'simple';  // 'simple' | 'technical'
+
+  // ---------------------------------------------------------------------------
+  // Bootstrap: load scorer list then start polling
+  // ---------------------------------------------------------------------------
+
+  fetch('/api/jobs/scorers')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      scorers = data;
+      renderScorerList();
+      pollStatus();  // immediate first poll
+      _poller = setInterval(pollStatus, 1000);
+    })
+    .catch(function (err) {
+      document.getElementById('scorer-list').innerHTML =
+        '<p style="color:#b91c1c">Failed to load scorers: ' + err.message + '</p>';
+    });
+
+  // ---------------------------------------------------------------------------
+  // Render scorer cards
+  // ---------------------------------------------------------------------------
+
+  function renderScorerList() {
+    var container = document.getElementById('scorer-list');
+    container.innerHTML = '';
+    scorers.forEach(function (s) {
+      container.appendChild(makeScorerCard(s));
+    });
+  }
+
+  function makeScorerCard(s) {
+    var card = document.createElement('div');
+    card.className = 'scorer-card' + (s.available ? '' : ' unavailable');
+    card.id = 'scorer-card-' + s.id;
+
+    // Header row
+    var header = document.createElement('div');
+    header.className = 'scorer-card-header';
+
+    var titleWrap = document.createElement('div');
+    titleWrap.className = 'scorer-card-title';
+    var h2 = document.createElement('h2');
+    h2.textContent = s.name;
+    titleWrap.appendChild(h2);
+
+    var vBadge = document.createElement('span');
+    vBadge.className = 'badge-version';
+    vBadge.textContent = 'v' + s.version;
+    titleWrap.appendChild(vBadge);
+
+    if (!s.available) {
+      var uBadge = document.createElement('span');
+      uBadge.className = 'badge-unavailable';
+      uBadge.textContent = 'unavailable';
+      uBadge.title = s.requires_extras.length
+        ? 'Requires extras: ' + s.requires_extras.join(', ')
+        : 'Missing dependencies';
+      titleWrap.appendChild(uBadge);
+    }
+
+    var runBadge = document.createElement('span');
+    runBadge.className = 'badge-running';
+    runBadge.id = 'badge-' + s.id;
+    runBadge.textContent = 'Running\u2026';
+    runBadge.style.display = 'none';
+    titleWrap.appendChild(runBadge);
+
+    header.appendChild(titleWrap);
+
+    // Run / Cancel button
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.id = 'btn-' + s.id;
+    btn.textContent = '\u25b6 Run';
+    btn.disabled = !s.available;
+    btn.onclick = function () { runScorer(s.id); };
+    header.appendChild(btn);
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-cancel';
+    cancelBtn.id = 'cancel-btn-' + s.id;
+    cancelBtn.textContent = '\u2715 Cancel';
+    cancelBtn.style.display = 'none';
+    cancelBtn.onclick = function () { cancelScoring(); };
+    header.appendChild(cancelBtn);
+
+    card.appendChild(header);
+
+    // Description (stores both texts on the element)
+    var desc = document.createElement('p');
+    desc.className = 'scorer-desc';
+    desc.dataset.simple = s.description || '';
+    desc.dataset.technical = s.technical_description || s.description || '';
+    _applyDescMode(desc);
+    card.appendChild(desc);
+
+    // Variants selector (only when multiple variants)
+    if (s.variants && s.variants.length > 1) {
+      var varRow = document.createElement('div');
+      varRow.className = 'scorer-variants';
+      var varLabel = document.createElement('label');
+      varLabel.textContent = 'Variant:';
+      varLabel.htmlFor = 'variant-' + s.id;
+      varRow.appendChild(varLabel);
+      var varSel = document.createElement('select');
+      varSel.id = 'variant-' + s.id;
+      s.variants.forEach(function (v) {
+        var opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.name;
+        if (v.description) opt.title = v.description;
+        varSel.appendChild(opt);
+      });
+      varRow.appendChild(varSel);
+      card.appendChild(varRow);
+    }
+
+    // Re-score checkbox
+    var optRow = document.createElement('div');
+    optRow.className = 'scorer-options';
+    var rerunLabel = document.createElement('label');
+    var rerunCb = document.createElement('input');
+    rerunCb.type = 'checkbox';
+    rerunCb.id = 'rerun-' + s.id;
+    rerunLabel.appendChild(rerunCb);
+    rerunLabel.appendChild(document.createTextNode(' Re-score already-scored photos'));
+    optRow.appendChild(rerunLabel);
+    card.appendChild(optRow);
+
+    // Progress bar
+    var pbWrap = document.createElement('div');
+    pbWrap.className = 'progress-bar-wrap';
+    pbWrap.id = 'prog-wrap-' + s.id;
+    var pb = document.createElement('div');
+    pb.className = 'progress-bar';
+    pb.id = 'prog-bar-' + s.id;
+    pbWrap.appendChild(pb);
+    card.appendChild(pbWrap);
+
+    // Current item
+    var ci = document.createElement('div');
+    ci.className = 'scorer-current-item';
+    ci.id = 'current-item-' + s.id;
+    card.appendChild(ci);
+
+    // Status line
+    var st = document.createElement('div');
+    st.className = 'scorer-status';
+    st.id = 'status-' + s.id;
+    card.appendChild(st);
+
+    return card;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Poll /api/jobs/status?job_type=score and distribute to cards
+  // ---------------------------------------------------------------------------
+
+  function pollStatus() {
+    fetch('/api/jobs/status?job_type=score')
+      .then(function (r) { return r.json(); })
+      .then(function (data) { applyState(data); })
+      .catch(function () { /* ignore transient errors */ });
+  }
+
+  function _formatEta(seconds) {
+    if (seconds < 60) return seconds + 's';
+    var m = Math.floor(seconds / 60);
+    var s = seconds % 60;
+    return m + 'm\u202f' + (s < 10 ? '0' : '') + s + 's';
+  }
+
+  function applyState(data) {
+    var running = data.running;
+    var activeSid = data.current_scorer_id || '';
+    var cancelled = data.cancelled || false;
+
+    // Update run-all buttons
+    var btnAll = document.getElementById('btn-run-all');
+    var cancelAll = document.getElementById('btn-cancel-all');
+    if (btnAll) {
+      btnAll.disabled = running;
+      btnAll.style.display = running ? 'none' : '';
+    }
+    if (cancelAll) {
+      cancelAll.style.display = running ? '' : 'none';
+    }
+
+    // Progress / ETA
+    var pct = null;
+    if (data.total > 0) {
+      pct = Math.round((data.processed / data.total) * 100);
+    }
+
+    if (running) {
+      if (!_jobStats.score) {
+        _jobStats.score = { startTime: Date.now(), startProcessed: data.processed };
+      }
+    } else {
+      delete _jobStats.score;
+    }
+
+    // Update each scorer card
+    scorers.forEach(function (s) {
+      var isThisScorer = running && activeSid === s.id;
+      var btn = document.getElementById('btn-' + s.id);
+      var cancelBtn = document.getElementById('cancel-btn-' + s.id);
+      var badge = document.getElementById('badge-' + s.id);
+      var card = document.getElementById('scorer-card-' + s.id);
+      var statusEl = document.getElementById('status-' + s.id);
+      var pbWrap = document.getElementById('prog-wrap-' + s.id);
+      var pb = document.getElementById('prog-bar-' + s.id);
+      var ciEl = document.getElementById('current-item-' + s.id);
+
+      if (!btn) return;
+
+      // Button state: disable run when any scoring is active
+      btn.disabled = running || !s.available;
+      btn.style.display = isThisScorer ? 'none' : '';
+      if (cancelBtn) {
+        cancelBtn.style.display = isThisScorer ? '' : 'none';
+      }
+      if (badge) {
+        badge.style.display = isThisScorer ? 'inline-block' : 'none';
+      }
+      if (card) {
+        card.classList.toggle('running', isThisScorer);
+      }
+
+      if (isThisScorer) {
+        // Show progress for this scorer
+        var statusMsg = data.message || 'Running\u2026';
+        var stats = _jobStats.score;
+        if (data.total > 0 && stats) {
+          var elapsed = (Date.now() - stats.startTime) / 1000;
+          var doneInSession = data.processed - stats.startProcessed;
+          if (elapsed >= 1 && doneInSession > 0) {
+            var rate = doneInSession / elapsed;
+            var eta = Math.round((data.total - data.processed) / rate);
+            statusMsg += '\u2002\u00b7\u2002' + rate.toFixed(1) + '/s';
+            if (eta > 0) statusMsg += '\u2002\u00b7\u2002ETA\u202f' + _formatEta(eta);
+          }
+        }
+        if (statusEl) { statusEl.textContent = statusMsg; statusEl.className = 'scorer-status info'; }
+        if (pbWrap && pb) {
+          pbWrap.className = 'progress-bar-wrap visible';
+          pb.style.width = (pct !== null ? Math.min(100, pct) : 0) + '%';
+        }
+        if (ciEl) ciEl.textContent = data.current_item || '';
+      } else if (!running) {
+        // Job finished — update the card that was active last
+        if (ciEl) ciEl.textContent = '';
+        if (pbWrap) {
+          // Leave final bar visible briefly; will be cleared by the card's own status
+        }
+      }
+    });
+
+    // If job just completed, show finish/cancel/error on the previously active card
+    if (!running && data.done) {
+      // We don't know which scorer finished last without extra state — show on all?
+      // Instead show a general status on the card of the last scorer (or all if global run).
+      // Since we track activeSid='' when done, we update all unavailable badges off.
+      // The global message is shown via the top run-all area instead.
+      // For individual scorers that just finished (activeSid was set before done), we
+      // clear their running card state already above. Just make sure bars reset after delay.
+      scorers.forEach(function (s) {
+        var pbWrap = document.getElementById('prog-wrap-' + s.id);
+        if (pbWrap && pbWrap.classList.contains('visible')) {
+          setTimeout(function () {
+            if (pbWrap) pbWrap.className = 'progress-bar-wrap';
+          }, 3000);
+        }
+      });
+
+      // Show done/error status in a small top notice
+      var statusArea = document.getElementById('global-status');
+      if (!statusArea) {
+        statusArea = document.createElement('div');
+        statusArea.id = 'global-status';
+        statusArea.style.cssText =
+          'font-size:0.85rem;margin-bottom:0.75rem;padding:0.5rem 0.75rem;' +
+          'border-radius:4px;border:1px solid;';
+        var runAllCard = document.querySelector('.run-all-card');
+        if (runAllCard) runAllCard.after(statusArea);
+      }
+      if (data.error) {
+        statusArea.style.color = '#b91c1c';
+        statusArea.style.borderColor = '#fca5a5';
+        statusArea.style.background = '#fef2f2';
+        statusArea.textContent = '\u2717 ' + data.error;
+      } else if (cancelled) {
+        statusArea.style.color = '#92400e';
+        statusArea.style.borderColor = '#fcd34d';
+        statusArea.style.background = '#fffbeb';
+        statusArea.textContent = data.message || 'Scoring cancelled.';
+      } else {
+        statusArea.style.color = '#1e7e34';
+        statusArea.style.borderColor = '#bbf7d0';
+        statusArea.style.background = '#f0fdf4';
+        statusArea.textContent = '\u2713 ' + (data.message || 'Scoring complete.');
+      }
+      statusArea.style.display = '';
+      clearTimeout(statusArea._hideTimer);
+      statusArea._hideTimer = setTimeout(function () {
+        if (statusArea) statusArea.style.display = 'none';
+      }, 8000);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Description mode toggle
+  // ---------------------------------------------------------------------------
+
+  /** Apply the current description mode to a single .scorer-desc element. */
+  function _applyDescMode(el) {
+    var text = _descMode === 'technical'
+      ? (el.dataset.technical || el.dataset.simple || '')
+      : (el.dataset.simple || '');
+    el.textContent = text;
+    el.classList.toggle('technical', _descMode === 'technical');
+  }
+
+  window.setDescMode = function (mode) {
+    _descMode = mode;
+    document.getElementById('btn-desc-simple').classList.toggle('active', mode === 'simple');
+    document.getElementById('btn-desc-technical').classList.toggle('active', mode === 'technical');
+    document.querySelectorAll('.scorer-desc').forEach(_applyDescMode);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Actions
+  // ---------------------------------------------------------------------------
+
+  function runScorer(scorerId) {
+    var rerunCb = document.getElementById('rerun-' + scorerId);
+    var varSel  = document.getElementById('variant-' + scorerId);
+    var body = {
+      scorer_id: scorerId,
+      rerun: rerunCb ? rerunCb.checked : false,
+    };
+    if (varSel) body.variant_id = varSel.value;
+
+    _startScoreJob(body);
+  }
+
+  window.runAllScorers = function () {
+    var globalRerun = document.getElementById('global-rerun');
+    _startScoreJob({ rerun: globalRerun ? globalRerun.checked : false });
+  };
+
+  window.cancelScoring = function () {
+    fetch('/api/jobs/score/cancel', { method: 'POST' })
+      .then(function () { /* poller will pick up the state change */ })
+      .catch(function (err) { showError('Cancel failed: ' + err.message); });
+  };
+
+  function _startScoreJob(body) {
+    // Hide any previous status notice
+    var statusArea = document.getElementById('global-status');
+    if (statusArea) statusArea.style.display = 'none';
+
+    // Reset per-scorer job stats so ETA starts fresh
+    delete _jobStats.score;
+
+    fetch('/api/jobs/score/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (d) {
+            throw new Error(d.detail || r.statusText);
+          });
+        }
+        return r.json();
+      })
+      .then(function () {
+        pollStatus();
+      })
+      .catch(function (err) {
+        showError(err.message);
+      });
+  }
+})();
+</script>
+{% endblock %}

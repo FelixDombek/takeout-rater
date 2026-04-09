@@ -129,6 +129,15 @@ def create_app(
         templates = request.app.state.templates
         return templates.TemplateResponse("jobs.html", {"request": request})
 
+    @app.get("/scoring", response_class=HTMLResponse)
+    def scoring_page(request: Request) -> HTMLResponse:
+        if request.app.state.db_conn is None:
+            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+
+            return _RR(url="/setup")  # type: ignore[return-value]
+        templates = request.app.state.templates
+        return templates.TemplateResponse("scoring.html", {"request": request})
+
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_handler(
         request: Request, exc: StarletteHTTPException

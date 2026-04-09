@@ -103,11 +103,19 @@ class PyIQAScorer(BaseScorer):
             scorer_id="pyiqa",
             display_name="IQA-PyTorch Metrics",
             description=(
+                "A family of state-of-the-art no-reference image quality metrics. "
+                "Three variants: MUSIQ (a transformer model trained on multiple quality "
+                "datasets, ~100 MB), TOPIQ (semantic-aware quality via a CLIP backbone), "
+                "and NIQE (a statistics-based approach that needs no training data). "
+                "All scores are normalised so higher means better."
+            ),
+            technical_description=(
                 "Collection of state-of-the-art no-reference image quality metrics "
-                "from the IQA-PyTorch (pyiqa) library.  Includes MUSIQ (Google, 2021), "
-                "TOPIQ-NR (2024), and NIQE (2013).  All scores are normalised to "
+                "from the IQA-PyTorch (pyiqa) library. Includes MUSIQ (Google, 2021), "
+                "TOPIQ-NR (2024), and NIQE (2013). All scores are normalised to "
                 "[0, 1] with higher values indicating better quality."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="iqa_quality",

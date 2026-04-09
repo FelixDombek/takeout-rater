@@ -141,11 +141,18 @@ class AestheticScorer(BaseScorer):
             scorer_id="aesthetic",
             display_name="Aesthetic Score",
             description=(
+                "Predicts how aesthetically pleasing a photo looks to human viewers, "
+                "using a neural network trained on crowd-sourced ratings from the AVA photo "
+                "competition. Higher scores indicate compositions, lighting, and colour "
+                "balance that people tend to rate highly. Requires ~900 MB CLIP model download."
+            ),
+            technical_description=(
                 "Predicts the aesthetic quality of an image using the LAION Aesthetic "
                 "Predictor v2. The model uses CLIP ViT-L/14 embeddings and a small MLP "
                 "trained on LAION, SAC, and AVA datasets. Scores range from 0 (poor) "
                 "to 10 (excellent)."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="aesthetic",

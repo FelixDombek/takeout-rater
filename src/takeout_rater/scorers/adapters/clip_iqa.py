@@ -72,10 +72,17 @@ class CLIPIQAScorer(BaseScorer):
             scorer_id="clip_iqa",
             display_name="CLIP-IQA Quality",
             description=(
+                "Uses a language-vision model (CLIP) to estimate photo quality without any "
+                "task-specific training. It compares the image against the text descriptions "
+                "'Good photo.' and 'Bad photo.' and reports how strongly the image resembles "
+                "the good one. Requires the aesthetic scorer's CLIP model (~900 MB)."
+            ),
+            technical_description=(
                 "Estimates perceptual image quality using zero-shot CLIP text–image "
-                "similarity.  The score is the softmax probability that the image "
+                "similarity. The score is the softmax probability that the image "
                 "matches 'Good photo.' over 'Bad photo.' using CLIP ViT-L/14."
             ),
+            version="1",
             metrics=(
                 MetricSpec(
                     key="clip_quality",
