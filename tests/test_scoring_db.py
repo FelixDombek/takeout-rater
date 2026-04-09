@@ -157,6 +157,8 @@ def test_get_asset_scores_no_duplicates_across_runs() -> None:
     assert len(scores) == 1
     assert scores[0]["value"] == pytest.approx(99.0)
 
+
+def test_bulk_insert_asset_scores_multiple() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
     run_id = insert_scorer_run(conn, "blur", "default")
