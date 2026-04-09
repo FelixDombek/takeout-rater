@@ -101,7 +101,8 @@ class BRISQUEScorer(BaseScorer):
         defaults to ``0.0`` (worst quality) rather than raising an exception.
         The failure is logged at WARNING level with the scorer name and asset
         path to help diagnose edge-case images (e.g. fully uniform images that
-        cause an ``AssertionError`` inside ``piq._aggd_parameters``).
+        cause an ``AssertionError`` inside ``piq._aggd_parameters`` when no
+        pairwise MSCN products are negative).
 
         Args:
             image_paths: Absolute paths to image files.
@@ -126,7 +127,7 @@ class BRISQUEScorer(BaseScorer):
                 # Clamp and invert: 0 raw → 100 quality; 100 raw → 0 quality
                 raw_clamped = max(0.0, min(_RAW_MAX, raw))
                 quality = _RAW_MAX - raw_clamped
-            except Exception as exc:  # noqa: BLE001
+            except (OSError, ValueError, RuntimeError, AssertionError) as exc:  # noqa: BLE001
                 _logger.warning(
                     "Scorer %r failed on %s: %s",
                     self.spec().scorer_id,
