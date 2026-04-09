@@ -4,6 +4,7 @@ Public API
 ----------
 - :func:`~takeout_rater.db.connection.open_library_db` — open / create the DB
 - :func:`~takeout_rater.db.connection.library_state_dir` — locate the state dir
+- :class:`~takeout_rater.db.schema.SchemaMismatchError` — raised when the DB schema is incompatible
 - :func:`~takeout_rater.db.queries.upsert_asset` — insert or update an asset
 - :func:`~takeout_rater.db.queries.get_asset_by_id` — fetch one asset by ID
 - :func:`~takeout_rater.db.queries.list_assets` — paginated asset listing
@@ -27,10 +28,12 @@ from takeout_rater.db.queries import (
     list_assets,
     upsert_asset,
 )
+from takeout_rater.db.schema import SchemaMismatchError
 
 __all__ = [
     "CURRENT_INDEXER_VERSION",
     "AssetRow",
+    "SchemaMismatchError",
     "count_assets",
     "count_assets_needing_rescan",
     "get_asset_by_id",

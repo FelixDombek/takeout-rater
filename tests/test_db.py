@@ -6,6 +6,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+import pytest
+
 from takeout_rater.db.connection import library_state_dir, open_library_db
 from takeout_rater.db.queries import (
     AssetRow,
@@ -21,7 +23,7 @@ from takeout_rater.db.queries import (
     update_asset_sha256,
     upsert_asset,
 )
-from takeout_rater.db.schema import migrate
+from takeout_rater.db.schema import SchemaMismatchError, migrate
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -86,10 +88,10 @@ def test_schema_creates_asset_scores_table() -> None:
     assert "asset_scores" in tables
 
 
-def test_schema_user_version_is_5() -> None:
+def test_schema_user_version_is_6() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 5
+    assert version == 6
 
 
 def test_migrate_is_idempotent() -> None:
@@ -97,7 +99,19 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 5
+    assert version == 6
+
+
+def test_migrate_raises_on_stale_schema() -> None:
+    """migrate() must raise SchemaMismatchError for any pre-version-6 database."""
+    for stale_version in range(1, 6):
+        conn = sqlite3.connect(":memory:", check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA user_version = {stale_version}")
+        with pytest.raises(SchemaMismatchError) as exc_info:
+            migrate(conn)
+        assert exc_info.value.found_version == stale_version
+        conn.close()
 
 
 # ── library_state_dir ────────────────────────────────────────────────────────

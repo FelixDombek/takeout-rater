@@ -21,12 +21,10 @@ from takeout_rater.scorers.adapters.pyiqa_adapter import PyIQAScorer
 from takeout_rater.scorers.base import BaseScorer, ScorerSpec
 from takeout_rater.scorers.heuristics.blur import BlurScorer
 from takeout_rater.scorers.heuristics.brisque import BRISQUEScorer
-from takeout_rater.scorers.heuristics.dummy import DummyScorer
 from takeout_rater.scorers.heuristics.luminosity import LuminosityScorer
 from takeout_rater.scorers.heuristics.noise import NoiseScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
-    DummyScorer,
     BlurScorer,
     LuminosityScorer,
     NoiseScorer,
