@@ -1,6 +1,6 @@
 # Design: takeout-rater
 
-*Last updated: 2026-03 (Iteration 7 complete: all core workflows available from the UI)*
+*Last updated: 2026-04 (Iteration 10 complete: extended scorer suite and dedicated scoring page)*
 
 ---
 
@@ -47,12 +47,16 @@ takeout-rater/                    ← sibling directory, all mutable state
   exports/                        ← copies of selected assets
 
 src/takeout_rater/
-  indexing/     ← takeout scanner, sidecar parser, thumbnail generator
+  indexing/     ← takeout scanner, sidecar parser, thumbnail generator, run pipeline
   db/           ← SQLite schema, migrations, query helpers
   scorers/      ← BaseScorer interface, explicit registry, heuristics/, adapters/
-  api/          ← FastAPI routes (Iteration 1+)
-  ui/           ← Jinja2 templates / static assets (Iteration 1+)
-  cli.py        ← `takeout-rater` entry-point
+  scoring/      ← scoring pipeline runner, pHash computation
+  clustering/   ← pHash-based near-duplicate cluster builder
+  api/          ← FastAPI routes: assets, clusters, presets, config, jobs
+  ui/           ← Jinja2 templates / static assets
+  config.py     ← library path configuration (read/write)
+  cli.py        ← `takeout-rater` entry-point (index, score, browse, cluster,
+                   export, serve, rehash)
 ```
 
 The **indexer** walks the Takeout tree in two passes:
@@ -90,7 +94,10 @@ See [ADR-0004](decisions/ADR-0004-library-state-location.md).
 ### Core tables (conceptual)
 
 **assets** — one row per image file in the takeout  
-`id, relpath (unique), filename, ext, size_bytes, sha256 (nullable), taken_at, created_at_sidecar, width, height, title, description, image_views, google_photos_url, favorited, archived, trashed, geo_lat, geo_lon, geo_alt, geo_exif_lat, geo_exif_lon, geo_exif_alt, origin_type, origin_device_type, origin_device_folder, app_source_package, sidecar_relpath, mime, indexed_at`
+`id, relpath (unique), filename, ext, size_bytes, sha256 (nullable), taken_at, created_at_sidecar, width, height, title, description, image_views, google_photos_url, favorited, archived, trashed, geo_lat, geo_lon, geo_alt, geo_exif_lat, geo_exif_lon, geo_exif_alt, origin_type, origin_device_type, origin_device_folder, app_source_package, sidecar_relpath, mime, indexed_at, indexer_version`
+
+**asset_paths** — duplicate files (same SHA-256 content, different paths)  
+`id, asset_id (FK → assets), relpath (unique), indexed_at`
 
 **albums** + **album_assets** — many-to-many album membership
 
@@ -106,6 +113,9 @@ Unique on `(asset_id, scorer_run_id, metric_key)`.
 
 **clusters** + **cluster_members** — near-duplicate groups  
 `cluster_id, method, params_json; cluster_id, asset_id, distance, is_representative`
+
+**view_presets** — saved filter + sort combinations  
+`id, name (unique), sort_by, favorited, min_score, max_score, created_at, updated_at`
 
 ### Sidecar fields stored
 
@@ -143,9 +153,9 @@ currently stored; they can be added in a later migration if needed.
 
 ### Concepts
 
-- **ScorerSpec** — static description: `scorer_id`, display name, list of `MetricSpec`, list of `VariantSpec`.
-- **MetricSpec** — one output dimension: `key`, `min_value`, `max_value`, `higher_is_better`.
-- **VariantSpec** — one model/algorithm variant: `variant_id`.  Variants within a scorer produce **non-comparable** scores and are stored separately.
+- **ScorerSpec** — static description: `scorer_id`, display name, `description` (layman-friendly), `technical_description` (algorithm/paper details), list of `MetricSpec`, list of `VariantSpec`.
+- **MetricSpec** — one output dimension: `key`, `display_name`, `description`, `min_value`, `max_value`, `higher_is_better`.
+- **VariantSpec** — one model/algorithm variant: `variant_id`, `display_name`, `description`.  Variants within a scorer produce **non-comparable** scores and are stored separately.
 - **BaseScorer** — abstract class with `spec()`, `is_available()`, `create()`, and `score_batch()`.
 
 Scorers are **multi-metric**: a single scorer run may produce several metric keys (e.g. `aesthetic`, `technical_quality`, `composition`).
@@ -205,12 +215,15 @@ If HEIC decoding fails for a specific file, the asset is indexed but marked `uns
 |---|---|
 | **0** ✅ | Repo foundation: design docs, ADRs, agent docs, pyproject, scorer interface + registry, CI, skeleton modules |
 | **1** ✅ | Indexing: takeout scanner, sidecar parser, asset DB, thumbnail cache, minimal browse UI (FastAPI + HTMX) |
-| **2** ✅ | Scorer framework end-to-end: scoring pipeline, BlurScorer + DummyScorer wired to DB, pHash computation, `score` CLI command, score display in UI |
+| **2** ✅ | Scorer framework end-to-end: scoring pipeline, BlurScorer wired to DB, pHash computation, `score` CLI command, score display in UI |
 | **3** ✅ | Clustering: pHash-based cluster builder, cluster persistence, cluster view in UI, best-of-cluster `export` CLI command |
 | **4** ✅ | Aesthetic scorer: LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP) as scorer, `aesthetic` metric (0–10), sort-by-aesthetic in UI |
 | **5** ✅ | NSFW / quality filter: NSFW detector wired as a scorer, filter-by-score range in UI, view presets saved to DB |
-| **6** ✅ | SHA-256 deduplication: `rehash` CLI command, deduplicate browse UI, duplicate paths in detail view; DB at schema version 3 |
+| **6** ✅ | SHA-256 deduplication: `rehash` CLI command, deduplicate browse UI, duplicate paths in detail view |
 | **7** ✅ | All core workflows available from the UI: background jobs API (`/api/jobs/*`) for score, cluster, export, and rehash; `/jobs` page with progress bars and last-run status; Jobs nav link added to every page |
+| **8** ✅ | Index as background job, `serve` CLI command with setup page, rescan library job with `indexer_version` tracking, config API (`/api/config`, `/api/library/status`); DB schema consolidated to version 6 |
+| **9** ✅ | Timeline scrollbar: `/api/timeline` (year range) and `/api/timeline/seek` (jump to timestamp); infinite-scroll lightbox navigation |
+| **10** ✅ | Extended scorer suite: BRISQUEScorer, CLIPIQAScorer, NIMAScorer, PyIQAScorer; dedicated `/scoring` page with Simple/Technical description toggle; `piq` and `pyiqa` as core dependencies |
 
 ---
 

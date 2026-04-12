@@ -73,13 +73,15 @@ See [`docs/design.md`](docs/design.md) for the full architecture overview.
 ## Developer quick start (manual install)
 
 ```bash
-# Install
-pip install -e ".[index,web]"
+# Install in editable mode with dev dependencies
+pip install -e ".[dev]"
 
-# Index your Takeout folder (generates DB + thumbnail cache)
+# Launch the web UI (first-run shows setup page to select Takeout path)
+takeout-rater serve
+# → open http://127.0.0.1:8765 in your browser
+
+# Or, point directly at a library root and browse
 takeout-rater index /path/to/folder-containing-Takeout
-
-# Launch the local web UI
 takeout-rater browse /path/to/folder-containing-Takeout
 # → open http://127.0.0.1:8765/assets in your browser
 ```
@@ -94,8 +96,13 @@ takeout-rater browse /path/to/folder-containing-Takeout
 | **1** | Indexing, DB, thumbnail cache, minimal browse UI | ✅ Done |
 | **2** | Scorer pipeline end-to-end + BlurScorer + pHash | ✅ Done |
 | **3** | Clustering, cluster view, best-of-cluster export | ✅ Done |
-| **4** | Aesthetic scorer (ONNX/Torch), sort by aesthetic in UI | ✅ Done |
+| **4** | Aesthetic scorer (CLIP + MLP), sort by aesthetic in UI | ✅ Done |
 | **5** | NSFW detector scorer, filter-by-score range, view presets | ✅ Done |
+| **6** | SHA-256 deduplication, `rehash` CLI, dedupe browse UI | ✅ Done |
+| **7** | UI-first: background jobs API, `/jobs` page, progress tracking | ✅ Done |
+| **8** | Index as background job, `serve` CLI, setup page, rescan, DB v6 | ✅ Done |
+| **9** | Timeline scrollbar, infinite-scroll lightbox navigation | ✅ Done |
+| **10** | Extended scorers (BRISQUE, CLIP-IQA, NIMA, PyIQA), `/scoring` page | ✅ Done |
 
 ---
 
@@ -137,11 +144,26 @@ python -m takeout_rater --help
 # or, after installing:
 takeout-rater --help
 
-# Index a Takeout folder
+# Launch the web UI (shows setup page on first run)
+takeout-rater serve [--port 8765]
+
+# Index a Takeout folder (generates DB + thumbnail cache)
 takeout-rater index /path/to/library-root
 
 # Browse the indexed library in a local web UI
 takeout-rater browse /path/to/library-root [--port 8765]
+
+# Run scorers over indexed assets
+takeout-rater score /path/to/library-root [--scorer blur] [--phash]
+
+# Group near-duplicates by perceptual hash
+takeout-rater cluster /path/to/library-root [--threshold 10]
+
+# Export best-of-cluster photos to a folder
+takeout-rater export /path/to/library-root [--scorer aesthetic] [--out ./export]
+
+# Compute SHA-256 hashes for deduplication
+takeout-rater rehash /path/to/library-root
 ```
 
 ---

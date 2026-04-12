@@ -46,8 +46,9 @@ Use an **adapter / spec pattern** with an **explicit import registry**:
 - Stored as separate `asset_scores` rows: one per `(asset, scorer_run, metric_key)`.
 
 ### Optional dependencies
-- Heavyweight deps are declared as optional extras in `pyproject.toml` (e.g. `[aesthetic]`, `[heic]`).
-- `is_available()` checks imports without loading models.
+- ~~Heavyweight deps were originally declared as optional extras in `pyproject.toml`.~~
+- **Update (Iteration 10):** All scorer dependencies are now part of the base `[project] dependencies`.  Optional extras are reserved for exceptional cases only.
+- `is_available()` checks imports without loading models; it continues to serve as a graceful-degradation mechanism should an import fail at runtime.
 
 ---
 
