@@ -99,17 +99,12 @@ def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
 
 def _make_mock_scorer() -> BRISQUEScorer:
     """Return a BRISQUEScorer with piq.brisque mocked to return a fixed raw score."""
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
-    pytest.importorskip("PIL")
     scorer = BRISQUEScorer.create()
     return scorer
 
 
 def test_score_batch_inverts_raw_score(tmp_path: Path) -> None:
     """Raw BRISQUE=20 should yield quality=80."""
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -129,8 +124,6 @@ def test_score_batch_inverts_raw_score(tmp_path: Path) -> None:
 
 def test_score_batch_clamps_raw_above_100(tmp_path: Path) -> None:
     """Raw BRISQUE > 100 should be clamped, yielding quality=0."""
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -148,8 +141,6 @@ def test_score_batch_clamps_raw_above_100(tmp_path: Path) -> None:
 
 def test_score_batch_raw_zero_yields_quality_100(tmp_path: Path) -> None:
     """Raw BRISQUE=0 (perfect) should invert to quality=100."""
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -167,8 +158,6 @@ def test_score_batch_raw_zero_yields_quality_100(tmp_path: Path) -> None:
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
     """score_batch must return one result per input path."""
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
     from PIL import Image  # noqa: PLC0415
 
@@ -190,8 +179,6 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 def test_score_batch_assertion_error_returns_zero(tmp_path: Path) -> None:
     """AssertionError from piq (e.g. AGGD assertion on uniform images) is caught gracefully."""
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "uniform.jpg"
@@ -218,8 +205,6 @@ def test_score_batch_assertion_error_logs_warning(
     """AssertionError from piq is logged at WARNING with scorer id and asset path."""
     import logging  # noqa: PLC0415
 
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "uniform.jpg"
@@ -237,8 +222,6 @@ def test_score_batch_assertion_error_logs_warning(
 
 
 def test_score_one(tmp_path: Path) -> None:
-    pytest.importorskip("piq")
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
     from PIL import Image  # noqa: PLC0415
 

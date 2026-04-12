@@ -11,7 +11,7 @@ def test_list_scorers_returns_list() -> None:
 
 
 def test_list_scorers_non_empty() -> None:
-    """At least the DummyScorer must always be present."""
+    """At least one scorer must always be registered."""
     scorers = list_scorers()
     assert len(scorers) >= 1
 

@@ -5,13 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
-pytest.importorskip("fastapi")
-pytest.importorskip("httpx")
-
-from fastapi.testclient import TestClient  # noqa: E402
-
-from takeout_rater.ui.app import create_app  # noqa: E402
+from takeout_rater.ui.app import create_app
 
 # ---------------------------------------------------------------------------
 # Fixtures

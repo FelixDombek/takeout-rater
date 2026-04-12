@@ -1,6 +1,9 @@
--- Migration 0001: initial schema
--- All tables use CREATE TABLE IF NOT EXISTS for idempotency.
--- Schema version is tracked via PRAGMA user_version.
+-- Consolidated schema (schema version 6).
+-- This is a breaking-change release: existing databases at any prior version
+-- (1-5) are not migrated.  The application will refuse to open them and will
+-- require a complete re-scan of the Takeout folder to rebuild the library.
+--
+-- All tables use CREATE TABLE IF NOT EXISTS for idempotency on fresh installs.
 
 CREATE TABLE IF NOT EXISTS assets (
     id                      INTEGER PRIMARY KEY,
@@ -38,7 +41,16 @@ CREATE TABLE IF NOT EXISTS assets (
     -- Indexing metadata
     sidecar_relpath         TEXT,
     mime                    TEXT,
-    indexed_at              INTEGER NOT NULL
+    indexed_at              INTEGER NOT NULL,
+    -- Pipeline version that last processed this asset (NULL = pre-versioning)
+    indexer_version         INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS asset_paths (
+    id         INTEGER PRIMARY KEY,
+    asset_id   INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    relpath    TEXT NOT NULL UNIQUE,
+    indexed_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS albums (
@@ -95,11 +107,24 @@ CREATE TABLE IF NOT EXISTS cluster_members (
     PRIMARY KEY (cluster_id, asset_id)
 );
 
+CREATE TABLE IF NOT EXISTS view_presets (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    sort_by     TEXT,           -- "scorer_id:metric_key" or NULL (date order)
+    favorited   INTEGER,        -- 1 = favourites only, NULL = no filter
+    min_score   REAL,           -- inclusive lower bound on sort metric, NULL = unbounded
+    max_score   REAL,           -- inclusive upper bound on sort metric, NULL = unbounded
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_assets_taken_at         ON assets (taken_at);
 CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
+CREATE INDEX IF NOT EXISTS idx_assets_sha256           ON assets (sha256);
+CREATE INDEX IF NOT EXISTS idx_asset_paths_asset_id    ON asset_paths (asset_id);
 CREATE INDEX IF NOT EXISTS idx_asset_scores_asset_id   ON asset_scores (asset_id);
 CREATE INDEX IF NOT EXISTS idx_asset_scores_run_metric ON asset_scores (scorer_run_id, metric_key);
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 6;

@@ -92,7 +92,6 @@ def _make_mock_scorer(good_prob: float = 0.75) -> CLIPIQAScorer:
     Args:
         good_prob: The softmax probability to assign to the "good" prompt.
     """
-    pytest.importorskip("torch")
     import torch  # noqa: PLC0415
 
     scorer = CLIPIQAScorer.create()

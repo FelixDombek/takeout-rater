@@ -56,7 +56,6 @@ def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
 
 def test_score_batch_real_image(tmp_path: Path) -> None:
     """A valid image should produce a sharpness in [0, 100]."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "test.jpg"
@@ -76,7 +75,6 @@ def test_score_batch_real_image(tmp_path: Path) -> None:
 
 def test_score_batch_uniform_image_lower_than_gradient(tmp_path: Path) -> None:
     """A uniform (blurry) image should score lower than a high-contrast image."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     uniform = tmp_path / "uniform.jpg"
@@ -101,7 +99,6 @@ def test_score_batch_uniform_image_lower_than_gradient(tmp_path: Path) -> None:
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
     """score_batch must return one result per input path."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     paths = []
@@ -118,7 +115,6 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 
 def test_score_one(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     p = tmp_path / "img.jpg"

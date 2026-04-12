@@ -266,7 +266,6 @@ def browse_assets(
         (f"{spec.scorer_id}:{m.key}", f"{spec.display_name} – {m.display_name}")
         for spec in list_specs()
         for m in spec.metrics
-        if spec.scorer_id != "dummy"
     ]
 
     # Load saved presets for the toolbar

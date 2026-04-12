@@ -16,7 +16,7 @@ from takeout_rater.db.queries import (
     upsert_asset,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.scorers.heuristics.dummy import DummyScorer
+from takeout_rater.scorers.heuristics.blur import BlurScorer
 from takeout_rater.scoring.pipeline import run_scorer, run_scorer_by_id
 
 FIXTURE_TAKEOUT = Path(__file__).parent / "fixtures" / "takeout_tree" / "Takeout"
@@ -48,7 +48,6 @@ def _add_asset(conn: sqlite3.Connection, relpath: str = "Photos/img.jpg") -> int
 
 def _make_thumbnail(thumbs_dir: Path, asset_id: int) -> Path:
     """Create a minimal JPEG thumbnail file and return its path."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
@@ -65,7 +64,7 @@ def _make_thumbnail(thumbs_dir: Path, asset_id: int) -> Path:
 def test_run_scorer_returns_int(tmp_path: Path) -> None:
     conn = _open_in_memory()
     _add_asset(conn)
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_id = run_scorer(conn, scorer, tmp_path / "thumbs")
     assert isinstance(run_id, int)
     assert run_id > 0
@@ -74,7 +73,7 @@ def test_run_scorer_returns_int(tmp_path: Path) -> None:
 def test_run_scorer_creates_finished_run(tmp_path: Path) -> None:
     conn = _open_in_memory()
     _add_asset(conn)
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_id = run_scorer(conn, scorer, tmp_path / "thumbs")
     row = conn.execute("SELECT finished_at FROM scorer_runs WHERE id = ?", (run_id,)).fetchone()
     assert row is not None
@@ -87,13 +86,13 @@ def test_run_scorer_writes_scores_when_thumb_present(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_scorer(conn, scorer, thumbs_dir)
 
     scores = get_asset_scores(conn, asset_id)
     assert len(scores) == 1
-    assert scores[0]["metric_key"] == "dummy_score"
-    assert scores[0]["value"] == pytest.approx(0.5)
+    assert scores[0]["metric_key"] == "sharpness"
+    assert 0.0 <= scores[0]["value"] <= 100.0
 
 
 def test_run_scorer_skips_missing_thumbnails(tmp_path: Path) -> None:
@@ -101,7 +100,7 @@ def test_run_scorer_skips_missing_thumbnails(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     # No thumbnail created
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_scorer(conn, scorer, tmp_path / "thumbs")
 
     scores = get_asset_scores(conn, asset_id)
@@ -115,7 +114,7 @@ def test_run_scorer_skip_existing_true(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
     run_id2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
 
@@ -133,7 +132,7 @@ def test_run_scorer_rerun(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_scorer(conn, scorer, thumbs_dir, skip_existing=False)
     run_id2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=False)
 
@@ -151,7 +150,7 @@ def test_run_scorer_progress_callback(tmp_path: Path) -> None:
         _make_thumbnail(thumbs_dir, aid)
 
     calls: list[tuple[int, int]] = []
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_scorer(
         conn, scorer, thumbs_dir, batch_size=2, on_progress=lambda d, t: calls.append((d, t))
     )
@@ -168,11 +167,11 @@ def test_run_scorer_explicit_asset_ids(tmp_path: Path) -> None:
     for aid in ids:
         _make_thumbnail(thumbs_dir, aid)
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     # Only score the first asset
     run_scorer(conn, scorer, thumbs_dir, asset_ids=[ids[0]])
 
-    run_id = get_latest_scorer_run_id(conn, "dummy", "default")
+    run_id = get_latest_scorer_run_id(conn, "blur", "default")
     count = conn.execute(
         "SELECT COUNT(*) FROM asset_scores WHERE scorer_run_id = ?", (run_id,)
     ).fetchone()[0]
@@ -188,25 +187,25 @@ def test_run_scorer_by_id_unknown_raises_key_error(tmp_path: Path) -> None:
         run_scorer_by_id(conn, "nonexistent_scorer", tmp_path / "thumbs")
 
 
-def test_run_scorer_by_id_dummy(tmp_path: Path) -> None:
+def test_run_scorer_by_id_blur(tmp_path: Path) -> None:
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    run_id = run_scorer_by_id(conn, "dummy", thumbs_dir)
+    run_id = run_scorer_by_id(conn, "blur", thumbs_dir)
     assert isinstance(run_id, int)
 
     scores = get_asset_scores(conn, asset_id)
     assert len(scores) == 1
-    assert scores[0]["scorer_id"] == "dummy"
+    assert scores[0]["scorer_id"] == "blur"
 
 
 # ── end-to-end: index then score ──────────────────────────────────────────────
 
 
 def test_index_then_score_pipeline(tmp_path: Path) -> None:
-    """E2E: index a real Takeout folder then score all assets with DummyScorer.
+    """E2E: index a real Takeout folder then score all assets with BlurScorer.
 
     This test exercises the full pipeline:
       1. Run the index job to populate the DB and generate thumbnails.
@@ -214,7 +213,6 @@ def test_index_then_score_pipeline(tmp_path: Path) -> None:
       3. Run the score job over the indexed assets.
       4. Assert that every asset whose thumbnail was generated has a score.
     """
-    pytest.importorskip("PIL")
     from takeout_rater.cli import main  # noqa: PLC0415
     from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
 
@@ -230,7 +228,7 @@ def test_index_then_score_pipeline(tmp_path: Path) -> None:
     thumbs_dir = tmp_path / "takeout-rater" / "thumbs"
 
     # Step 3: score all assets.
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     run_scorer(conn, scorer, thumbs_dir)
 
     # Step 4: every asset that has a thumbnail must have a score row.
@@ -248,29 +246,27 @@ def test_index_then_score_pipeline(tmp_path: Path) -> None:
 
 def test_run_scorer_error_includes_scorer_id(tmp_path: Path) -> None:
     """When score_batch raises, the re-raised RuntimeError includes the scorer id."""
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     with (
         patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
-        pytest.raises(RuntimeError, match="dummy"),
+        pytest.raises(RuntimeError, match="blur"),
     ):
         run_scorer(conn, scorer, thumbs_dir)
 
 
 def test_run_scorer_error_includes_asset_path(tmp_path: Path) -> None:
     """When score_batch raises, the error message includes the affected asset path."""
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     asset_id = _add_asset(conn)
     thumb = _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     with (
         patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
         pytest.raises(RuntimeError, match=str(thumb)),
@@ -280,13 +276,12 @@ def test_run_scorer_error_includes_asset_path(tmp_path: Path) -> None:
 
 def test_run_scorer_error_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """When score_batch raises, an ERROR log record is emitted with scorer and asset info."""
-    pytest.importorskip("PIL")
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = DummyScorer.create()
+    scorer = BlurScorer.create()
     with (
         caplog.at_level(logging.ERROR, logger="takeout_rater.scoring.pipeline"),
         patch.object(scorer, "score_batch", side_effect=RuntimeError("boom")),
@@ -294,4 +289,4 @@ def test_run_scorer_error_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFix
     ):
         run_scorer(conn, scorer, thumbs_dir)
 
-    assert any("dummy" in r.message and r.levelno == logging.ERROR for r in caplog.records)
+    assert any("blur" in r.message and r.levelno == logging.ERROR for r in caplog.records)

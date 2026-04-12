@@ -57,7 +57,6 @@ def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
 
 
 def test_score_batch_real_image_range(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     p = tmp_path / "test.jpg"
@@ -71,7 +70,6 @@ def test_score_batch_real_image_range(tmp_path: Path) -> None:
 
 def test_uniform_image_low_noise(tmp_path: Path) -> None:
     """A uniform solid-colour image should have near-zero noise."""
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     # Use PNG to avoid JPEG compression artefacts introducing false noise
@@ -85,7 +83,6 @@ def test_uniform_image_low_noise(tmp_path: Path) -> None:
 
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     paths = []
@@ -103,7 +100,6 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 
 def test_score_one(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image  # noqa: PLC0415
 
     p = tmp_path / "img.jpg"
