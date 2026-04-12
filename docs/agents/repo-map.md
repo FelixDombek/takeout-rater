@@ -38,6 +38,10 @@ takeout-rater/
 | `scorers/adapters/` | ML/external-tool scorer wrappers (optional deps) |
 | `scorers/adapters/laion.py` | LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP, 0–10 scale) |
 | `scorers/adapters/nsfw.py` | NSFW detector (Falconsai ViT classifier, 0–1 probability) |
+| `scorers/adapters/clip_iqa.py` | CLIP-IQA zero-shot quality scorer (CLIP ViT-L/14, 0–1) |
+| `scorers/adapters/nima.py` | NIMA aesthetic/technical scorer (MobileNet-V2, 1–10) |
+| `scorers/adapters/pyiqa_adapter.py` | PyIQA adapter: MUSIQ, TOPIQ, NIQE (0–1 normalised) |
+| `scorers/adapters/cafe_style.py` | CafeAI style classifier: photo/anime/illustration/3D/CGI probabilities (0–1 each) |
 | `scoring/` | Scoring pipeline and pHash computation |
 | `scoring/pipeline.py` | `run_scorer()` — runs a scorer, writes to `scorer_runs` + `asset_scores` |
 | `scoring/phash.py` | `compute_dhash()`, `compute_phash_all()` — pHash via dhash algorithm |
