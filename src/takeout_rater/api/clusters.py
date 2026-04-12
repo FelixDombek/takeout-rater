@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Generator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -18,11 +19,23 @@ router = APIRouter()
 _PAGE_SIZE = 50
 
 
-def _get_conn(request: Request) -> sqlite3.Connection:
+def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
+    db_path = request.app.state.db_path
+    if db_path is not None:
+        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+
+        conn = open_db(db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
+
+    # Fallback for in-memory databases (used in tests).
     conn = request.app.state.db_conn
     if conn is None:
         raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
-    return conn
+    yield conn
 
 
 @router.get("/clusters", response_class=HTMLResponse)

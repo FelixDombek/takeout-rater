@@ -86,6 +86,15 @@ def create_app(
     # Attach shared state (may be None when not yet configured)
     app.state.db_conn = db_conn
     app.state.library_root = library_root
+    # Path to the SQLite database file — used by per-request connections to
+    # avoid sharing a single sqlite3.Connection across threads.
+    if library_root is not None:
+        from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
+
+        _candidate = library_db_path(library_root)
+        app.state.db_path = _candidate if _candidate.exists() else None
+    else:
+        app.state.db_path = None
     # takeout_root is the photos root (the directory that relpath/sidecar_relpath
     # values are relative to — may be library_root/Takeout/Google Photos/ etc.).
     if library_root is not None:

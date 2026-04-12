@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import sqlite3
+from collections.abc import Generator
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -33,15 +34,31 @@ router = APIRouter()
 _PAGE_SIZE = 50
 
 
-def _get_conn(request: Request) -> sqlite3.Connection:
-    """Dependency: retrieve the DB connection from the app state.
+def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
+    """Dependency: open a per-request DB connection and close it when done.
+
+    Each request gets its own ``sqlite3.Connection`` so that concurrent
+    requests handled in separate threads do not share the same connection
+    object, which would cause ``sqlite3.InterfaceError`` under load.
 
     Redirects to the setup page if the library has not been configured yet.
     """
+    db_path = request.app.state.db_path
+    if db_path is not None:
+        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+
+        conn = open_db(db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
+
+    # Fallback for in-memory databases (used in tests).
     conn = request.app.state.db_conn
     if conn is None:
         raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
-    return conn
+    yield conn
 
 
 def _get_takeout_root(request: Request) -> Path:

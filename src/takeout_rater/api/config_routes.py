@@ -64,11 +64,20 @@ def library_status(request: Request) -> JSONResponse:
     This endpoint is always available; when the library is not configured,
     ``db_schema_version`` will be ``null``.
     """
-    conn = request.app.state.db_conn
+    db_path = request.app.state.db_path
     library_root = request.app.state.library_root
     db_schema_version: int | None = None
-    if conn is not None:
-        db_schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if db_path is not None:
+        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+
+        conn = open_db(db_path)
+        try:
+            db_schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        finally:
+            conn.close()
+    elif request.app.state.db_conn is not None:
+        # Fallback for in-memory databases (used in tests).
+        db_schema_version = request.app.state.db_conn.execute("PRAGMA user_version").fetchone()[0]
     return JSONResponse(
         {
             "library_path": str(library_root) if library_root else None,
@@ -118,6 +127,9 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     conn = open_library_db(p)
     request.app.state.db_conn = conn
     request.app.state.library_root = p
+    from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
+
+    request.app.state.db_path = library_db_path(p)
     # Compute the actual photos root (where relpath/sidecar_relpath are relative to).
     from takeout_rater.indexing.scanner import resolve_photos_root  # noqa: PLC0415
 
