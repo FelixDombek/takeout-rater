@@ -62,6 +62,9 @@ class JobProgress:
             string if unavailable or not applicable for the job type.
         current_scorer_id: For the ``"score"`` job, the scorer currently being
             run.  Empty string when no specific scorer is active.
+        current_variant_id: For the ``"score"`` job, the variant of the scorer
+            currently being run.  Empty string when no variant is active or the
+            scorer does not use variants.
         job_type: One of ``"index"``, ``"score"``, ``"cluster"``,
             ``"export"``, ``"rehash"``, ``"rescan"``.
         cancel_event: Set this event to request cancellation of the running
@@ -77,6 +80,7 @@ class JobProgress:
     total: int = 0
     current_item: str = ""
     current_scorer_id: str = ""
+    current_variant_id: str = ""
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
@@ -100,6 +104,7 @@ def _job_status_dict(p: JobProgress) -> dict:
         "total": p.total,
         "current_item": p.current_item,
         "current_scorer_id": p.current_scorer_id,
+        "current_variant_id": p.current_variant_id,
         "cancelled": p.cancel_event.is_set(),
     }
 
@@ -318,6 +323,7 @@ def list_available_scorers() -> JSONResponse:
 
 class _ScoreStartBody(BaseModel):
     scorer_id: str | None = None
+    variant_id: str | None = None
     rerun: bool = False
 
 
@@ -341,6 +347,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     jobs["score"] = progress
 
     scorer_id = body.scorer_id
+    variant_id = body.variant_id
     rerun = body.rerun
 
     def _worker() -> None:
@@ -385,17 +392,41 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             progress.current_item = ""
 
             # ── Phase 2: Run scorers ─────────────────────────────────────────
+            # Build the list of (scorer_id, variant_id) pairs to run.
+            # When no specific scorer is requested every available scorer is
+            # run for *all* of its variants (or its single default variant if
+            # the scorer defines no explicit variants).
             if scorer_id:
-                scorer_ids = [scorer_id]
+                cls_map = {cls.spec().scorer_id: cls for cls in list_scorers()}
+                target_cls = cls_map.get(scorer_id)
+                if target_cls:
+                    spec = target_cls.spec()
+                    if variant_id:
+                        scorer_variant_pairs = [(scorer_id, variant_id)]
+                    elif spec.variants:
+                        scorer_variant_pairs = [(scorer_id, v.variant_id) for v in spec.variants]
+                    else:
+                        scorer_variant_pairs = [(scorer_id, None)]
+                else:
+                    scorer_variant_pairs = [(scorer_id, variant_id)]
             else:
-                scorer_ids = [cls.spec().scorer_id for cls in list_scorers(available_only=True)]
+                scorer_variant_pairs = []
+                for cls in list_scorers(available_only=True):
+                    spec = cls.spec()
+                    if spec.variants:
+                        for v in spec.variants:
+                            scorer_variant_pairs.append((spec.scorer_id, v.variant_id))
+                    else:
+                        scorer_variant_pairs.append((spec.scorer_id, None))
 
-            total_scorers = len(scorer_ids)
-            for idx, sid in enumerate(scorer_ids):
+            total_pairs = len(scorer_variant_pairs)
+            for idx, (sid, vid) in enumerate(scorer_variant_pairs):
                 if progress.cancel_event.is_set():
                     break
-                _scorer_label = f"{sid!r} ({idx + 1}/{total_scorers})"
+                _label_name = sid if not vid else f"{sid}:{vid}"
+                _scorer_label = f"{_label_name!r} ({idx + 1}/{total_pairs})"
                 progress.current_scorer_id = sid
+                progress.current_variant_id = vid or ""
                 progress.message = f"Scoring with {_scorer_label}…"
                 progress.processed = 0
                 progress.total = 0
@@ -409,17 +440,21 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                     worker_conn,
                     sid,
                     thumbs_dir,
+                    variant_id=vid,
                     skip_existing=not rerun,
                     on_progress=_cb,
                     cancel_check=progress.cancel_event.is_set,
                 )
 
             progress.current_scorer_id = ""
+            progress.current_variant_id = ""
             if progress.cancel_event.is_set():
                 progress.message = "Scoring cancelled."
             else:
                 progress.message = "Scoring complete."
             progress.current_item = ""
+            progress.current_scorer_id = ""
+            progress.current_variant_id = ""
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
@@ -427,6 +462,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             progress.message = f"Error: {exc}"
             progress.current_item = ""
             progress.current_scorer_id = ""
+            progress.current_variant_id = ""
             progress.running = False
             progress.done = True
         finally:
