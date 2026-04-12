@@ -13,6 +13,7 @@ from __future__ import annotations
 # Explicit scorer class list
 # Add your scorer class here after creating it.
 # ---------------------------------------------------------------------------
+from takeout_rater.scorers.adapters.cafe_style import CafeStyleScorer
 from takeout_rater.scorers.adapters.clip_iqa import CLIPIQAScorer
 from takeout_rater.scorers.adapters.laion import AestheticScorer
 from takeout_rater.scorers.adapters.nima import NIMAScorer
@@ -34,6 +35,7 @@ _SCORER_CLASSES: list[type[BaseScorer]] = [
     CLIPIQAScorer,
     NIMAScorer,
     PyIQAScorer,
+    CafeStyleScorer,
 ]
 
 
