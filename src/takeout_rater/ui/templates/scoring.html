@@ -269,6 +269,10 @@
             onclick="cancelScoring()">
       ✕ Cancel
     </button>
+    <div id="global-progress-wrap" class="progress-bar-wrap" style="margin-top:0.6rem;">
+      <div id="global-progress-bar" class="progress-bar" style="width:0%"></div>
+    </div>
+    <div id="global-running-status" class="scorer-status info" style="display:none;"></div>
   </div>
 
   <!-- ── Scorer list (populated by JS) ──────────────────────────────────── -->
@@ -495,17 +499,6 @@
     var activeVid = data.current_variant_id || '';
     var cancelled = data.cancelled || false;
 
-    // Update run-all buttons
-    var btnAll = document.getElementById('btn-run-all');
-    var cancelAll = document.getElementById('btn-cancel-all');
-    if (btnAll) {
-      btnAll.disabled = running;
-      btnAll.style.display = running ? 'none' : '';
-    }
-    if (cancelAll) {
-      cancelAll.style.display = running ? '' : 'none';
-    }
-
     // Progress / ETA
     var pct = null;
     if (data.total > 0) {
@@ -518,6 +511,33 @@
       }
     } else {
       delete _jobStats.score;
+    }
+
+    // Update run-all buttons
+    var btnAll = document.getElementById('btn-run-all');
+    var cancelAll = document.getElementById('btn-cancel-all');
+    if (btnAll) {
+      btnAll.disabled = running;
+      btnAll.style.display = running ? 'none' : '';
+    }
+    if (cancelAll) {
+      cancelAll.style.display = running ? '' : 'none';
+    }
+
+    // Global progress bar and status (visible during any running phase)
+    var globalPbWrap = document.getElementById('global-progress-wrap');
+    var globalPb = document.getElementById('global-progress-bar');
+    var globalStatus = document.getElementById('global-running-status');
+    if (running) {
+      if (globalPbWrap) globalPbWrap.className = 'progress-bar-wrap visible';
+      if (globalPb) globalPb.style.width = (pct !== null ? Math.min(100, pct) : 0) + '%';
+      if (globalStatus) {
+        globalStatus.style.display = '';
+        globalStatus.textContent = data.message || 'Running\u2026';
+      }
+    } else {
+      if (globalPbWrap) globalPbWrap.className = 'progress-bar-wrap';
+      if (globalStatus) globalStatus.style.display = 'none';
     }
 
     // Update each scorer card
