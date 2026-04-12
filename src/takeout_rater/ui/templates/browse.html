@@ -252,8 +252,16 @@
     color: #d0d0d0;
     font-size: 0.82rem;
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
   }
-  .lb-detail-inner { padding-bottom: 1rem; }
+  .lb-detail-inner {
+    padding-bottom: 1rem;
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
   .lb-detail-title {
     font-size: 0.95rem;
     font-weight: 600;
@@ -308,9 +316,10 @@
     line-height: 1.4;
     overflow-x: auto;
     white-space: pre;
-    max-height: 16rem;
     overflow-y: auto;
     color: #ccc;
+    flex: 1 1 0;
+    min-height: 0;
   }
   .lb-details-col .json-key    { color: #7ec8e3; }
   .lb-details-col .json-string { color: #98c379; }
@@ -332,7 +341,13 @@
   .lb-detail-btn:hover { background: rgba(255,255,255,0.28); text-decoration: none; }
 
   /* ── Lightbox info tabs ───────────────────────────────────────────────── */
-  .lb-info-tabs { margin-top: 0.75rem; }
+  .lb-info-tabs {
+    margin-top: 0.75rem;
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
   .lb-tab-bar {
     display: flex;
     border-bottom: 1px solid rgba(255,255,255,0.15);
@@ -354,7 +369,13 @@
   .lb-tab-btn:hover { color: #ccc; }
   .lb-tab-btn.active { color: #7ec8e3; border-bottom-color: #7ec8e3; }
   .lb-tab-panel { display: none; padding-top: 0.5rem; }
-  .lb-tab-panel.active { display: block; }
+  .lb-tab-panel.active {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
+    padding-top: 0.5rem;
+  }
   .lb-empty-note { color: #666; font-size: 0.75rem; margin: 0.4rem 0; }
   .lb-meta-subsection { margin-bottom: 0.5rem; }
   .lb-meta-sublabel {

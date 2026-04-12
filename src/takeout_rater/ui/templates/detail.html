@@ -76,8 +76,6 @@
     line-height: 1.5;
     overflow-x: auto;
     white-space: pre;
-    max-height: 28rem;
-    overflow-y: auto;
   }
   .metadata-subsection { margin-bottom: 1rem; }
   .metadata-subsection-label {
@@ -160,62 +158,63 @@
     </table>
     {% endif %}
 
-    {# ── Info tabs: SCORES / JSON / EXIF ─────────────────────────────── #}
-    <div class="info-tabs">
-      <div class="info-tab-bar" role="tablist">
-        <button class="info-tab-btn active" role="tab" aria-selected="true"
-                aria-controls="tab-scores" id="tbtn-scores"
-                onclick="switchTab('scores')">Scores</button>
-        <button class="info-tab-btn" role="tab" aria-selected="false"
-                aria-controls="tab-json" id="tbtn-json"
-                onclick="switchTab('json')">JSON</button>
-        <button class="info-tab-btn" role="tab" aria-selected="false"
-                aria-controls="tab-exif" id="tbtn-exif"
-                onclick="switchTab('exif')">EXIF</button>
-      </div>
-
-      {# SCORES tab #}
-      <div id="tab-scores" class="info-tab-panel active" role="tabpanel" aria-labelledby="tbtn-scores">
-        {% if scores %}
-        <table class="scores-table">
-          <tr>
-            <th>Scorer</th>
-            <th>Metric</th>
-            <th style="text-align:right">Value</th>
-          </tr>
-          {% for score in scores %}
-          <tr>
-            <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="muted">({{ score.variant_id }})</span>{% endif %}</td>
-            <td>{{ score.metric_key }}</td>
-            <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
-          </tr>
-          {% endfor %}
-        </table>
-        {% else %}
-        <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No scores recorded yet.</p>
-        {% endif %}
-      </div>
-
-      {# JSON tab #}
-      <div id="tab-json" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-json">
-        {% if sidecar_json %}
-        <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
-        {% else %}
-        <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No sidecar JSON available.</p>
-        {% endif %}
-      </div>
-
-      {# EXIF tab #}
-      <div id="tab-exif" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-exif">
-        {% if exif_data %}
-        <pre class="metadata-pre json-highlight">{{ exif_data }}</pre>
-        {% else %}
-        <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No EXIF data available.</p>
-        {% endif %}
-      </div>
-    </div>{# /info-tabs #}
   </div>
 </div>
+
+{# ── Info tabs: SCORES / JSON / EXIF ─────────────────────────────── #}
+<div class="info-tabs">
+  <div class="info-tab-bar" role="tablist">
+    <button class="info-tab-btn active" role="tab" aria-selected="true"
+            aria-controls="tab-scores" id="tbtn-scores"
+            onclick="switchTab('scores')">Scores</button>
+    <button class="info-tab-btn" role="tab" aria-selected="false"
+            aria-controls="tab-json" id="tbtn-json"
+            onclick="switchTab('json')">JSON</button>
+    <button class="info-tab-btn" role="tab" aria-selected="false"
+            aria-controls="tab-exif" id="tbtn-exif"
+            onclick="switchTab('exif')">EXIF</button>
+  </div>
+
+  {# SCORES tab #}
+  <div id="tab-scores" class="info-tab-panel active" role="tabpanel" aria-labelledby="tbtn-scores">
+    {% if scores %}
+    <table class="scores-table">
+      <tr>
+        <th>Scorer</th>
+        <th>Metric</th>
+        <th style="text-align:right">Value</th>
+      </tr>
+      {% for score in scores %}
+      <tr>
+        <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="muted">({{ score.variant_id }})</span>{% endif %}</td>
+        <td>{{ score.metric_key }}</td>
+        <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No scores recorded yet.</p>
+    {% endif %}
+  </div>
+
+  {# JSON tab #}
+  <div id="tab-json" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-json">
+    {% if sidecar_json %}
+    <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
+    {% else %}
+    <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No sidecar JSON available.</p>
+    {% endif %}
+  </div>
+
+  {# EXIF tab #}
+  <div id="tab-exif" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-exif">
+    {% if exif_data %}
+    <pre class="metadata-pre json-highlight">{{ exif_data }}</pre>
+    {% else %}
+    <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No EXIF data available.</p>
+    {% endif %}
+  </div>
+</div>{# /info-tabs #}
 
 <script>
 (function () {
