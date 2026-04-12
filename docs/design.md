@@ -224,7 +224,7 @@ If HEIC decoding fails for a specific file, the asset is indexed but marked `uns
 | **8** ✅ | Index as background job, `serve` CLI command with setup page, rescan library job with `indexer_version` tracking, config API (`/api/config`, `/api/library/status`); DB schema consolidated to version 6 |
 | **9** ✅ | Timeline scrollbar: `/api/timeline` (year range) and `/api/timeline/seek` (jump to timestamp); infinite-scroll lightbox navigation |
 | **10** ✅ | Extended scorer suite: BRISQUEScorer, CLIPIQAScorer, NIMAScorer, PyIQAScorer; dedicated `/scoring` page with Simple/Technical description toggle; `piq` and `pyiqa` as core dependencies |
-| **11** ✅ | Rescan extended to regenerate thumbnails: `missing_only` fills absent thumbs; `full` overwrites all (fixes stale/corrupt thumbs after pillow-heif or orientation upgrades); `CURRENT_INDEXER_VERSION` bumped 1→2; Rescan card promoted to top of `/jobs` page; Index card clarified as new-file discovery only |
+| **11** ✅ | Rescan extended to regenerate thumbnails: `missing_only` fills absent thumbs; `full` overwrites all (fixes stale/corrupt thumbs after pillow-heif or orientation upgrades); `CURRENT_INDEXER_VERSION` bumped 1→2 |
 
 ---
 
