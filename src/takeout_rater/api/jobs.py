@@ -387,6 +387,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                 thumbs_dir,
                 on_progress=_phash_progress,
                 on_item=_phash_item,
+                cancel_check=progress.cancel_event.is_set,
             )
 
             progress.current_item = ""

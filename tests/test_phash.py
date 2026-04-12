@@ -223,3 +223,30 @@ def test_compute_phash_all_on_item_callback(tmp_path: Path) -> None:
     for i, (_aid, done, total) in enumerate(items):
         assert done == i + 1
         assert total == 3
+
+
+def test_compute_phash_all_cancel_check_stops_early(tmp_path: Path) -> None:
+    conn = _open_in_memory()
+    thumbs_dir = tmp_path / "thumbs"
+    aids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
+    for aid in aids:
+        _make_thumbnail(thumbs_dir, aid)
+
+    # Cancel after the first item is processed
+    processed_items: list[int] = []
+
+    def _on_item(aid: int, done: int, total: int) -> None:
+        processed_items.append(aid)
+
+    call_count = 0
+
+    def _cancel_after_one() -> bool:
+        nonlocal call_count
+        call_count += 1
+        return call_count > 1
+
+    count = compute_phash_all(conn, thumbs_dir, on_item=_on_item, cancel_check=_cancel_after_one)
+
+    # Only the first item should have been processed (cancel fires before item 2)
+    assert len(processed_items) == 1
+    assert count == 1

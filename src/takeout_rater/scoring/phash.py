@@ -87,6 +87,7 @@ def compute_phash_all(
     batch_size: int = 64,
     on_progress: Callable[[int, int], None] | None = None,
     on_item: Callable[[int, int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """Compute and persist dhash values for assets that lack one.
 
@@ -104,6 +105,9 @@ def compute_phash_all(
             ``(asset_id, processed_so_far, total)`` so callers can display the
             current item name.  Receives the raw DB asset ID which can be
             mapped to a filename by the caller.
+        cancel_check: Optional callable that returns ``True`` when the run
+            should be aborted.  Checked before each item; when it returns
+            ``True`` the loop exits early.
 
     Returns:
         Number of hashes successfully written.
@@ -132,6 +136,8 @@ def compute_phash_all(
     written = 0
 
     for i, aid in enumerate(asset_ids):
+        if cancel_check is not None and cancel_check():
+            break
         processed = i + 1
         if on_item is not None:
             on_item(aid, processed, total)
