@@ -118,7 +118,13 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     conn = open_library_db(p)
     request.app.state.db_conn = conn
     request.app.state.library_root = p
-    request.app.state.takeout_root = p
+    # Compute the actual photos root (where relpath/sidecar_relpath are relative to).
+    from takeout_rater.indexing.scanner import find_google_photos_root  # noqa: PLC0415
+
+    _takeout_dir = p / "Takeout"
+    if not _takeout_dir.is_dir():
+        _takeout_dir = p
+    request.app.state.takeout_root = find_google_photos_root(_takeout_dir)
     request.app.state.thumbs_dir = p / "takeout-rater" / "thumbs"
 
     # Start background indexing so the library is populated without the user

@@ -688,7 +688,74 @@ def test_asset_detail_shows_only_canonical_sidecar(tmp_path: Path) -> None:
     assert "album2/img.jpg" in resp.text
 
 
-# ── GET /api/timeline ─────────────────────────────────────────────────────────
+def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> None:
+    """Detail page should find sidecar when library has a Takeout/Google Photos structure.
+
+    Relpaths are stored relative to the Google Photos root, but app.state.takeout_root
+    must point to the same root (not to library_root) for file reads to succeed.
+    """
+    conn = _make_db()
+    # Simulate the real on-disk structure: library_root/Takeout/Google Photos/...
+    google_photos = tmp_path / "Takeout" / "Google Photos"
+    sidecar_relpath = "Photos from 2026/img.jpg.supplemental-metadata.json"
+    sidecar_path = google_photos / sidecar_relpath
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.write_text(
+        '{"title":"img.jpg","description":"","url":"https://photos.google.com/y",'
+        '"creationTime":{"timestamp":"1771361057"},"imageViews":"3"}',
+        encoding="utf-8",
+    )
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": "Photos from 2026/img.jpg",
+            "filename": "img.jpg",
+            "ext": ".jpg",
+            "size_bytes": 1024,
+            "mime": "image/jpeg",
+            "sidecar_relpath": sidecar_relpath,
+            "indexed_at": int(time.time()),
+        },
+    )
+    # Pass library_root (parent of Takeout/) — app must resolve photos_root itself.
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+    assert "imageViews" in resp.text
+    assert "https://photos.google.com/y" in resp.text
+
+
+def test_asset_detail_sidecar_partial_with_nested_google_photos_dir(tmp_path: Path) -> None:
+    """Lightbox partial should also find sidecar with nested Takeout/Google Photos structure."""
+    conn = _make_db()
+    google_photos = tmp_path / "Takeout" / "Google Photos"
+    sidecar_relpath = "Photos from 2026/img.jpg.supplemental-metadata.json"
+    sidecar_path = google_photos / sidecar_relpath
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.write_text(
+        '{"title":"img.jpg","description":"","url":"https://photos.google.com/z",'
+        '"creationTime":{"timestamp":"1771361057"},"imageViews":"5"}',
+        encoding="utf-8",
+    )
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": "Photos from 2026/img.jpg",
+            "filename": "img.jpg",
+            "ext": ".jpg",
+            "size_bytes": 1024,
+            "mime": "image/jpeg",
+            "sidecar_relpath": sidecar_relpath,
+            "indexed_at": int(time.time()),
+        },
+    )
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}?partial=1")
+    assert resp.status_code == 200
+    assert "imageViews" in resp.text
+    assert "https://photos.google.com/z" in resp.text
 
 
 def test_timeline_no_data_returns_has_data_false(client: TestClient) -> None:
