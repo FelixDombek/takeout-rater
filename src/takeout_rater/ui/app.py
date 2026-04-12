@@ -89,12 +89,9 @@ def create_app(
     # takeout_root is the photos root (the directory that relpath/sidecar_relpath
     # values are relative to — may be library_root/Takeout/Google Photos/ etc.).
     if library_root is not None:
-        from takeout_rater.indexing.scanner import find_google_photos_root  # noqa: PLC0415
+        from takeout_rater.indexing.scanner import resolve_photos_root  # noqa: PLC0415
 
-        _takeout_dir = library_root / "Takeout"
-        if not _takeout_dir.is_dir():
-            _takeout_dir = library_root
-        app.state.takeout_root = find_google_photos_root(_takeout_dir)
+        app.state.takeout_root = resolve_photos_root(library_root)
     else:
         app.state.takeout_root = None
     app.state.thumbs_dir = library_root / "takeout-rater" / "thumbs" if library_root else None
