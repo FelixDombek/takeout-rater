@@ -109,6 +109,13 @@ def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
     except ImportError:
         return None
 
+    try:
+        import pillow_heif  # noqa: PLC0415
+
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass
+
     def _make_serializable(value: object) -> object:
         """Recursively convert a value to a JSON-serialisable type."""
         if isinstance(value, bytes):
