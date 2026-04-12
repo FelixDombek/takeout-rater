@@ -1010,6 +1010,20 @@ function savePreset() {
       .then(function (html) {
         lbDetails.innerHTML = html;
         lbDetails.querySelectorAll('.json-highlight').forEach(highlightJson);
+        // Inline scripts injected via innerHTML don't execute; wire tabs here.
+        lbDetails.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var tabName = btn.dataset.tab;
+            lbDetails.querySelectorAll('.lb-tab-btn').forEach(function (b) {
+              var active = b.dataset.tab === tabName;
+              b.classList.toggle('active', active);
+              b.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            lbDetails.querySelectorAll('.lb-tab-panel').forEach(function (p) {
+              p.classList.toggle('active', p.dataset.panel === tabName);
+            });
+          });
+        });
       })
       .catch(function (err) {
         if (err.name !== 'AbortError') {

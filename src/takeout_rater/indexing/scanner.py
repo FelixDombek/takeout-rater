@@ -54,6 +54,28 @@ def find_google_photos_root(takeout_dir: Path) -> Path:
     return takeout_dir
 
 
+def resolve_photos_root(library_root: Path) -> Path:
+    """Return the photos root directory for *library_root*.
+
+    Asset ``relpath`` and ``sidecar_relpath`` values are stored relative to
+    this directory.  Handles both the common nested structure
+    (``library_root/Takeout/Google Photos/``) and older flat exports where
+    ``Takeout/`` does not exist.
+
+    Args:
+        library_root: The top-level directory configured by the user (the one
+            that contains the ``Takeout/`` subfolder, or the ``Takeout/``
+            directory itself for older exports).
+
+    Returns:
+        The narrowest directory that covers all Google Photos albums.
+    """
+    takeout_dir = library_root / "Takeout"
+    if not takeout_dir.is_dir():
+        takeout_dir = library_root
+    return find_google_photos_root(takeout_dir)
+
+
 @dataclass(frozen=True)
 class AssetFile:
     """One image asset discovered during scanning.

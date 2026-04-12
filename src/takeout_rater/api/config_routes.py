@@ -118,7 +118,10 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     conn = open_library_db(p)
     request.app.state.db_conn = conn
     request.app.state.library_root = p
-    request.app.state.takeout_root = p
+    # Compute the actual photos root (where relpath/sidecar_relpath are relative to).
+    from takeout_rater.indexing.scanner import resolve_photos_root  # noqa: PLC0415
+
+    request.app.state.takeout_root = resolve_photos_root(p)
     request.app.state.thumbs_dir = p / "takeout-rater" / "thumbs"
 
     # Start background indexing so the library is populated without the user

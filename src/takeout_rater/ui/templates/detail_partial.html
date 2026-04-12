@@ -88,22 +88,3 @@
   </div>{# /lb-info-tabs #}
 </div>
 
-<script>
-(function () {
-  var root = document.currentScript.closest('.lb-detail-inner') || document;
-
-  root.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var tabName = btn.dataset.tab;
-      root.querySelectorAll('.lb-tab-btn').forEach(function (b) {
-        var active = b.dataset.tab === tabName;
-        b.classList.toggle('active', active);
-        b.setAttribute('aria-selected', active ? 'true' : 'false');
-      });
-      root.querySelectorAll('.lb-tab-panel').forEach(function (p) {
-        p.classList.toggle('active', p.dataset.panel === tabName);
-      });
-    });
-  });
-})();
-</script>
