@@ -821,7 +821,8 @@ class _RescanStartBody(BaseModel):
 def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
     """Start a background library rescan.
 
-    Re-processes assets through the indexing pipeline and sets
+    Re-processes existing assets through the indexing pipeline: re-parses
+    sidecar metadata, regenerates missing or stale thumbnails, and stamps
     ``indexer_version = CURRENT_INDEXER_VERSION`` on each asset.
 
     Body fields
@@ -829,7 +830,8 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
     mode : str
         ``"missing_only"`` (default) processes only assets whose
         ``indexer_version`` is ``NULL`` or less than
-        ``CURRENT_INDEXER_VERSION``.  ``"full"`` processes all assets.
+        ``CURRENT_INDEXER_VERSION``.  ``"full"`` processes all assets and
+        unconditionally regenerates all thumbnails.
 
     Returns ``409`` if a rescan job is already running.
     """
@@ -849,7 +851,10 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
     jobs["rescan"] = progress
 
     def _worker() -> None:
-        from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+        from takeout_rater.db.connection import (  # noqa: PLC0415
+            library_state_dir,
+            open_library_db,
+        )
         from takeout_rater.db.queries import (  # noqa: PLC0415
             CURRENT_INDEXER_VERSION,
             list_asset_ids_needing_rescan,
@@ -857,8 +862,9 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
         worker_conn = open_library_db(library_root)
         try:
-            # Try to locate the photos root for sidecar re-parsing; continue
-            # even if the Takeout directory is not present (e.g. in tests).
+            # Try to locate the photos root for sidecar re-parsing and
+            # thumbnail regeneration; continue even if the Takeout directory
+            # is not present (e.g. in tests).
             photos_root = None
             try:
                 from takeout_rater.indexing.scanner import (  # noqa: PLC0415
@@ -869,6 +875,9 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             except (FileNotFoundError, ValueError, OSError):
                 pass
 
+            thumbs_dir = library_state_dir(library_root) / "thumbs"
+            thumbs_dir.mkdir(parents=True, exist_ok=True)
+
             rows = list_asset_ids_needing_rescan(worker_conn, full=(mode == "full"))
             total = len(rows)
             progress.total = total
@@ -876,6 +885,8 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
             processed = 0
             skipped = 0
+            thumbs_ok = 0
+            thumbs_skip = 0
 
             for asset_id, _relpath, sidecar_relpath in rows:
                 progress.current_item = sidecar_relpath or _relpath
@@ -962,6 +973,26 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                     [*safe_updates.values(), asset_id],
                 )
 
+                # Regenerate thumbnail when the original file is accessible.
+                # missing_only: generate only if the thumb file is absent.
+                # full: always regenerate (fixes stale/corrupt thumbnails).
+                if photos_root is not None:
+                    from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
+                        generate_thumbnail,
+                        thumb_path_for_id,
+                    )
+
+                    image_path = photos_root / _relpath
+                    thumb = thumb_path_for_id(thumbs_dir, asset_id)
+                    if image_path.exists() and (mode == "full" or not thumb.exists()):
+                        try:
+                            generate_thumbnail(image_path, thumb)
+                            thumbs_ok += 1
+                        except (ImportError, OSError):
+                            thumbs_skip += 1
+                    else:
+                        thumbs_skip += 1
+
                 processed += 1
                 progress.processed = processed
                 progress.message = f"Rescanning {processed}\u202f/\u202f{total}\u2026"
@@ -971,8 +1002,13 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             worker_conn.commit()
             progress.processed = processed
             progress.current_item = ""
+            extras: list[str] = []
+            if skipped:
+                extras.append(f"{skipped} sidecar error(s)")
+            if thumbs_ok:
+                extras.append(f"{thumbs_ok} thumbnail(s) regenerated")
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
-                f" ({skipped} sidecar error(s))" if skipped else ""
+                f" ({', '.join(extras)})" if extras else ""
             )
             progress.running = False
             progress.done = True

@@ -31,8 +31,9 @@ from typing import Any
 
 #: Increment this constant whenever the indexing pipeline changes in a way
 #: that requires existing assets to be re-processed.  Version 1 is the
-#: baseline introduced with the "Rescan library" feature.
-CURRENT_INDEXER_VERSION: int = 1
+#: baseline introduced with the "Rescan library" feature.  Version 2 adds
+#: thumbnail regeneration to the rescan pipeline (HEIC/orientation fixes).
+CURRENT_INDEXER_VERSION: int = 2
 
 
 @dataclass
