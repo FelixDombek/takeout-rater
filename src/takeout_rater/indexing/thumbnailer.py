@@ -8,6 +8,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+try:
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
 THUMB_MAX_PX: int = 512
 THUMB_FORMAT: str = "JPEG"
 THUMB_QUALITY: int = 85
