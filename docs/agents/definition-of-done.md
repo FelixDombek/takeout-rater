@@ -26,7 +26,7 @@ A contribution is complete when **all** of the following are true.
 
 - [ ] New scorer is listed in `takeout_rater/scorers/registry.py`
 - [ ] New scorer follows the workflow in `docs/agents/how-to-add-a-scorer.md`
-- [ ] Optional dependencies are declared in `pyproject.toml` under the correct extra
+- [ ] Dependencies are added to `pyproject.toml` base `[project] dependencies`
 
 ## PR hygiene
 

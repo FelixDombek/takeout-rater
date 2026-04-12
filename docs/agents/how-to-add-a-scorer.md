@@ -13,7 +13,7 @@ Follow these steps to add a new scorer to `takeout-rater`.
 
 > **Sub-package vs flat file**: use a single `.py` file unless the adapter spans
 > multiple source files (e.g. a custom model architecture module + a scorer module).
-> Both existing adapters (`laion.py`, `nsfw.py`) are flat files.
+> All existing adapters (`laion.py`, `nsfw.py`, `clip_iqa.py`, `nima.py`, `pyiqa_adapter.py`) are flat files.
 
 ---
 
@@ -158,7 +158,7 @@ class MyMLScorer(BaseScorer):
                 ),
             ),
             default_variant_id="v1",
-            requires_extras=("my_extra",),  # name of the pyproject.toml optional extra
+            requires_extras=(),  # base install; use extras only in exceptional cases
         )
 
     @classmethod
@@ -236,8 +236,10 @@ Open `src/takeout_rater/scorers/registry.py` and add:
 from takeout_rater.scorers.adapters.my_ml_scorer import MyMLScorer  # or heuristics/…
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
-    DummyScorer,
     BlurScorer,
+    LuminosityScorer,
+    NoiseScorer,
+    # ...existing scorers...
     MyMLScorer,   # ← add here
 ]
 ```
