@@ -18,6 +18,12 @@ import sys
 import time
 from pathlib import Path
 
+# Exit code returned by `serve` when the on-disk database was built by an
+# incompatible schema version.  The launcher script checks this code and
+# offers to delete the stale database before restarting.
+# NOTE: keep in sync with _EXIT_SCHEMA_MISMATCH in scripts/launcher.py.
+_EXIT_SCHEMA_MISMATCH: int = 3
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -751,11 +757,20 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     if library_root is not None:
         from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
+        from takeout_rater.db.schema import SchemaMismatchError  # noqa: PLC0415
 
         db_path = library_db_path(library_root)
         if db_path.exists():
             print("Opening library database …", flush=True)
-            conn = open_library_db(library_root)
+            try:
+                conn = open_library_db(library_root)
+            except SchemaMismatchError as exc:
+                print(
+                    f"error: {exc}\n       Database path: {db_path}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return _EXIT_SCHEMA_MISMATCH
             print("Database ready.", flush=True)
         else:
             print(

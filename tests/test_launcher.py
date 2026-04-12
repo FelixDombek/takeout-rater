@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -113,3 +114,117 @@ def test_cuda_to_whl_url_exactly_at_minimum() -> None:
 
 def test_cuda_to_whl_url_just_below_minimum() -> None:
     assert launcher._cuda_to_whl_url((12, 0)) is None
+
+
+# ---------------------------------------------------------------------------
+# _get_db_path
+# ---------------------------------------------------------------------------
+
+
+def test_get_db_path_returns_path_when_config_exists(tmp_path: Path) -> None:
+    library_root = tmp_path / "my_photos"
+    config = tmp_path / ".takeout-rater.json"
+    config.write_text(f'{{"takeout_path": "{library_root}"}}', encoding="utf-8")
+
+    with patch.object(launcher, "ROOT", tmp_path):
+        result = launcher._get_db_path()
+
+    assert result == library_root / "takeout-rater" / "library.sqlite"
+
+
+def test_get_db_path_returns_none_when_config_absent(tmp_path: Path) -> None:
+    with patch.object(launcher, "ROOT", tmp_path):
+        assert launcher._get_db_path() is None
+
+
+def test_get_db_path_returns_none_when_config_has_no_takeout_path(tmp_path: Path) -> None:
+    config = tmp_path / ".takeout-rater.json"
+    config.write_text("{}", encoding="utf-8")
+
+    with patch.object(launcher, "ROOT", tmp_path):
+        assert launcher._get_db_path() is None
+
+
+def test_get_db_path_returns_none_on_malformed_json(tmp_path: Path) -> None:
+    config = tmp_path / ".takeout-rater.json"
+    config.write_text("not-valid-json", encoding="utf-8")
+
+    with patch.object(launcher, "ROOT", tmp_path):
+        assert launcher._get_db_path() is None
+
+
+# ---------------------------------------------------------------------------
+# _prompt_and_delete_db
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_and_delete_db_yes_deletes_file(tmp_path: Path) -> None:
+    db = tmp_path / "library.sqlite"
+    db.write_bytes(b"")
+
+    with patch("builtins.input", return_value="y"):
+        result = launcher._prompt_and_delete_db(db)
+
+    assert result is True
+    assert not db.exists()
+
+
+def test_prompt_and_delete_db_yes_removes_wal_shm(tmp_path: Path) -> None:
+    db = tmp_path / "library.sqlite"
+    wal = tmp_path / "library.sqlite-wal"
+    shm = tmp_path / "library.sqlite-shm"
+    for f in (db, wal, shm):
+        f.write_bytes(b"")
+
+    with patch("builtins.input", return_value="yes"):
+        launcher._prompt_and_delete_db(db)
+
+    assert not wal.exists()
+    assert not shm.exists()
+
+
+def test_prompt_and_delete_db_no_keeps_file(tmp_path: Path) -> None:
+    db = tmp_path / "library.sqlite"
+    db.write_bytes(b"")
+
+    with patch("builtins.input", return_value="n"):
+        result = launcher._prompt_and_delete_db(db)
+
+    assert result is False
+    assert db.exists()
+
+
+def test_prompt_and_delete_db_empty_answer_keeps_file(tmp_path: Path) -> None:
+    db = tmp_path / "library.sqlite"
+    db.write_bytes(b"")
+
+    with patch("builtins.input", return_value=""):
+        result = launcher._prompt_and_delete_db(db)
+
+    assert result is False
+    assert db.exists()
+
+
+def test_prompt_and_delete_db_eof_returns_false(tmp_path: Path) -> None:
+    db = tmp_path / "library.sqlite"
+    db.write_bytes(b"")
+
+    with patch("builtins.input", side_effect=EOFError):
+        result = launcher._prompt_and_delete_db(db)
+
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _wait_for_server — dead-process bail-out
+# ---------------------------------------------------------------------------
+
+
+def test_wait_for_server_returns_false_when_process_already_dead() -> None:
+    dead_proc = MagicMock()
+    dead_proc.poll.return_value = 3  # process exited
+
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
+        result = launcher._wait_for_server(dead_proc, timeout=5)
+
+    assert result is False

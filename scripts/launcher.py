@@ -28,6 +28,7 @@ a browser-based setup page when the library path has not been set yet.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import signal
 import subprocess
@@ -50,6 +51,15 @@ PORT = 8765
 HOST = "127.0.0.1"
 HEALTH_URL = f"http://{HOST}:{PORT}/health"
 READY_TIMEOUT = 60  # seconds to wait for the server to start
+
+# Exit code that the `serve` command emits when the on-disk database was built
+# by an incompatible schema version.
+# NOTE: keep in sync with _EXIT_SCHEMA_MISMATCH in src/takeout_rater/cli.py.
+_EXIT_SCHEMA_MISMATCH: int = 3
+
+# Sub-directory and filename used by the library database (mirrors connection.py).
+_STATE_SUBDIR = "takeout-rater"
+_DB_FILENAME = "library.sqlite"
 
 # Dependency definition files whose content determines whether a reinstall is
 # needed.  Add ``requirements*.txt`` here if you introduce them in future.
@@ -108,8 +118,11 @@ def _install_deps() -> None:
     DEPS_HASH_FILE.write_text(_compute_deps_hash())
 
 
-def _wait_for_server(timeout: int = READY_TIMEOUT) -> bool:
+def _wait_for_server(proc: subprocess.Popen[bytes], timeout: int = READY_TIMEOUT) -> bool:
     """Poll the health endpoint until it responds or *timeout* seconds pass.
+
+    Returns ``False`` immediately if *proc* has already exited (to avoid
+    waiting the full timeout after a crash).
 
     Prints elapsed-time progress every 10 seconds so the user can see that
     the launcher is still waiting (the server may be loading heavy ML libraries
@@ -120,6 +133,9 @@ def _wait_for_server(timeout: int = READY_TIMEOUT) -> bool:
     last_report = start
     _PROGRESS_INTERVAL = 10  # seconds between progress lines
     while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            # Server process has exited — no point waiting further.
+            return False
         try:
             with urllib.request.urlopen(HEALTH_URL, timeout=1):
                 return True
@@ -272,6 +288,50 @@ def _print_gpu_diagnostics() -> None:
         pass
 
 
+def _get_db_path() -> Path | None:
+    """Return the path to the library database as stored in the local config.
+
+    Returns ``None`` if the config file is absent, malformed, or does not
+    contain a ``takeout_path`` entry.
+    """
+    config_file = ROOT / ".takeout-rater.json"
+    try:
+        data = json.loads(config_file.read_text(encoding="utf-8"))
+        raw = data.get("takeout_path")
+        if raw:
+            return Path(raw) / _STATE_SUBDIR / _DB_FILENAME
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _prompt_and_delete_db(db_path: Path) -> bool:
+    """Ask the user whether to delete *db_path*, then delete it if they agree.
+
+    Also removes the accompanying WAL and SHM sidecar files when present.
+
+    Returns ``True`` when the database was deleted, ``False`` otherwise.
+    """
+    print(
+        f"\nThe library database at:\n  {db_path}\n"
+        "was created by an older version of takeout-rater and is no longer\n"
+        "compatible.  It must be deleted so a new library can be built."
+    )
+    try:
+        answer = input("Delete the old database and start fresh? [y/N] ").strip().lower()
+    except EOFError:
+        print()
+        return False
+    if answer in ("y", "yes"):
+        db_path.unlink(missing_ok=True)
+        # Remove WAL / SHM sidecars that SQLite may have left behind.
+        for suffix in ("-wal", "-shm"):
+            (db_path.parent / (db_path.name + suffix)).unlink(missing_ok=True)
+        print("Database deleted.")
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -327,8 +387,36 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 5. Wait for readiness, then open browser
     # ------------------------------------------------------------------
-    if _wait_for_server():
+    if _wait_for_server(proc):
         webbrowser.open(f"http://{HOST}:{PORT}/")
+    elif proc.poll() is not None and proc.returncode == _EXIT_SCHEMA_MISMATCH:
+        # ------------------------------------------------------------------
+        # 5a. Schema mismatch: offer to delete the old database and restart
+        # ------------------------------------------------------------------
+        db_path = _get_db_path()
+        if db_path is None or not db_path.exists():
+            print(
+                "error: incompatible database detected but its path could not be\n"
+                "       determined from the local config.  Please delete the file\n"
+                f"       manually ({_STATE_SUBDIR}/{_DB_FILENAME} inside your\n"
+                "       library folder) and run the launcher again.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not _prompt_and_delete_db(db_path):
+            print("Startup aborted — database not deleted.")
+            sys.exit(0)
+        # Restart the server with a fresh database.
+        print(f"\nStarting server on http://{HOST}:{PORT}/ …")
+        proc = subprocess.Popen(cmd, cwd=str(ROOT))
+        if _wait_for_server(proc):
+            webbrowser.open(f"http://{HOST}:{PORT}/")
+        else:
+            print(
+                f"Warning: server did not respond at {HEALTH_URL} within "
+                f"{READY_TIMEOUT}s.  Opening browser anyway …"
+            )
+            webbrowser.open(f"http://{HOST}:{PORT}/")
     else:
         print(
             f"Warning: server did not respond at {HEALTH_URL} within "
