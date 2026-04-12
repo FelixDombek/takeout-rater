@@ -114,6 +114,32 @@
     navigate away and return to check progress.
   </p>
 
+  <!-- ── Rescan library ─────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-rescan">
+    <div class="job-card-header">
+      <h2>🔄 Rescan library</h2>
+      <span class="badge-running" id="badge-rescan" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-rescan" onclick="startJob('rescan')">Run Rescan</button>
+    </div>
+    <p class="desc">
+      Re-process <strong>existing</strong> assets through the indexing pipeline: re-parses
+      sidecar metadata and regenerates thumbnails. Use <em>Missing only</em> to update
+      assets that haven't been processed at the current indexer version (e.g. after an
+      upgrade, or when thumbnails failed to generate), or <em>Full</em> to re-index
+      everything and regenerate all thumbnails. Scores and cluster data are never modified.
+    </p>
+    <div class="job-options">
+      <label for="rescan-mode">Mode:</label>
+      <select id="rescan-mode">
+        <option value="missing_only">Missing only (stale / unversioned assets)</option>
+        <option value="full">Full (all assets)</option>
+      </select>
+    </div>
+    <div class="progress-bar-wrap" id="prog-wrap-rescan"><div class="progress-bar" id="prog-bar-rescan"></div></div>
+    <div class="job-current-item" id="current-item-rescan"></div>
+    <div class="job-status" id="status-rescan"></div>
+  </div>
+
   <!-- ── Index ─────────────────────────────────────────────────────────── -->
   <div class="job-card" id="card-index">
     <div class="job-card-header">
@@ -122,8 +148,9 @@
       <button class="btn btn-primary btn-run" id="btn-index" onclick="startJob('index')">Run Index</button>
     </div>
     <p class="desc">
-      Scan the Takeout folder and index new photos into the library. Use this after adding
-      new Takeout archives or if the initial setup index was interrupted.
+      Scan the Takeout folder and <strong>discover new photos</strong> to add to the library.
+      Use this after adding new Takeout archives or if the initial setup index was interrupted.
+      To fix thumbnails or metadata for already-indexed photos, use <em>Rescan library</em> above.
     </p>
     <div class="progress-bar-wrap" id="prog-wrap-index"><div class="progress-bar" id="prog-bar-index"></div></div>
     <div class="job-current-item" id="current-item-index"></div>
@@ -210,31 +237,6 @@
     <div class="progress-bar-wrap" id="prog-wrap-rehash"><div class="progress-bar" id="prog-bar-rehash"></div></div>
     <div class="job-current-item" id="current-item-rehash"></div>
     <div class="job-status" id="status-rehash"></div>
-  </div>
-
-  <!-- ── Rescan library ─────────────────────────────────────────────────── -->
-  <div class="job-card" id="card-rescan">
-    <div class="job-card-header">
-      <h2>🔄 Rescan library</h2>
-      <span class="badge-running" id="badge-rescan" style="display:none;">Running…</span>
-      <button class="btn btn-primary btn-run" id="btn-rescan" onclick="startJob('rescan')">Run Rescan</button>
-    </div>
-    <p class="desc">
-      Re-process assets through the indexing pipeline. Use <em>Missing only</em> to update
-      assets that haven't been processed at the current indexer version (e.g. after an
-      upgrade), or <em>Full</em> to re-index everything. Scores and cluster data are
-      never modified.
-    </p>
-    <div class="job-options">
-      <label for="rescan-mode">Mode:</label>
-      <select id="rescan-mode">
-        <option value="missing_only">Missing only (stale / unversioned assets)</option>
-        <option value="full">Full (all assets)</option>
-      </select>
-    </div>
-    <div class="progress-bar-wrap" id="prog-wrap-rescan"><div class="progress-bar" id="prog-bar-rescan"></div></div>
-    <div class="job-current-item" id="current-item-rescan"></div>
-    <div class="job-status" id="status-rescan"></div>
   </div>
 </div>
 
