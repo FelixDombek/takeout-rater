@@ -688,6 +688,174 @@ def test_asset_detail_shows_only_canonical_sidecar(tmp_path: Path) -> None:
     assert "album2/img.jpg" in resp.text
 
 
+# ── EXIF data display ─────────────────────────────────────────────────────────
+
+
+def _make_jpeg_with_exif(path: Path, make: str = "TestCamera", model: str = "TestModel X1") -> None:
+    """Create a minimal JPEG at *path* with Make and Model EXIF tags."""
+    from PIL import ExifTags  # noqa: PLC0415
+    from PIL import Image as _Image
+
+    img = _Image.new("RGB", (4, 4), color=(100, 150, 200))
+    exif = img.getexif()
+    exif[ExifTags.Base.Make] = make
+    exif[ExifTags.Base.Model] = model
+    img.save(path, "JPEG", exif=exif.tobytes())
+
+
+def test_asset_detail_shows_exif_data(tmp_path: Path) -> None:
+    """Detail page should display EXIF tags when the image file has EXIF data."""
+    conn = _make_db()
+    relpath = "Photos/img.jpg"
+    img_path = tmp_path / relpath
+    img_path.parent.mkdir(parents=True, exist_ok=True)
+    _make_jpeg_with_exif(img_path, make="CoolBrand", model="PhotoPro 9")
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": relpath,
+            "filename": "img.jpg",
+            "ext": ".jpg",
+            "size_bytes": img_path.stat().st_size,
+            "mime": "image/jpeg",
+            "indexed_at": int(time.time()),
+        },
+    )
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+    assert "CoolBrand" in resp.text
+    assert "PhotoPro 9" in resp.text
+    assert "No EXIF data available" not in resp.text
+
+
+def test_asset_detail_shows_exif_data_partial(tmp_path: Path) -> None:
+    """Lightbox partial should also display EXIF data when the image has EXIF tags."""
+    conn = _make_db()
+    relpath = "Photos/img.jpg"
+    img_path = tmp_path / relpath
+    img_path.parent.mkdir(parents=True, exist_ok=True)
+    _make_jpeg_with_exif(img_path, make="SnapBrand", model="QuickShot Z")
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": relpath,
+            "filename": "img.jpg",
+            "ext": ".jpg",
+            "size_bytes": img_path.stat().st_size,
+            "mime": "image/jpeg",
+            "indexed_at": int(time.time()),
+        },
+    )
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}?partial=1")
+    assert resp.status_code == 200
+    assert "SnapBrand" in resp.text
+    assert "QuickShot Z" in resp.text
+    assert "No EXIF data available" not in resp.text
+
+
+def test_asset_detail_no_exif_when_image_missing(tmp_path: Path) -> None:
+    """Detail page should show 'No EXIF data available' when the image file does not exist."""
+    conn = _make_db()
+    asset_id = _add_asset(conn, "Photos/ghost.jpg")
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+    assert "No EXIF data available" in resp.text
+
+
+def test_asset_detail_no_exif_when_image_has_none(tmp_path: Path) -> None:
+    """Detail page shows 'No EXIF data available' when the JPEG contains no EXIF metadata."""
+    from PIL import Image as _Image  # noqa: PLC0415
+
+    conn = _make_db()
+    relpath = "Photos/no_exif.jpg"
+    img_path = tmp_path / relpath
+    img_path.parent.mkdir(parents=True, exist_ok=True)
+    # Save without EXIF — the resulting file has no Exif APP1 segment.
+    _Image.new("RGB", (2, 2)).save(str(img_path), "JPEG")
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": relpath,
+            "filename": "no_exif.jpg",
+            "ext": ".jpg",
+            "size_bytes": img_path.stat().st_size,
+            "mime": "image/jpeg",
+            "indexed_at": int(time.time()),
+        },
+    )
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+    assert "No EXIF data available" in resp.text
+
+
+# ── End-to-end: indexer → detail page ────────────────────────────────────────
+
+
+def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> None:
+    """End-to-end: after indexing a real takeout tree the detail page must display
+    both the sidecar JSON panel and the EXIF data panel.
+
+    This test exercises the complete stack:
+        real takeout layout on disk
+        → run_index()  (scan + upsert)
+        → create_app() (resolves photos_root from library_root)
+        → GET /assets/{id}
+        → sidecar JSON content visible
+        → EXIF Make/Model visible
+    """
+    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+    from takeout_rater.db.queries import list_assets  # noqa: F811, PLC0415
+    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+
+    # Build a minimal takeout tree with a real JPEG (EXIF) and a sidecar file.
+    album = tmp_path / "Takeout" / "Photos from 2026"
+    album.mkdir(parents=True)
+
+    img_path = album / "photo.jpg"
+    _make_jpeg_with_exif(img_path, make="PipelineCamera", model="FullStack 5000")
+
+    (album / "photo.jpg.supplemental-metadata.json").write_text(
+        '{"title":"photo.jpg","description":"pipeline test","url":"",'
+        '"creationTime":{"timestamp":"1771361057"},'
+        '"photoTakenTime":{"timestamp":"1771354888"},'
+        '"imageViews":"42"}',
+        encoding="utf-8",
+    )
+
+    # Run the real indexer — this is the full run_index pipeline.
+    conn = open_library_db(tmp_path)
+    run_index(tmp_path, conn, generate_thumbs=False)
+
+    # create_app must resolve the correct photos_root so file reads succeed.
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+
+    rows = list_assets(conn, limit=10)
+    assert len(rows) == 1, f"Expected 1 indexed asset, got {len(rows)}"
+    asset_id = rows[0].id
+
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+
+    # Sidecar JSON panel: content from the .supplemental-metadata.json file.
+    assert "pipeline test" in resp.text
+    assert "imageViews" in resp.text
+    assert "No sidecar JSON available" not in resp.text
+
+    # EXIF panel: Make and Model tags read directly from the image file.
+    assert "PipelineCamera" in resp.text
+    assert "FullStack 5000" in resp.text
+    assert "No EXIF data available" not in resp.text
+
+
 def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> None:
     """Detail page should find sidecar when library has a Takeout/Google Photos structure.
 
