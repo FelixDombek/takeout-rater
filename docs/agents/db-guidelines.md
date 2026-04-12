@@ -1,6 +1,7 @@
 # Database guidelines
 
-> **Status:** Iteration 8 — `indexer_version` column and rescan job added.
+> **Status:** Iteration 11 — `CURRENT_INDEXER_VERSION` bumped to 2 (thumbnail
+> regeneration added to the rescan pipeline).
 > This document captures the conventions to follow when extending the database
 > in future iterations.
 
@@ -56,11 +57,19 @@
 #### Rescan / upgrade workflow
 
 1. Add the new column via a migration SQL file (e.g. `0005_…`).
+   *(If no schema change is needed — e.g. only pipeline logic changes — skip this step.)*
 2. Update `CURRENT_INDEXER_VERSION` in `queries.py` (e.g. `1 → 2`).
 3. Add population logic in the rescan worker inside `api/jobs.py`.
 4. Users navigate to `/jobs` → **Rescan library** → select *Missing only* →
    click **Run Rescan**.  Progress is shown live; the rest of the app remains
    fully navigable during the background job.
+
+#### Version history
+
+| Version | Iteration | What changed |
+|---------|-----------|--------------|
+| 1 | 8 | Baseline: `indexer_version` column introduced; rescan re-parses sidecar metadata |
+| 2 | 11 | Rescan now also regenerates thumbnails (`missing_only`: absent thumbs only; `full`: all thumbs) |
 
 ---
 
