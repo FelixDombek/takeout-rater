@@ -40,6 +40,23 @@ def library_db_path(library_root: Path) -> Path:
     return library_root / _STATE_DIR / _DB_FILENAME
 
 
+def open_db(db_path: Path) -> sqlite3.Connection:
+    """Open an existing SQLite database at *db_path* without running migrations.
+
+    This is intended for per-request connections where migrations have already
+    been applied by :func:`open_library_db`.
+
+    Returns:
+        An open :class:`sqlite3.Connection` with ``row_factory`` set to
+        :data:`sqlite3.Row` for convenient column access by name.
+    """
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
 def open_library_db(library_root: Path) -> sqlite3.Connection:
     """Open (or create) the library SQLite database for *library_root*.
 
@@ -57,11 +74,6 @@ def open_library_db(library_root: Path) -> sqlite3.Connection:
     state_dir = library_state_dir(library_root)
     db_path = state_dir / _DB_FILENAME
 
-    conn = sqlite3.connect(str(db_path), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    # Enable WAL mode for better concurrent read performance
-    conn.execute("PRAGMA journal_mode=WAL")
-    # Enable foreign-key enforcement
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn = open_db(db_path)
     migrate(conn)
     return conn
