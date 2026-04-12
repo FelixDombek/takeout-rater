@@ -453,8 +453,6 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             else:
                 progress.message = "Scoring complete."
             progress.current_item = ""
-            progress.current_scorer_id = ""
-            progress.current_variant_id = ""
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
