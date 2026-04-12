@@ -112,19 +112,52 @@
   }
 
   .scorer-variants {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
     margin-bottom: 0.75rem;
   }
-  .scorer-variants label { font-size: 0.8rem; color: #555; }
-  .scorer-variants select {
-    font-size: 0.8rem;
-    padding: 0.25rem 0.45rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    background: #fff;
+  .scorer-variants-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.4rem;
+  }
+  .scorer-variant-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    background: #f8f9fc;
+    border: 1px solid #e8eaf0;
+    border-radius: 5px;
+    margin-bottom: 0.35rem;
+  }
+  .scorer-variant-row:last-child { margin-bottom: 0; }
+  .scorer-variant-check {
+    margin-top: 0.15rem;
+    flex-shrink: 0;
+    accent-color: #1a5cdb;
+  }
+  .scorer-variant-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .scorer-variant-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #222;
+    margin-bottom: 0.1rem;
+  }
+  .scorer-variant-desc {
+    font-size: 0.78rem;
+    color: #666;
+    line-height: 1.45;
+  }
+  .scorer-variant-btn {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    padding: 0.25rem 0.65rem;
+    align-self: center;
   }
   .scorer-options {
     display: flex;
@@ -317,11 +350,13 @@
 
     header.appendChild(titleWrap);
 
-    // Run / Cancel button
+    // Run / Cancel button — for scorers with variants, label is "Run all variants"
     var btn = document.createElement('button');
     btn.className = 'btn btn-primary';
     btn.id = 'btn-' + s.id;
-    btn.textContent = '\u25b6 Run';
+    btn.textContent = (s.variants && s.variants.length > 0)
+      ? '\u25b6 Run all variants'
+      : '\u25b6 Run';
     btn.disabled = !s.available;
     btn.onclick = function () { runScorer(s.id); };
     header.appendChild(btn);
@@ -344,25 +379,59 @@
     _applyDescMode(desc);
     card.appendChild(desc);
 
-    // Variants selector (only when multiple variants)
-    if (s.variants && s.variants.length > 1) {
-      var varRow = document.createElement('div');
-      varRow.className = 'scorer-variants';
-      var varLabel = document.createElement('label');
-      varLabel.textContent = 'Variant:';
-      varLabel.htmlFor = 'variant-' + s.id;
-      varRow.appendChild(varLabel);
-      var varSel = document.createElement('select');
-      varSel.id = 'variant-' + s.id;
+    // Variants subpanel (only when variants are defined)
+    if (s.variants && s.variants.length > 0) {
+      var varPanel = document.createElement('div');
+      varPanel.className = 'scorer-variants';
+
+      var varLabelEl = document.createElement('div');
+      varLabelEl.className = 'scorer-variants-label';
+      varLabelEl.textContent = 'Variants';
+      varPanel.appendChild(varLabelEl);
+
       s.variants.forEach(function (v) {
-        var opt = document.createElement('option');
-        opt.value = v.id;
-        opt.textContent = v.name;
-        if (v.description) opt.title = v.description;
-        varSel.appendChild(opt);
+        var row = document.createElement('div');
+        row.className = 'scorer-variant-row';
+        row.id = 'variant-row-' + s.id + '-' + v.id;
+
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'scorer-variant-check';
+        cb.id = 'variant-check-' + s.id + '-' + v.id;
+        cb.checked = true;
+        cb.title = 'Include this variant when running all scorers';
+        row.appendChild(cb);
+
+        var body = document.createElement('div');
+        body.className = 'scorer-variant-body';
+
+        var nameEl = document.createElement('div');
+        nameEl.className = 'scorer-variant-name';
+        nameEl.textContent = v.name;
+        body.appendChild(nameEl);
+
+        if (v.description) {
+          var descEl = document.createElement('div');
+          descEl.className = 'scorer-variant-desc';
+          descEl.textContent = v.description;
+          body.appendChild(descEl);
+        }
+        row.appendChild(body);
+
+        var runBtn = document.createElement('button');
+        runBtn.className = 'btn btn-primary scorer-variant-btn';
+        runBtn.id = 'variant-btn-' + s.id + '-' + v.id;
+        runBtn.textContent = '\u25b6 Run';
+        runBtn.disabled = !s.available;
+        (function (scorerId, variantId) {
+          runBtn.onclick = function () { runVariant(scorerId, variantId); };
+        })(s.id, v.id);
+        row.appendChild(runBtn);
+
+        varPanel.appendChild(row);
       });
-      varRow.appendChild(varSel);
-      card.appendChild(varRow);
+
+      card.appendChild(varPanel);
     }
 
     // Re-score checkbox
@@ -423,6 +492,7 @@
   function applyState(data) {
     var running = data.running;
     var activeSid = data.current_scorer_id || '';
+    var activeVid = data.current_variant_id || '';
     var cancelled = data.cancelled || false;
 
     // Update run-all buttons
@@ -475,6 +545,16 @@
       }
       if (card) {
         card.classList.toggle('running', isThisScorer);
+      }
+
+      // Update variant run buttons: disable all while any job is running
+      if (s.variants) {
+        s.variants.forEach(function (v) {
+          var vBtn = document.getElementById('variant-btn-' + s.id + '-' + v.id);
+          if (vBtn) {
+            vBtn.disabled = running || !s.available;
+          }
+        });
       }
 
       if (isThisScorer) {
@@ -582,15 +662,24 @@
   // Actions
   // ---------------------------------------------------------------------------
 
+  // Run all variants of a scorer (or just the scorer if no variants defined).
   function runScorer(scorerId) {
     var rerunCb = document.getElementById('rerun-' + scorerId);
-    var varSel  = document.getElementById('variant-' + scorerId);
     var body = {
       scorer_id: scorerId,
       rerun: rerunCb ? rerunCb.checked : false,
     };
-    if (varSel) body.variant_id = varSel.value;
+    _startScoreJob(body);
+  }
 
+  // Run a specific variant of a scorer.
+  function runVariant(scorerId, variantId) {
+    var rerunCb = document.getElementById('rerun-' + scorerId);
+    var body = {
+      scorer_id: scorerId,
+      variant_id: variantId,
+      rerun: rerunCb ? rerunCb.checked : false,
+    };
     _startScoreJob(body);
   }
 
