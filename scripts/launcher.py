@@ -109,13 +109,26 @@ def _install_deps() -> None:
 
 
 def _wait_for_server(timeout: int = READY_TIMEOUT) -> bool:
-    """Poll the health endpoint until it responds or *timeout* seconds pass."""
-    deadline = time.monotonic() + timeout
+    """Poll the health endpoint until it responds or *timeout* seconds pass.
+
+    Prints elapsed-time progress every 10 seconds so the user can see that
+    the launcher is still waiting (the server may be loading heavy ML libraries
+    on first startup).
+    """
+    start = time.monotonic()
+    deadline = start + timeout
+    last_report = start
+    _PROGRESS_INTERVAL = 10  # seconds between progress lines
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(HEALTH_URL, timeout=1):
                 return True
         except (urllib.error.URLError, OSError):
+            now = time.monotonic()
+            if now - last_report >= _PROGRESS_INTERVAL:
+                elapsed = int(now - start)
+                print(f"  Still waiting for server to start … ({elapsed}s elapsed)")
+                last_report = now
             time.sleep(0.4)
     return False
 

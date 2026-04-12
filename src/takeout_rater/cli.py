@@ -731,6 +731,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     configured yet.  In that case the UI shows a setup page that lets the user
     select the folder from their browser.
     """
+    print("Importing server framework …", flush=True)
     try:
         import uvicorn  # noqa: PLC0415
     except ImportError:
@@ -741,6 +742,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
+    print("Loading application modules …", flush=True)
     from takeout_rater.config import get_takeout_path  # noqa: PLC0415
     from takeout_rater.ui.app import create_app  # noqa: PLC0415
 
@@ -752,7 +754,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
         db_path = library_db_path(library_root)
         if db_path.exists():
+            print("Opening library database …", flush=True)
             conn = open_library_db(library_root)
+            print("Database ready.", flush=True)
         else:
             print(
                 f"note: library database not found at {db_path}\n"
@@ -760,6 +764,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 "      The UI will remind you.",
             )
 
+    print("Building application …", flush=True)
     app = create_app(library_root, conn)
 
     url = f"http://{args.host}:{args.port}/"
@@ -769,7 +774,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         print(f"Starting takeout-rater UI at {url}setup")
     print("Press Ctrl+C to stop.")
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     if conn is not None:
         conn.close()
     return 0
