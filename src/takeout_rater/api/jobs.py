@@ -356,43 +356,12 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             open_library_db,  # noqa: PLC0415
         )
         from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
-        from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
         from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
         thumbs_dir = library_state_dir(library_root) / "thumbs"
         try:
-            # ── Phase 1: Compute pHashes (needed for clustering later) ──────
-            progress.message = "Computing perceptual hashes…"
-            progress.processed = 0
-            progress.total = 0
-            progress.current_item = ""
-
-            # Pre-build id→relpath map for current-item display.
-            _id_to_relpath: dict[int, str] = {
-                row[0]: row[1]
-                for row in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
-            }
-
-            def _phash_progress(done: int, total: int) -> None:
-                progress.processed = done
-                progress.total = total
-                progress.message = f"Computing perceptual hashes… {done}\u202f/\u202f{total}"
-
-            def _phash_item(asset_id: int, done: int, total: int) -> None:
-                progress.current_item = _id_to_relpath.get(asset_id, "")
-
-            compute_phash_all(
-                worker_conn,
-                thumbs_dir,
-                on_progress=_phash_progress,
-                on_item=_phash_item,
-                cancel_check=progress.cancel_event.is_set,
-            )
-
-            progress.current_item = ""
-
-            # ── Phase 2: Run scorers ─────────────────────────────────────────
+            # ── Run scorers ──────────────────────────────────────────────────
             # Build the list of (scorer_id, variant_id) pairs to run.
             # When no specific scorer is requested every available scorer is
             # run for *all* of its variants (or its single default variant if
