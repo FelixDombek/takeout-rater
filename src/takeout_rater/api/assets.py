@@ -20,6 +20,7 @@ from takeout_rater.db.queries import (
     get_asset_alias_paths,
     get_asset_by_id,
     get_asset_scores,
+    get_phash,
     get_taken_at_range,
     list_assets,
     list_assets_by_score,
@@ -358,6 +359,10 @@ def asset_detail(
     # Load EXIF data from the original image file.
     exif_data = _read_exif_data(takeout_root, asset)
 
+    # Load pHash for the asset (only needed for the full detail view).
+    phash_row = get_phash(conn, asset_id) if partial != "1" else None
+    phash_hex: str | None = phash_row["phash_hex"] if phash_row else None
+
     templates = request.app.state.templates
     ctx = {
         "request": request,
@@ -366,6 +371,7 @@ def asset_detail(
         "alias_paths": alias_paths,
         "sidecar_json": sidecar_json,
         "exif_data": exif_data,
+        "phash_hex": phash_hex,
     }
     if partial == "1":
         return templates.TemplateResponse("detail_partial.html", ctx)

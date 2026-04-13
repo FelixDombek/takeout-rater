@@ -89,6 +89,25 @@
   .json-number { color: #741b47; }
   .json-bool   { color: #b45f06; }
   .json-null   { color: #999; }
+  /* pHash canvas */
+  .phash-canvas-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+  .phash-canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+  }
+  .phash-hex {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: #888;
+    word-break: break-all;
+  }
 </style>
 {% endblock %}
 
@@ -173,6 +192,11 @@
     <button class="info-tab-btn" role="tab" aria-selected="false"
             aria-controls="tab-exif" id="tbtn-exif"
             onclick="switchTab('exif')">EXIF</button>
+    {% if phash_hex %}
+    <button class="info-tab-btn" role="tab" aria-selected="false"
+            aria-controls="tab-phash" id="tbtn-phash"
+            onclick="switchTab('phash')">pHash</button>
+    {% endif %}
   </div>
 
   {# SCORES tab #}
@@ -214,6 +238,18 @@
     <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No EXIF data available.</p>
     {% endif %}
   </div>
+
+  {# pHash tab #}
+  {% if phash_hex %}
+  <div id="tab-phash" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-phash">
+    <div class="phash-canvas-wrap">
+      <canvas id="phash-canvas" class="phash-canvas" width="64" height="64"
+              title="Difference hash (dhash16) – 16×16 grid, each cell shown as a 4×4 px block.
+Bright pixel = left neighbour was brighter; dark pixel = right neighbour was brighter."></canvas>
+      <div class="phash-hex" title="64-character hex encoding of the 256-bit dhash">{{ phash_hex }}</div>
+    </div>
+  </div>
+  {% endif %}
 </div>{# /info-tabs #}
 
 <script>
@@ -250,5 +286,26 @@ function switchTab(name) {
     panel.classList.toggle("active", panel.id === "tab-" + name);
   });
 }
+
+{% if phash_hex %}
+(function () {
+  const hex = {{ phash_hex | tojson }};
+  const BITS = 256;
+  const SIDE = 16;
+  const BLOCK = 4;
+  const canvas = document.getElementById("phash-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  // Convert hex → big integer bits, MSB-first (matches compute_dhash bit layout)
+  const bigInt = BigInt("0x" + hex);
+  for (let idx = 0; idx < BITS; idx++) {
+    const bit = Number((bigInt >> BigInt(idx)) & 1n);
+    const row = Math.floor(idx / SIDE);
+    const col = idx % SIDE;
+    ctx.fillStyle = bit ? "#ffffff" : "#1a1a2e";
+    ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
+  }
+})();
+{% endif %}
 </script>
 {% endblock %}

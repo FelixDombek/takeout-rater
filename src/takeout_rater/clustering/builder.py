@@ -151,6 +151,7 @@ def build_clusters(
     threshold: int = 20,
     window: int = 200,
     min_cluster_size: int = 2,
+    single_linkage: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> int:
     """Build pHash clusters and persist them to the DB.
@@ -167,13 +168,21 @@ def build_clusters(
             Larger values find more near-duplicates at higher CPU cost.
         min_cluster_size: Minimum number of members for a group to be
             stored as a cluster (default 2).  Singletons are ignored.
+        single_linkage: When ``True``, skip the complete-linkage post-processing
+            step.  Two images can end up in the same cluster even if they are
+            far apart, as long as there is a chain of pairwise-similar images
+            connecting them (A≈B and B≈C merges A, B, C even if dist(A,C) >
+            threshold).  This allows gradual progressions of similar shots to
+            end up in one cluster.  Defaults to ``False`` (complete-linkage).
         on_progress: Optional callback called periodically with
             ``(processed_so_far, total)`` integers.
 
     Returns:
         Number of clusters persisted to the DB.
     """
-    params = {"threshold": threshold, "window": window}
+    params: dict[str, int | bool] = {"threshold": threshold, "window": window}
+    if single_linkage:
+        params["single_linkage"] = True
     params_json = json.dumps(params, separators=(",", ":"), sort_keys=True)
 
     # Fetch only hashes computed with the current algorithm
@@ -212,9 +221,14 @@ def build_clusters(
     for members in uf.components().values():
         if len(members) < 2:  # skip singletons early
             continue
-        for sub in _split_by_complete_linkage(members, hash_map, threshold):
-            if len(sub) >= min_cluster_size:
-                final_clusters.append(sub)
+        if single_linkage:
+            # Use the raw single-linkage components without further splitting.
+            if len(members) >= min_cluster_size:
+                final_clusters.append(members)
+        else:
+            for sub in _split_by_complete_linkage(members, hash_map, threshold):
+                if len(sub) >= min_cluster_size:
+                    final_clusters.append(sub)
 
     if not final_clusters:
         return 0
