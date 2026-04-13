@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.nima import _NUM_CLASSES, _VARIANT_FILENAMES, NIMAScorer
+from takeout_rater.scorers.adapters.nima import _VARIANT_PYIQA_METRIC, NIMAScorer
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -53,18 +53,21 @@ def test_spec_display_name_not_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Variant filenames
+# Variant → pyiqa metric mapping
 # ---------------------------------------------------------------------------
 
 
-def test_variant_filenames_covers_both_variants() -> None:
-    assert "aesthetic" in _VARIANT_FILENAMES
-    assert "technical" in _VARIANT_FILENAMES
+def test_variant_pyiqa_metric_covers_both_variants() -> None:
+    assert "aesthetic" in _VARIANT_PYIQA_METRIC
+    assert "technical" in _VARIANT_PYIQA_METRIC
 
 
-def test_variant_filenames_are_pth_files() -> None:
-    for filename in _VARIANT_FILENAMES.values():
-        assert filename.endswith(".pth")
+def test_variant_pyiqa_metric_aesthetic_uses_ava() -> None:
+    assert "ava" in _VARIANT_PYIQA_METRIC["aesthetic"]
+
+
+def test_variant_pyiqa_metric_technical_uses_koniq() -> None:
+    assert "koniq" in _VARIANT_PYIQA_METRIC["technical"]
 
 
 # ---------------------------------------------------------------------------
@@ -77,43 +80,18 @@ def test_is_available_returns_bool() -> None:
     assert isinstance(result, bool)
 
 
-def test_is_available_false_when_torchvision_missing() -> None:
+def test_is_available_false_when_pyiqa_missing() -> None:
     import builtins  # noqa: PLC0415
 
     real_import = builtins.__import__
 
     def _mock_import(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if name == "torchvision":
-            raise ImportError("mocked missing torchvision")
+        if name == "pyiqa":
+            raise ImportError("mocked missing pyiqa")
         return real_import(name, *args, **kwargs)
 
     with patch("builtins.__import__", side_effect=_mock_import):
         assert NIMAScorer.is_available() is False
-
-
-# ---------------------------------------------------------------------------
-# _download_weights
-# ---------------------------------------------------------------------------
-
-
-def test_download_weights_unknown_variant_raises() -> None:
-    with pytest.raises(ValueError, match="Unknown NIMA variant"):
-        NIMAScorer._download_weights("unknown_variant")
-
-
-def test_download_weights_calls_hf_hub(monkeypatch, tmp_path: Path) -> None:
-    import huggingface_hub  # noqa: PLC0415
-
-    from takeout_rater.scorers.adapters import nima
-
-    def fake_download(*, repo_id: str, filename: str) -> str:
-        dest = tmp_path / filename
-        dest.write_bytes(b"fake_weights")
-        return str(dest)
-
-    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
-    path = nima.NIMAScorer._download_weights("aesthetic")
-    assert path.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -129,16 +107,12 @@ def test_score_batch_empty_returns_empty() -> None:
 def test_score_batch_missing_file_returns_one(tmp_path: Path) -> None:
     """A missing file should yield nima_score=1.0 (minimum), not raise."""
     scorer = NIMAScorer.create()
-    # Inject a no-op model so we don't need to download weights
+    # Inject a no-op pyiqa-style metric: returns score tensor of shape (N,)
     import torch  # noqa: PLC0415
-    import torchvision.transforms as T  # noqa: PLC0415
 
-    fake_model = MagicMock()
-    # Return a uniform distribution over 10 classes → expected score = 5.5
-    fake_model.return_value = torch.full((1, _NUM_CLASSES), 1.0 / _NUM_CLASSES)
-    scorer._model = fake_model
-    scorer._preprocess = T.ToTensor()
-    scorer._device = torch.device("cpu")
+    fake_metric = MagicMock()
+    fake_metric.return_value = torch.tensor([5.5])
+    scorer._model = fake_metric
 
     result = scorer.score_batch([tmp_path / "does_not_exist.jpg"])
     assert len(result) == 1
@@ -151,25 +125,16 @@ def test_score_batch_missing_file_returns_one(tmp_path: Path) -> None:
 
 
 def _make_mock_scorer(fixed_score: float = 7.0, variant_id: str = "aesthetic") -> NIMAScorer:
-    """Return a NIMAScorer whose model outputs a fixed expected score."""
+    """Return a NIMAScorer whose pyiqa metric returns a fixed score."""
     import torch  # noqa: PLC0415
-    import torchvision.transforms as T  # noqa: PLC0415
 
     scorer = NIMAScorer.create(variant_id=variant_id)
 
-    # Build a distribution that concentrates all probability on the rating bin
-    # nearest to fixed_score.  Since ratings are integers 1–10, we round.
-    rating_idx = max(0, min(_NUM_CLASSES - 1, round(fixed_score) - 1))
-    probs_row = torch.zeros(1, _NUM_CLASSES)
-    probs_row[0, rating_idx] = 1.0  # one-hot → expected score = rating_idx + 1
+    # Pyiqa-style metric: returns a (N,) tensor with each value = fixed_score.
+    fake_metric = MagicMock()
+    fake_metric.side_effect = lambda batch_tensor: torch.full((batch_tensor.shape[0],), fixed_score)
 
-    fake_model = MagicMock()
-    # Return probs with the correct batch dimension so batched score_batch works.
-    fake_model.side_effect = lambda batch_tensor: probs_row.expand(batch_tensor.shape[0], -1)
-
-    scorer._model = fake_model
-    scorer._preprocess = T.Compose([T.Resize(256), T.CenterCrop(224), T.ToTensor()])
-    scorer._device = torch.device("cpu")
+    scorer._model = fake_metric
     return scorer
 
 
