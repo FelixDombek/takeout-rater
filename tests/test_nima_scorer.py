@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.nima import _VARIANT_PYIQA_METRIC, NIMAScorer
+from takeout_rater.scorers.adapters.nima import (
+    _VARIANT_NATIVE_RANGE,
+    _VARIANT_PYIQA_METRIC,
+    NIMAScorer,
+)
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -31,11 +35,13 @@ def test_spec_range() -> None:
     assert m.higher_is_better is True
 
 
-def test_spec_has_aesthetic_and_technical_variants() -> None:
+def test_spec_has_all_four_variants() -> None:
     spec = NIMAScorer.spec()
     variant_ids = {v.variant_id for v in spec.variants}
     assert "aesthetic" in variant_ids
+    assert "aesthetic-vgg16" in variant_ids
     assert "technical" in variant_ids
+    assert "technical-spaq" in variant_ids
 
 
 def test_spec_default_variant_is_aesthetic() -> None:
@@ -57,17 +63,27 @@ def test_spec_display_name_not_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_variant_pyiqa_metric_covers_both_variants() -> None:
+def test_variant_pyiqa_metric_covers_all_variants() -> None:
     assert "aesthetic" in _VARIANT_PYIQA_METRIC
+    assert "aesthetic-vgg16" in _VARIANT_PYIQA_METRIC
     assert "technical" in _VARIANT_PYIQA_METRIC
+    assert "technical-spaq" in _VARIANT_PYIQA_METRIC
 
 
-def test_variant_pyiqa_metric_aesthetic_uses_ava() -> None:
-    assert "ava" in _VARIANT_PYIQA_METRIC["aesthetic"]
+def test_variant_pyiqa_metric_aesthetic_is_nima() -> None:
+    assert _VARIANT_PYIQA_METRIC["aesthetic"] == "nima"
+
+
+def test_variant_pyiqa_metric_aesthetic_vgg16_is_nima_vgg16_ava() -> None:
+    assert _VARIANT_PYIQA_METRIC["aesthetic-vgg16"] == "nima-vgg16-ava"
 
 
 def test_variant_pyiqa_metric_technical_uses_koniq() -> None:
     assert "koniq" in _VARIANT_PYIQA_METRIC["technical"]
+
+
+def test_variant_pyiqa_metric_technical_spaq_uses_spaq() -> None:
+    assert "spaq" in _VARIANT_PYIQA_METRIC["technical-spaq"]
 
 
 # ---------------------------------------------------------------------------
@@ -221,3 +237,53 @@ def test_score_one(tmp_path: Path) -> None:
     result = scorer.score_one(p)
     assert "nima_score" in result
     assert 1.0 <= result["nima_score"] <= 10.0
+
+
+# ---------------------------------------------------------------------------
+# New variants: aesthetic-vgg16 and technical-spaq
+# ---------------------------------------------------------------------------
+
+
+def test_variant_native_range_covers_all_variants() -> None:
+    for variant_id in ("aesthetic", "aesthetic-vgg16", "technical", "technical-spaq"):
+        assert variant_id in _VARIANT_NATIVE_RANGE
+
+
+def test_score_batch_aesthetic_vgg16_variant(tmp_path: Path) -> None:
+    """aesthetic-vgg16 uses a 0–10 native range; score should pass through unchanged."""
+    from PIL import Image  # noqa: PLC0415
+
+    img_path = tmp_path / "img.jpg"
+    Image.new("RGB", (64, 64)).save(img_path, "JPEG")
+
+    scorer = _make_mock_scorer(fixed_score=8.0, variant_id="aesthetic-vgg16")
+    assert scorer.variant_id == "aesthetic-vgg16"
+    results = scorer.score_batch([img_path])
+    assert "nima_score" in results[0]
+    assert results[0]["nima_score"] == pytest.approx(8.0)
+
+
+def test_score_batch_technical_spaq_variant_rescales(tmp_path: Path) -> None:
+    """technical-spaq uses a 0–1 native range; 0.5 raw → 5.5 after rescaling."""
+    from PIL import Image  # noqa: PLC0415
+
+    img_path = tmp_path / "img.jpg"
+    Image.new("RGB", (64, 64)).save(img_path, "JPEG")
+
+    scorer = _make_mock_scorer(fixed_score=0.5, variant_id="technical-spaq")
+    assert scorer.variant_id == "technical-spaq"
+    results = scorer.score_batch([img_path])
+    assert "nima_score" in results[0]
+    # 0.5 * 9 + 1 = 5.5
+    assert results[0]["nima_score"] == pytest.approx(5.5)
+
+
+def test_score_batch_technical_spaq_value_in_range(tmp_path: Path) -> None:
+    from PIL import Image  # noqa: PLC0415
+
+    img_path = tmp_path / "img.jpg"
+    Image.new("RGB", (64, 64)).save(img_path, "JPEG")
+
+    scorer = _make_mock_scorer(fixed_score=0.7, variant_id="technical-spaq")
+    results = scorer.score_batch([img_path])
+    assert 1.0 <= results[0]["nima_score"] <= 10.0
