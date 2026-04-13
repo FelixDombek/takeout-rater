@@ -2,10 +2,9 @@
 
 Usage example::
 
-    from takeout_rater.scoring.pipeline import run_scorer
-    from takeout_rater.scorers.heuristics.blur import BlurScorer
+    from takeout_rater.scorers.heuristics.simple import SimpleScorer
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_id = run_scorer(conn, scorer, thumbs_dir)
 
 The function creates a ``scorer_runs`` record, iterates over assets in

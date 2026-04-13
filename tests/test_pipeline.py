@@ -171,7 +171,7 @@ def test_run_scorer_explicit_asset_ids(tmp_path: Path) -> None:
     # Only score the first asset
     run_scorer(conn, scorer, thumbs_dir, asset_ids=[ids[0]])
 
-    run_id = get_latest_scorer_run_id(conn, "blur", "default")
+    run_id = get_latest_scorer_run_id(conn, "simple", "blur")
     count = conn.execute(
         "SELECT COUNT(*) FROM asset_scores WHERE scorer_run_id = ?", (run_id,)
     ).fetchone()[0]
@@ -187,18 +187,18 @@ def test_run_scorer_by_id_unknown_raises_key_error(tmp_path: Path) -> None:
         run_scorer_by_id(conn, "nonexistent_scorer", tmp_path / "thumbs")
 
 
-def test_run_scorer_by_id_blur(tmp_path: Path) -> None:
+def test_run_scorer_by_id_simple_blur_variant(tmp_path: Path) -> None:
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    run_id = run_scorer_by_id(conn, "blur", thumbs_dir)
+    run_id = run_scorer_by_id(conn, "simple", thumbs_dir, variant_id="blur")
     assert isinstance(run_id, int)
 
     scores = get_asset_scores(conn, asset_id)
     assert len(scores) == 1
-    assert scores[0]["scorer_id"] == "blur"
+    assert scores[0]["scorer_id"] == "simple"
 
 
 # ── end-to-end: index then score ──────────────────────────────────────────────
@@ -251,10 +251,10 @@ def test_run_scorer_error_includes_scorer_id(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = BlurScorer.create()
+    scorer = BlurScorer.create(variant_id="blur")
     with (
         patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
-        pytest.raises(RuntimeError, match="blur"),
+        pytest.raises(RuntimeError, match="simple"),
     ):
         run_scorer(conn, scorer, thumbs_dir)
 

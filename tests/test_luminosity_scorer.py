@@ -1,4 +1,4 @@
-"""Tests for the LuminosityScorer heuristic."""
+"""Tests for the LuminosityScorer backward-compat shim (now an alias for SimpleScorer)."""
 
 from __future__ import annotations
 
@@ -7,10 +7,15 @@ from pathlib import Path
 import pytest
 
 from takeout_rater.scorers.heuristics.luminosity import LuminosityScorer
+from takeout_rater.scorers.heuristics.simple import SimpleScorer
+
+
+def test_luminosity_scorer_alias_is_simple_scorer() -> None:
+    assert LuminosityScorer is SimpleScorer
 
 
 def test_spec_scorer_id() -> None:
-    assert LuminosityScorer.spec().scorer_id == "luminosity"
+    assert LuminosityScorer.spec().scorer_id == "simple"
 
 
 def test_spec_has_brightness_and_contrast_metrics() -> None:
@@ -38,10 +43,9 @@ def test_spec_contrast_higher_is_better() -> None:
     assert contrast_metric.higher_is_better is True
 
 
-def test_spec_has_default_variant() -> None:
+def test_spec_has_luminosity_variant() -> None:
     spec = LuminosityScorer.spec()
-    assert any(v.variant_id == "default" for v in spec.variants)
-    assert spec.default_variant_id == "default"
+    assert any(v.variant_id == "luminosity" for v in spec.variants)
 
 
 def test_is_available_returns_bool() -> None:
@@ -51,14 +55,14 @@ def test_is_available_returns_bool() -> None:
 def test_score_batch_empty() -> None:
     if not LuminosityScorer.is_available():
         pytest.skip("Pillow not available")
-    scorer = LuminosityScorer.create()
+    scorer = LuminosityScorer.create(variant_id="luminosity")
     assert scorer.score_batch([]) == []
 
 
 def test_score_batch_missing_file_returns_zeros(tmp_path: Path) -> None:
     if not LuminosityScorer.is_available():
         pytest.skip("Pillow not available")
-    scorer = LuminosityScorer.create()
+    scorer = LuminosityScorer.create(variant_id="luminosity")
     result = scorer.score_batch([tmp_path / "does_not_exist.jpg"])
     assert len(result) == 1
     assert result[0]["brightness"] == pytest.approx(0.0)
@@ -71,7 +75,7 @@ def test_score_batch_real_image_range(tmp_path: Path) -> None:
     p = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64), color=(128, 128, 128)).save(p, "JPEG")
 
-    scorer = LuminosityScorer.create()
+    scorer = LuminosityScorer.create(variant_id="luminosity")
     result = scorer.score_batch([p])
     assert len(result) == 1
     assert 0.0 <= result[0]["brightness"] <= 100.0
@@ -86,7 +90,7 @@ def test_dark_image_lower_brightness_than_bright(tmp_path: Path) -> None:
     Image.new("RGB", (64, 64), color=(20, 20, 20)).save(dark, "JPEG")
     Image.new("RGB", (64, 64), color=(235, 235, 235)).save(bright, "JPEG")
 
-    scorer = LuminosityScorer.create()
+    scorer = LuminosityScorer.create(variant_id="luminosity")
     dark_score = scorer.score_batch([dark])[0]["brightness"]
     bright_score = scorer.score_batch([bright])[0]["brightness"]
     assert bright_score > dark_score
@@ -106,7 +110,7 @@ def test_uniform_image_lower_contrast_than_gradient(tmp_path: Path) -> None:
             img.putpixel((x, y), color)
     img.save(gradient, "JPEG")
 
-    scorer = LuminosityScorer.create()
+    scorer = LuminosityScorer.create(variant_id="luminosity")
     uniform_contrast = scorer.score_batch([uniform])[0]["contrast"]
     gradient_contrast = scorer.score_batch([gradient])[0]["contrast"]
     assert gradient_contrast > uniform_contrast
@@ -121,7 +125,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
         Image.new("RGB", (32, 32), color=(i * 60, 100, 200)).save(p, "JPEG")
         paths.append(p)
 
-    scorer = LuminosityScorer.create()
+    scorer = LuminosityScorer.create(variant_id="luminosity")
     results = scorer.score_batch(paths)
     assert len(results) == len(paths)
     for r in results:
@@ -134,7 +138,7 @@ def test_score_one(tmp_path: Path) -> None:
 
     p = tmp_path / "img.jpg"
     Image.new("RGB", (32, 32), color=(200, 150, 100)).save(p, "JPEG")
-    scorer = LuminosityScorer.create()
+    scorer = LuminosityScorer.create(variant_id="luminosity")
     result = scorer.score_one(p)
     assert "brightness" in result
     assert "contrast" in result

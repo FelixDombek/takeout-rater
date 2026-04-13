@@ -128,4 +128,4 @@ CREATE INDEX IF NOT EXISTS idx_asset_scores_asset_id   ON asset_scores (asset_id
 CREATE INDEX IF NOT EXISTS idx_asset_scores_run_metric ON asset_scores (scorer_run_id, metric_key);
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 
-PRAGMA user_version = 7;
+PRAGMA user_version = 8;

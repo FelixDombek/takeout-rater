@@ -88,10 +88,10 @@ def test_schema_creates_asset_scores_table() -> None:
     assert "asset_scores" in tables
 
 
-def test_schema_user_version_is_7() -> None:
+def test_schema_user_version_is_8() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 7
+    assert version == 8
 
 
 def test_migrate_is_idempotent() -> None:
@@ -99,11 +99,11 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 7
+    assert version == 8
 
 
-def test_migrate_incremental_v6_to_v7() -> None:
-    """A v6 database must be automatically upgraded to v7 (adds diameter column)."""
+def test_migrate_incremental_v6_to_v8() -> None:
+    """A v6 database must be automatically upgraded to v8."""
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -131,14 +131,47 @@ def test_migrate_incremental_v6_to_v7() -> None:
     conn.execute("DROP TABLE clusters_old")
     conn.commit()
 
-    # Now run migrate – it should add the diameter column
+    # Now run migrate – it should apply v7 (diameter column) and v8 (scorer rename)
     migrate(conn)
 
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 7
-    # Verify the diameter column exists
+    assert version == 8
+    # Verify the diameter column exists (v7 migration)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(clusters)").fetchall()}
     assert "diameter" in cols
+
+
+def test_migrate_incremental_v7_to_v8() -> None:
+    """A v7 database must be automatically upgraded to v8 (renames Pillow scorer IDs)."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    from takeout_rater.db.schema import _MIGRATIONS_DIR  # noqa: PLC0415
+
+    sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
+    conn.executescript(sql)
+    # Roll back to v7
+    conn.execute("PRAGMA user_version = 7")
+    # Insert old-style scorer_runs rows for the three merged scorers
+    for sid in ("blur", "luminosity", "noise"):
+        conn.execute(
+            "INSERT INTO scorer_runs (scorer_id, variant_id, scorer_version) VALUES (?, ?, ?)",
+            (sid, "default", "1"),
+        )
+    conn.commit()
+
+    migrate(conn)
+
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    assert version == 8
+    # All three old rows should have been renamed to scorer_id='simple'
+    rows = conn.execute("SELECT scorer_id, variant_id FROM scorer_runs").fetchall()
+    assert len(rows) == 3
+    for row in rows:
+        assert row["scorer_id"] == "simple"
+    variant_ids = {row["variant_id"] for row in rows}
+    assert variant_ids == {"blur", "luminosity", "noise"}
 
 
 def test_migrate_raises_on_stale_schema() -> None:
