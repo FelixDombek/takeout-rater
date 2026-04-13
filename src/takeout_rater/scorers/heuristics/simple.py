@@ -45,7 +45,7 @@ class SimpleScorer(BaseScorer):
                 "Pick a variant to measure the property you care about."
             ),
             technical_description=(
-                "Three Pillow-based heuristics: "
+                "Three Pillow-based metrics: "
                 "(1) Blur/Sharpness — variance of FIND_EDGES filter output; "
                 "(2) Luminosity — mean greyscale intensity and greyscale standard deviation; "
                 "(3) Noise — RMS of blur-difference image (Gaussian radius 1). "
