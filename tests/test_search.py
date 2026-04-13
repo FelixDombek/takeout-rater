@@ -243,11 +243,11 @@ class TestClipBackbone:
 
     def test_get_clip_model_passes_quick_gelu(self, monkeypatch) -> None:
         """get_clip_model must pass quick_gelu=True to suppress the openai pretrained warning."""
+        from unittest.mock import MagicMock  # noqa: PLC0415
+
         import takeout_rater.scorers.adapters.clip_backbone as backbone  # noqa: PLC0415
 
         create_calls: list[dict] = []
-
-        from unittest.mock import MagicMock  # noqa: PLC0415
 
         fake_model = MagicMock()
 
