@@ -105,11 +105,11 @@ def test_is_available_false_when_transformers_missing() -> None:
 
 def test_preds_to_scores_all_labels() -> None:
     preds = [
-        {"label": "photo", "score": 0.7},
+        {"label": "real_life", "score": 0.7},
         {"label": "anime", "score": 0.1},
-        {"label": "illustration", "score": 0.1},
+        {"label": "manga_like", "score": 0.1},
         {"label": "3d", "score": 0.05},
-        {"label": "CGI", "score": 0.05},
+        {"label": "other", "score": 0.05},
     ]
     scores = _preds_to_scores(preds)
     assert scores["style_photo"] == pytest.approx(0.7)
@@ -121,9 +121,9 @@ def test_preds_to_scores_all_labels() -> None:
 
 def test_preds_to_scores_label_case_insensitive() -> None:
     """Labels from the pipeline may be mixed case; they should be lowercased."""
-    preds = [{"label": "CGI", "score": 0.9}]
+    preds = [{"label": "REAL_LIFE", "score": 0.9}]
     scores = _preds_to_scores(preds)
-    assert scores["style_cgi"] == pytest.approx(0.9)
+    assert scores["style_photo"] == pytest.approx(0.9)
 
 
 def test_preds_to_scores_unknown_label_ignored() -> None:
@@ -135,7 +135,7 @@ def test_preds_to_scores_unknown_label_ignored() -> None:
 
 def test_preds_to_scores_missing_labels_default_to_zero() -> None:
     """If a label is absent from the pipeline output it defaults to 0.0."""
-    preds = [{"label": "photo", "score": 0.95}]
+    preds = [{"label": "real_life", "score": 0.95}]
     scores = _preds_to_scores(preds)
     assert scores["style_photo"] == pytest.approx(0.95)
     assert scores["style_anime"] == 0.0
@@ -182,11 +182,11 @@ def _make_mock_scorer(photo_prob: float = 0.8) -> CafeStyleScorer:
 
     def fake_pipeline(imgs: Any, batch_size: int | None = None) -> list[list[dict[str, Any]]]:
         single_result = [
-            {"label": "photo", "score": photo_prob},
+            {"label": "real_life", "score": photo_prob},
             {"label": "anime", "score": remaining},
-            {"label": "illustration", "score": remaining},
+            {"label": "manga_like", "score": remaining},
             {"label": "3d", "score": remaining},
-            {"label": "CGI", "score": remaining},
+            {"label": "other", "score": remaining},
         ]
         if isinstance(imgs, list):
             return [single_result for _ in imgs]

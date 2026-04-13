@@ -1,13 +1,13 @@
 """Image style classifier using the CafeAI cafe_style model.
 
-``cafeai/cafe_style`` is a Vision Transformer classifier that assigns
+``cafeai/cafe_style`` is a BEiT Vision Transformer classifier that assigns
 probability scores to five mutually-exclusive style categories:
 
-- **photo** — a real photograph.
-- **anime** — anime or manga artwork.
-- **illustration** — general digital or hand-drawn illustration.
-- **3d** — 3D rendered image.
-- **CGI** — computer-generated imagery (catch-all for other CGI styles).
+- **real_life** → ``style_photo`` — a real photograph.
+- **anime** → ``style_anime`` — anime or manga artwork.
+- **manga_like** → ``style_illustration`` — manga/illustration-style artwork.
+- **3d** → ``style_3d`` — 3D rendered image.
+- **other** → ``style_cgi`` — other computer-generated / synthetic imagery.
 
 Each category is exposed as a separate metric with a probability in [0, 1].
 The five probabilities sum to approximately 1.0.
@@ -46,21 +46,14 @@ _TOP_K = 5
 
 #: Mapping from the model's lowercase label strings to our metric keys.
 #: Labels returned by the pipeline are lowercased before lookup.
-#: The cafeai/cafe_style model (BEiT, id2label from config.json) uses
-#: "anime", "real_life", "3d", "manga_like", and "other" as its five class
-#: labels.  Generic aliases ("photo", "illustration", "cgi") are kept for
-#: test fixtures and any future model revision that uses different names.
+#: Source: ``cafeai/cafe_style`` config.json ``id2label``:
+#:   {"0": "anime", "1": "real_life", "2": "3d", "3": "manga_like", "4": "other"}
 _LABEL_TO_METRIC: dict[str, str] = {
-    # Actual cafeai/cafe_style model labels (from config.json id2label)
     "anime": "style_anime",
     "real_life": "style_photo",
     "3d": "style_3d",
     "manga_like": "style_illustration",
     "other": "style_cgi",
-    # Generic aliases kept for unit-test fixtures and future model variants
-    "photo": "style_photo",
-    "illustration": "style_illustration",
-    "cgi": "style_cgi",
 }
 
 #: Keyword patterns for dynamically mapping unrecognised model label strings
@@ -132,9 +125,9 @@ class CafeStyleScorer(BaseScorer):
                 "Requires ~370 MB model download."
             ),
             technical_description=(
-                "Applies the ``cafeai/cafe_style`` Vision Transformer classifier to "
+                "Applies the ``cafeai/cafe_style`` BEiT Vision Transformer classifier to "
                 "predict the probability distribution over five mutually-exclusive style "
-                "classes: photo, anime, illustration, 3d, CGI. "
+                "classes: ``real_life``, ``anime``, ``3d``, ``manga_like``, ``other``. "
                 "Outputs five metrics (``style_photo``, ``style_anime``, "
                 "``style_illustration``, ``style_3d``, ``style_cgi``) that sum to ≈ 1.0."
             ),
@@ -194,8 +187,9 @@ class CafeStyleScorer(BaseScorer):
                     variant_id="cafeai_v1",
                     display_name="CafeAI v1",
                     description=(
-                        "ViT-based style classifier (cafeai/cafe_style on HuggingFace). "
-                        "Trained to distinguish photo, anime, illustration, 3D, and CGI styles."
+                        "BEiT-based style classifier (cafeai/cafe_style on HuggingFace). "
+                        "Trained to distinguish real-life photos, anime, manga/illustration, "
+                        "3D renders, and other CGI styles."
                     ),
                 ),
             ),
@@ -223,10 +217,10 @@ class CafeStyleScorer(BaseScorer):
         """Load the image-classification pipeline on first call (lazy init).
 
         Downloads model weights to ``~/.cache/huggingface`` if not already
-        present.  Also resolves the actual label strings used by the model
-        into the :data:`_LABEL_TO_METRIC` mapping so that unknown alternate
-        label names (e.g. ``"real"`` for *photo*, ``"cg"`` for *cgi*,
-        ``"illust"`` for *illustration*) are handled automatically.
+        present.  Also resolves any label strings present in the model's
+        ``id2label`` config that are not already in :data:`_LABEL_TO_METRIC`
+        using :data:`_LABEL_KEYWORD_PATTERNS`, providing forward-compatibility
+        if the model is updated with new or renamed labels.
         """
         if self._pipeline is not None:
             return
@@ -242,9 +236,9 @@ class CafeStyleScorer(BaseScorer):
             top_k=_TOP_K,
         )
 
-        # Build an augmented label mapping from the model's actual id2label so
-        # that any non-canonical label strings (like "real", "cg", "illust")
-        # are correctly routed to the right metric key.
+        # Augment the mapping with any labels from the model's actual id2label
+        # that are not already covered by _LABEL_TO_METRIC, using keyword
+        # patterns as a forward-compat fallback for future model revisions.
         self._label_to_metric = dict(_LABEL_TO_METRIC)
         try:
             id2label: dict = self._pipeline.model.config.id2label
