@@ -34,8 +34,8 @@ from collections.abc import Callable
 
 from takeout_rater.db.queries import (
     bulk_insert_cluster_members,
-    delete_clusters_by_method_params,
     insert_cluster,
+    insert_clustering_run,
     list_all_phashes,
 )
 from takeout_rater.scoring.phash import DHASH_ALGO
@@ -233,15 +233,15 @@ def build_clusters(
     if not final_clusters:
         return 0
 
-    # Delete previous run with same method+params
-    delete_clusters_by_method_params(conn, _METHOD, params_json)
+    # Create a new clustering run to group all clusters created in this call.
+    run_id = insert_clustering_run(conn, _METHOD, params_json)
 
     # Persist clusters
     n_persisted = 0
     for members in sorted(final_clusters, key=lambda m: min(m)):
         representative = min(members)
         diameter = _compute_diameter(members, hash_map)
-        cluster_id = insert_cluster(conn, _METHOD, params_json, diameter=diameter)
+        cluster_id = insert_cluster(conn, _METHOD, params_json, diameter=diameter, run_id=run_id)
         rows_to_insert: list[tuple[int, float | None, int]] = [
             (aid, None, 1 if aid == representative else 0) for aid in members
         ]

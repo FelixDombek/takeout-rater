@@ -216,16 +216,17 @@ def test_build_clusters_members_returned() -> None:
     assert len(asset_ids) == 2
 
 
-def test_build_clusters_idempotent() -> None:
-    """Running build_clusters twice with the same params replaces the old results."""
+def test_build_clusters_each_run_is_independent() -> None:
+    """Running build_clusters twice creates two independent clustering runs."""
     conn = _open_in_memory()
     _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
     _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
 
     build_clusters(conn, threshold=5)
-    build_clusters(conn, threshold=5)  # second run should replace
+    build_clusters(conn, threshold=5)  # second run creates a new clustering_run
 
-    assert count_clusters(conn) == 1
+    # Each run produces one cluster, so two runs → two clusters total.
+    assert count_clusters(conn) == 2
 
 
 def test_build_clusters_progress_callback() -> None:

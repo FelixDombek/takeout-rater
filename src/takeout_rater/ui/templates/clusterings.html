@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Clusters – takeout-rater{% endblock %}
+{% block title %}Clusterings – takeout-rater{% endblock %}
 
 {% block head %}
 <style>
@@ -11,7 +11,6 @@
     margin-bottom: 1.25rem;
     flex-wrap: wrap;
   }
-  .toolbar-count { color: #444; font-size: 0.9rem; }
   .btn-danger {
     background: #dc3545;
     color: #fff;
@@ -19,76 +18,6 @@
   }
   .btn-danger:hover { background: #b02a37; border-color: #b02a37; }
 
-  .cluster-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 10px;
-  }
-  .cluster-card {
-    background: #fff;
-    border-radius: 6px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,.12);
-    transition: box-shadow 0.15s;
-  }
-  .cluster-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
-  .cluster-card a { display: block; color: inherit; text-decoration: none; }
-  .cluster-thumb {
-    width: 100%;
-    aspect-ratio: 1;
-    object-fit: cover;
-    display: block;
-    background: #e0e0e0;
-  }
-  .cluster-thumb-placeholder {
-    width: 100%;
-    aspect-ratio: 1;
-    background: #ddd;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #999;
-    font-size: 2rem;
-  }
-  .cluster-body {
-    padding: 0.4rem 0.5rem;
-    font-size: 0.75rem;
-    color: #555;
-  }
-  .cluster-diameter {
-    display: inline-block;
-    padding: 0 5px;
-    background: #fef3c7;
-    color: #92400e;
-    border-radius: 3px;
-    font-size: 0.7rem;
-    font-weight: 600;
-  }
-  .cluster-size {
-    display: inline-block;
-    padding: 0 5px;
-    background: #e8f0fe;
-    color: #1a5cdb;
-    border-radius: 3px;
-    font-size: 0.7rem;
-    font-weight: 600;
-  }
-
-  .pagination {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 1.5rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-  .pagination .current-page {
-    padding: 0.35rem 0.7rem;
-    border-radius: 4px;
-    background: #1a5cdb;
-    color: #fff;
-    font-size: 0.875rem;
-  }
   .empty-state {
     text-align: center;
     padding: 4rem 1rem;
@@ -183,6 +112,83 @@
     border-radius: 999px;
     font-weight: 600;
   }
+
+  /* ── Runs list ─────────────────────────────────────────────────────────── */
+  .runs-list { display: flex; flex-direction: column; gap: 1rem; }
+  .run-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+    transition: box-shadow 0.15s;
+  }
+  .run-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.15); }
+  .run-thumb-link {
+    display: block;
+    flex-shrink: 0;
+    width: 80px;
+    background: #e8e8e8;
+  }
+  .run-thumb {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    display: block;
+  }
+  .run-thumb-placeholder {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #bbb;
+    font-size: 1.8rem;
+    background: #e8e8e8;
+  }
+  .run-body {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .run-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #222;
+    text-decoration: none;
+  }
+  .run-title:hover { color: #1a5cdb; text-decoration: underline; }
+  .run-meta {
+    font-size: 0.8rem;
+    color: #666;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+  }
+  .run-badge {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .run-badge-clusters { background: #e8f0fe; color: #1a5cdb; }
+  .run-badge-params   { background: #f3f4f6; color: #374151; font-family: monospace; }
+  .run-actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 0.75rem;
+  }
+  .run-delete-status {
+    font-size: 0.8rem;
+    min-height: 1em;
+    color: #888;
+  }
 </style>
 {% endblock %}
 
@@ -197,7 +203,8 @@
     </div>
     <p class="desc">
       Group near-duplicate photos using perceptual hashing (dhash). Requires scoring to have
-      been run first so that pHashes exist.
+      been run first so that pHashes exist. Each run is saved independently so you can compare
+      results with different settings.
     </p>
     <div class="job-options">
       <label for="cluster-threshold"
@@ -252,49 +259,63 @@
 </div>
 
 <div class="toolbar">
-  <span class="toolbar-count">
-    {% if total == 0 %}
-      No clusters yet
-    {% elif total == 1 %}
-      1 cluster
-    {% else %}
-      {{ total }} clusters
-    {% endif %}
-  </span>
   <a class="btn" href="/assets">← All photos</a>
-  {% if total > 0 %}
-  <button class="btn btn-danger" id="btn-clear-clusters" onclick="clearClusters()">🗑 Clear all clusters</button>
+  {% if runs %}
+  <button class="btn btn-danger" id="btn-clear-clusters" onclick="clearAll()">🗑 Clear all</button>
   <div id="clear-status" style="font-size:0.85rem; min-height:1.3em;"></div>
   {% endif %}
 </div>
 
-{% if clusters %}
-  <div class="cluster-grid">
-    {% for cluster in clusters %}
-    <div class="cluster-card">
-      <a href="/clusters/{{ cluster.cluster_id }}">
+{% if runs %}
+  <div class="runs-list" id="runs-list">
+    {% for run in runs %}
+    <div class="run-card" id="run-card-{{ run.run_id }}">
+      <a class="run-thumb-link" href="/clusterings/{{ run.run_id }}">
+        {% if run.rep_asset_id %}
         <img
-          class="cluster-thumb"
-          src="/thumbs/{{ cluster.rep_asset_id }}"
-          alt="{{ cluster.rep_filename }}"
+          class="run-thumb"
+          src="/thumbs/{{ run.rep_asset_id }}"
+          alt="preview"
           loading="lazy"
           onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
         >
-        <div class="cluster-thumb-placeholder" style="display:none">🖼</div>
-        <div class="cluster-body">
-          <span class="cluster-size">{{ cluster.member_count }} photos</span>
-          {% if cluster.diameter is not none %}
-          <span class="cluster-diameter" title="Max pairwise Hamming distance">⌀ {{ cluster.diameter | int }}b</span>
-          {% endif %}
-          {{ cluster.rep_filename }}
-        </div>
+        <div class="run-thumb-placeholder" style="display:none">🖼</div>
+        {% else %}
+        <div class="run-thumb-placeholder">🔗</div>
+        {% endif %}
       </a>
+      <div class="run-body">
+        <a class="run-title" href="/clusterings/{{ run.run_id }}">
+          Clustering #{{ run.run_id }}
+        </a>
+        <div>
+          <span class="run-badge run-badge-clusters">
+            {{ run.n_clusters }} cluster{{ 's' if run.n_clusters != 1 else '' }}
+          </span>
+          {% if run.params %}
+            {% for k, v in run.params.items() %}
+            <span class="run-badge run-badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
+            {% endfor %}
+          {% endif %}
+        </div>
+        <div class="run-meta">
+          <span title="Created at">🕐 {{ run.created_at | timestamp_fmt }}</span>
+        </div>
+        <div class="run-delete-status" id="del-status-{{ run.run_id }}"></div>
+      </div>
+      <div class="run-actions">
+        <button
+          class="btn btn-danger"
+          title="Delete this clustering run"
+          onclick="deleteRun({{ run.run_id }})"
+        >🗑</button>
+      </div>
     </div>
     {% endfor %}
   </div>
 {% else %}
   <div class="empty-state">
-    <h2>No clusters found</h2>
+    <h2>No clusterings yet</h2>
     <p>
       Use the <strong>Run Clustering</strong> button above to group near-duplicate photos.
     </p>
@@ -302,18 +323,6 @@
       Make sure you have first run scoring to compute perceptual hashes.
     </p>
   </div>
-{% endif %}
-
-{% if total_pages > 1 %}
-<nav class="pagination" aria-label="Pagination">
-  {% if page > 1 %}
-    <a class="btn" href="/clusters?page={{ page - 1 }}">← Prev</a>
-  {% endif %}
-  <span class="current-page">{{ page }} / {{ total_pages }}</span>
-  {% if page < total_pages %}
-    <a class="btn" href="/clusters?page={{ page + 1 }}">Next →</a>
-  {% endif %}
-</nav>
 {% endif %}
 
 <script>
@@ -401,12 +410,17 @@
     }
 
     if (data.error) {
-      setStatus(jt, '✗ ' + data.error, 'error');
+      setStatus(jt, '\u2717 ' + data.error, 'error');
       setProgress(jt, null);
     } else if (data.done) {
-      setStatus(jt, '✓ ' + data.message, 'ok');
+      setStatus(jt, '\u2713 ' + data.message, 'ok');
       setProgress(jt, 100);
-      setTimeout(function() { setProgress(jt, null); }, 3000);
+      if (jt === 'cluster') {
+        // Reload to show the newly created run in the list.
+        setTimeout(function() { window.location.reload(); }, 1200);
+      } else {
+        setTimeout(function() { setProgress(jt, null); }, 3000);
+      }
     } else if (data.running) {
       var statusMsg = data.message || 'Running\u2026';
       var stats = _jobStats[jt];
@@ -416,9 +430,9 @@
         if (elapsed >= 1 && doneInSession > 0) {
           var rate = doneInSession / elapsed;
           var eta = Math.round((data.total - data.processed) / rate);
-          statusMsg += '\u2002·\u2002' + rate.toFixed(1) + '/s';
+          statusMsg += '\u2002\u00b7\u2002' + rate.toFixed(1) + '/s';
           if (eta > 0) {
-            statusMsg += '\u2002·\u2002ETA\u202f' + _formatEta(eta);
+            statusMsg += '\u2002\u00b7\u2002ETA\u202f' + _formatEta(eta);
           }
         }
       }
@@ -449,7 +463,6 @@
     _pollers[jobType] = setInterval(function() { pollJob(jobType); }, 1000);
   }
 
-  // Load initial state for cluster and export jobs
   ['cluster', 'export'].forEach(function(jt) {
     fetch('/api/jobs/status?job_type=' + jt)
       .then(function(r) { return r.json(); })
@@ -503,18 +516,43 @@
         startPolling(jobType);
       })
       .catch(function(err) {
-        setStatus(jobType, '✗ ' + err.message, 'error');
+        setStatus(jobType, '\u2717 ' + err.message, 'error');
         setProgress(jobType, null);
         setBtn(jobType, false);
       });
   };
 
-  window.clearClusters = function() {
-    if (!confirm('Delete all clusters? This cannot be undone.')) return;
+  window.deleteRun = function(runId) {
+    if (!confirm('Delete this clustering run and all its clusters? This cannot be undone.')) return;
+    var card = document.getElementById('run-card-' + runId);
+    var statusEl = document.getElementById('del-status-' + runId);
+    var btn = card ? card.querySelector('.run-actions .btn') : null;
+    if (btn) btn.disabled = true;
+    if (statusEl) { statusEl.textContent = 'Deleting\u2026'; statusEl.style.color = '#888'; }
+    fetch('/api/clusterings/' + runId, { method: 'DELETE' })
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
+        return r.json();
+      })
+      .then(function() {
+        if (card) {
+          card.style.transition = 'opacity 0.3s';
+          card.style.opacity = '0';
+          setTimeout(function() { card.remove(); }, 300);
+        }
+      })
+      .catch(function(err) {
+        if (statusEl) { statusEl.textContent = '\u2717 ' + err.message; statusEl.style.color = '#c0392b'; }
+        if (btn) btn.disabled = false;
+      });
+  };
+
+  window.clearAll = function() {
+    if (!confirm('Delete ALL clustering runs? This cannot be undone.')) return;
     var btn = document.getElementById('btn-clear-clusters');
     var statusEl = document.getElementById('clear-status');
     if (btn) btn.disabled = true;
-    if (statusEl) { statusEl.textContent = 'Clearing…'; statusEl.style.color = '#888'; }
+    if (statusEl) { statusEl.textContent = 'Clearing\u2026'; statusEl.style.color = '#888'; }
     fetch('/api/clusters/clear', { method: 'DELETE' })
       .then(function(r) {
         if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
@@ -522,14 +560,13 @@
       })
       .then(function(data) {
         if (statusEl) {
-          statusEl.textContent = '✓ Cleared ' + data.deleted + ' cluster(s).';
+          statusEl.textContent = '\u2713 Cleared ' + data.deleted + ' run' + (data.deleted !== 1 ? 's' : '') + '.';
           statusEl.style.color = '#1e7e34';
         }
-        // Reload page after a short delay to reflect the empty state
         setTimeout(function() { window.location.reload(); }, 800);
       })
       .catch(function(err) {
-        if (statusEl) { statusEl.textContent = '✗ ' + err.message; statusEl.style.color = '#c0392b'; }
+        if (statusEl) { statusEl.textContent = '\u2717 ' + err.message; statusEl.style.color = '#c0392b'; }
         if (btn) btn.disabled = false;
       });
   };
