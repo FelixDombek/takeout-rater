@@ -344,6 +344,7 @@
 
   var _pollers = {};
   var _jobStats = {};
+  var _wasRunning = {};  // tracks jobs that were running so reload only fires on transition
 
   function setStatus(jobType, msg, cls) {
     var el = document.getElementById('status-' + jobType);
@@ -400,6 +401,7 @@
     setBtn(jt, data.running);
 
     if (data.running) {
+      _wasRunning[jt] = true;
       if (!_jobStats[jt]) {
         _jobStats[jt] = { startTime: Date.now(), startProcessed: data.processed };
       }
@@ -415,8 +417,11 @@
     } else if (data.done) {
       setStatus(jt, '\u2713 ' + data.message, 'ok');
       setProgress(jt, 100);
-      if (jt === 'cluster') {
-        // Reload to show the newly created run in the list.
+      if (jt === 'cluster' && _wasRunning[jt]) {
+        // Only reload when we witnessed the job transition from running to done
+        // in this page session.  Without this guard the page would reload
+        // indefinitely on every load when a completed job is still in state.
+        delete _wasRunning[jt];
         setTimeout(function() { window.location.reload(); }, 1200);
       } else {
         setTimeout(function() { setProgress(jt, null); }, 3000);
@@ -497,6 +502,7 @@
     setProgress(jobType, 0);
     setCurrentItem(jobType, '');
     delete _jobStats[jobType];
+    delete _wasRunning[jobType];
 
     fetch('/api/jobs/' + jobType + '/start', {
       method: 'POST',

@@ -132,7 +132,17 @@ def run_scorer(
     stream_all_assets = False
     if asset_ids is None:
         if skip_existing and spec.metrics:
-            first_metric = spec.metrics[0].key
+            # Use the variant's primary_metric_key when specified (e.g. the
+            # "luminosity" and "noise" variants of SimpleScorer write different
+            # metric keys than the scorer's global first metric).  Fall back to
+            # spec.metrics[0].key for scorers whose variants all share the same
+            # metric namespace.
+            variant_spec = next((v for v in spec.variants if v.variant_id == variant_id), None)
+            first_metric = (
+                variant_spec.primary_metric_key
+                if variant_spec is not None and variant_spec.primary_metric_key is not None
+                else spec.metrics[0].key
+            )
             asset_ids = list_asset_ids_without_score(
                 conn, scorer_id, variant_id, first_metric, scorer_version=spec.version
             )
