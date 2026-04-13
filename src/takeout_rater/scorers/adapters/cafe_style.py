@@ -1,13 +1,13 @@
 """Image style classifier using the CafeAI cafe_style model.
 
-``cafeai/cafe_style`` is a Vision Transformer classifier that assigns
+``cafeai/cafe_style`` is a BEiT Vision Transformer classifier that assigns
 probability scores to five mutually-exclusive style categories:
 
-- **photo** — a real photograph.
-- **anime** — anime or manga artwork.
-- **illustration** — general digital or hand-drawn illustration.
-- **3d** — 3D rendered image.
-- **CGI** — computer-generated imagery (catch-all for other CGI styles).
+- **real_life** → ``style_photo`` — a real photograph.
+- **anime** → ``style_anime`` — anime or manga artwork.
+- **manga_like** → ``style_illustration`` — manga/illustration-style artwork.
+- **3d** → ``style_3d`` — 3D rendered image.
+- **other** → ``style_cgi`` — other computer-generated / synthetic imagery.
 
 Each category is exposed as a separate metric with a probability in [0, 1].
 The five probabilities sum to approximately 1.0.
@@ -46,13 +46,33 @@ _TOP_K = 5
 
 #: Mapping from the model's lowercase label strings to our metric keys.
 #: Labels returned by the pipeline are lowercased before lookup.
+#: Source: ``cafeai/cafe_style`` config.json ``id2label``:
+#:   {"0": "anime", "1": "real_life", "2": "3d", "3": "manga_like", "4": "other"}
 _LABEL_TO_METRIC: dict[str, str] = {
     "anime": "style_anime",
-    "illustration": "style_illustration",
-    "photo": "style_photo",
+    "real_life": "style_photo",
     "3d": "style_3d",
-    "cgi": "style_cgi",
+    "manga_like": "style_illustration",
+    "other": "style_cgi",
 }
+
+#: Keyword patterns for dynamically mapping unrecognised model label strings
+#: to metric keys at load time.  Each entry is ``(keywords, metric_key)``
+#: where *keywords* is a tuple of substrings that must all appear in the
+#: lowercased label string.  The first matching pattern wins.
+_LABEL_KEYWORD_PATTERNS: list[tuple[tuple[str, ...], str]] = [
+    (("anime",), "style_anime"),
+    (("manga",), "style_illustration"),
+    (("3d",), "style_3d"),
+    (("illust",), "style_illustration"),
+    (("illustration",), "style_illustration"),
+    (("drawing",), "style_illustration"),
+    (("real",), "style_photo"),
+    (("photo",), "style_photo"),
+    (("photograph",), "style_photo"),
+    (("cgi",), "style_cgi"),
+    (("computer",), "style_cgi"),
+]
 
 #: Safe default value returned for any metric when scoring fails.
 _DEFAULT_SCORE = 0.0
@@ -84,6 +104,9 @@ class CafeStyleScorer(BaseScorer):
         super().__init__(variant_id=variant_id, **kwargs)
         # Lazy-loaded state — populated by _ensure_loaded()
         self._pipeline: Any = None
+        # Label→metric mapping resolved from the actual model config at load
+        # time; falls back to _LABEL_TO_METRIC for unit tests that skip loading.
+        self._label_to_metric: dict[str, str] = _LABEL_TO_METRIC
 
     # ------------------------------------------------------------------
     # Class-level API
@@ -102,13 +125,13 @@ class CafeStyleScorer(BaseScorer):
                 "Requires ~370 MB model download."
             ),
             technical_description=(
-                "Applies the ``cafeai/cafe_style`` Vision Transformer classifier to "
+                "Applies the ``cafeai/cafe_style`` BEiT Vision Transformer classifier to "
                 "predict the probability distribution over five mutually-exclusive style "
-                "classes: photo, anime, illustration, 3d, CGI. "
+                "classes: ``real_life``, ``anime``, ``3d``, ``manga_like``, ``other``. "
                 "Outputs five metrics (``style_photo``, ``style_anime``, "
                 "``style_illustration``, ``style_3d``, ``style_cgi``) that sum to ≈ 1.0."
             ),
-            version="1",
+            version="2",
             metrics=(
                 MetricSpec(
                     key="style_photo",
@@ -164,8 +187,9 @@ class CafeStyleScorer(BaseScorer):
                     variant_id="cafeai_v1",
                     display_name="CafeAI v1",
                     description=(
-                        "ViT-based style classifier (cafeai/cafe_style on HuggingFace). "
-                        "Trained to distinguish photo, anime, illustration, 3D, and CGI styles."
+                        "BEiT-based style classifier (cafeai/cafe_style on HuggingFace). "
+                        "Trained to distinguish real-life photos, anime, manga/illustration, "
+                        "3D renders, and other CGI styles."
                     ),
                 ),
             ),
@@ -193,7 +217,10 @@ class CafeStyleScorer(BaseScorer):
         """Load the image-classification pipeline on first call (lazy init).
 
         Downloads model weights to ``~/.cache/huggingface`` if not already
-        present.
+        present.  Also resolves any label strings present in the model's
+        ``id2label`` config that are not already in :data:`_LABEL_TO_METRIC`
+        using :data:`_LABEL_KEYWORD_PATTERNS`, providing forward-compatibility
+        if the model is updated with new or renamed labels.
         """
         if self._pipeline is not None:
             return
@@ -208,6 +235,23 @@ class CafeStyleScorer(BaseScorer):
             device=device,
             top_k=_TOP_K,
         )
+
+        # Augment the mapping with any labels from the model's actual id2label
+        # that are not already covered by _LABEL_TO_METRIC, using keyword
+        # patterns as a forward-compat fallback for future model revisions.
+        self._label_to_metric = dict(_LABEL_TO_METRIC)
+        try:
+            id2label: dict = self._pipeline.model.config.id2label
+            for label in id2label.values():
+                label_lower = str(label).lower()
+                if label_lower in self._label_to_metric:
+                    continue  # already known
+                for keywords, metric_key in _LABEL_KEYWORD_PATTERNS:
+                    if all(kw in label_lower for kw in keywords):
+                        self._label_to_metric[label_lower] = metric_key
+                        break
+        except AttributeError:
+            pass  # pipeline without accessible model config — use static map
 
     # ------------------------------------------------------------------
     # Scoring
@@ -266,34 +310,40 @@ class CafeStyleScorer(BaseScorer):
                     valid_imgs, batch_size=_SCORE_BATCH_SIZE
                 )
                 for j, idx in enumerate(valid_indices):
-                    results[idx] = _preds_to_scores(all_preds[j])
+                    results[idx] = _preds_to_scores(all_preds[j], self._label_to_metric)
             except RuntimeError:  # noqa: BLE001
                 # Fallback: score each image individually if bulk call fails.
                 for _j, idx in enumerate(valid_indices):
                     try:
                         preds = self._pipeline(imgs[idx])
-                        results[idx] = _preds_to_scores(preds)
+                        results[idx] = _preds_to_scores(preds, self._label_to_metric)
                     except (OSError, ValueError, RuntimeError):
                         pass
 
         return results
 
 
-def _preds_to_scores(preds: list[dict[str, Any]]) -> dict[str, float]:
+def _preds_to_scores(
+    preds: list[dict[str, Any]],
+    label_to_metric: dict[str, str] | None = None,
+) -> dict[str, float]:
     """Convert pipeline prediction list to a metrics dict.
 
     Args:
         preds: List of ``{"label": str, "score": float}`` dicts returned by
             the image-classification pipeline.
+        label_to_metric: Mapping from lowercased label strings to metric keys.
+            Defaults to :data:`_LABEL_TO_METRIC` when ``None``.
 
     Returns:
         Dict mapping each of the five metric keys to a probability in [0, 1].
         Unknown labels are silently ignored; missing labels default to 0.0.
     """
+    mapping = label_to_metric if label_to_metric is not None else _LABEL_TO_METRIC
     scores = _empty_result()
     for pred in preds:
         label = pred.get("label", "").lower()
-        metric_key = _LABEL_TO_METRIC.get(label)
+        metric_key = mapping.get(label)
         if metric_key is not None:
             scores[metric_key] = float(pred["score"])
     return scores

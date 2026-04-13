@@ -134,7 +134,9 @@ def run_scorer(
     if asset_ids is None:
         if skip_existing and spec.metrics:
             first_metric = spec.metrics[0].key
-            asset_ids = list_asset_ids_without_score(conn, scorer_id, variant_id, first_metric)
+            asset_ids = list_asset_ids_without_score(
+                conn, scorer_id, variant_id, first_metric, scorer_version=spec.version
+            )
         else:
             # Score all assets by streaming IDs directly from the DB to avoid
             # materializing full AssetRow objects or all IDs in memory.

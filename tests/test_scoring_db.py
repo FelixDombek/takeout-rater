@@ -458,3 +458,42 @@ def test_list_asset_ids_without_score_after_scoring() -> None:
     assert ids[0] not in missing
     assert ids[1] in missing
     assert ids[2] in missing
+
+
+def test_list_asset_ids_without_score_version_match_excludes_scored() -> None:
+    """Assets scored with the current version are not re-queued."""
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(2)]
+    run_id = insert_scorer_run(conn, "blur", "default", scorer_version="2")
+    bulk_insert_asset_scores(conn, run_id, [(ids[0], "sharpness", 5.0)])
+    finish_scorer_run(conn, run_id)
+    missing = list_asset_ids_without_score(conn, "blur", "default", "sharpness", scorer_version="2")
+    assert ids[0] not in missing
+    assert ids[1] in missing
+
+
+def test_list_asset_ids_without_score_stale_version_requeued() -> None:
+    """Assets scored with an old version are treated as needing a rescore."""
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(2)]
+    # Score both assets under the old version "1"
+    run_id = insert_scorer_run(conn, "blur", "default", scorer_version="1")
+    bulk_insert_asset_scores(conn, run_id, [(ids[0], "sharpness", 3.0), (ids[1], "sharpness", 7.0)])
+    finish_scorer_run(conn, run_id)
+    # Both assets should be re-queued when the current version is "2"
+    missing = list_asset_ids_without_score(conn, "blur", "default", "sharpness", scorer_version="2")
+    assert ids[0] in missing
+    assert ids[1] in missing
+
+
+def test_list_asset_ids_without_score_no_version_ignores_scorer_version() -> None:
+    """When scorer_version=None, any finished run counts (backward-compat)."""
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(2)]
+    run_id = insert_scorer_run(conn, "blur", "default", scorer_version="1")
+    bulk_insert_asset_scores(conn, run_id, [(ids[0], "sharpness", 3.0)])
+    finish_scorer_run(conn, run_id)
+    # No version filter: ids[0] is already scored, regardless of version
+    missing = list_asset_ids_without_score(conn, "blur", "default", "sharpness")
+    assert ids[0] not in missing
+    assert ids[1] in missing

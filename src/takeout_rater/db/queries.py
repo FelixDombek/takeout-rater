@@ -1219,32 +1219,58 @@ def list_asset_ids_without_score(
     scorer_id: str,
     variant_id: str,
     metric_key: str,
+    scorer_version: str | None = None,
 ) -> list[int]:
-    """Return IDs of assets that have no score for the given scorer run.
+    """Return IDs of assets that need scoring (no score, or score is stale).
 
-    More precisely: assets that have never appeared in *any* finished run for
-    the given ``scorer_id`` + ``variant_id`` + ``metric_key``.
+    An asset is considered *needing a score* when it either has no finished
+    scorer run for the given ``scorer_id`` + ``variant_id`` + ``metric_key``,
+    **or** all its existing scores were produced by a different (older)
+    ``scorer_version``.  The latter case ensures that bumping a scorer's
+    version string automatically re-queues assets whose stored results came
+    from a now-superseded implementation.
+
+    When *scorer_version* is ``None`` any finished run counts — backward
+    compatible with callers that do not track versions.
 
     Args:
         conn: Open database connection.
         scorer_id: Scorer ID.
         variant_id: Variant ID.
         metric_key: Metric key.
+        scorer_version: Current scorer version string.  When provided, only
+            runs whose ``scorer_version`` exactly matches this value are
+            considered up-to-date.  Assets scored by a different version are
+            treated as un-scored.
 
     Returns:
         List of integer asset IDs ordered by ``assets.id``.
     """
-    rows = conn.execute(
-        "SELECT a.id FROM assets a"
-        " WHERE a.id NOT IN ("
-        "   SELECT s.asset_id FROM asset_scores s"
-        "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
-        "   WHERE r.scorer_id = ? AND r.variant_id = ? AND s.metric_key = ?"
-        "     AND r.finished_at IS NOT NULL"
-        " )"
-        " ORDER BY a.id",
-        (scorer_id, variant_id, metric_key),
-    ).fetchall()
+    if scorer_version is not None:
+        rows = conn.execute(
+            "SELECT a.id FROM assets a"
+            " WHERE a.id NOT IN ("
+            "   SELECT s.asset_id FROM asset_scores s"
+            "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
+            "   WHERE r.scorer_id = ? AND r.variant_id = ? AND s.metric_key = ?"
+            "     AND r.scorer_version = ?"
+            "     AND r.finished_at IS NOT NULL"
+            " )"
+            " ORDER BY a.id",
+            (scorer_id, variant_id, metric_key, scorer_version),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT a.id FROM assets a"
+            " WHERE a.id NOT IN ("
+            "   SELECT s.asset_id FROM asset_scores s"
+            "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
+            "   WHERE r.scorer_id = ? AND r.variant_id = ? AND s.metric_key = ?"
+            "     AND r.finished_at IS NOT NULL"
+            " )"
+            " ORDER BY a.id",
+            (scorer_id, variant_id, metric_key),
+        ).fetchall()
     return [row[0] for row in rows]
 
 

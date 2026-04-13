@@ -16,10 +16,10 @@ Four variants are available:
   Same purpose as ``aesthetic`` with a different backbone; score in [1, 10].
 - ``technical`` — ``nima-koniq`` (inception_resnet_v2, KonIQ-10k dataset).
   More sensitive to blur, noise, and compression artefacts.
-  Outputs a score in [0, 1] which is linearly rescaled to [1, 10].
+  Outputs a score in [0, 1]; linearly rescaled to [1, 10].
 - ``technical-spaq`` — ``nima-spaq`` (inception_resnet_v2, SPAQ dataset).
   Similar to ``technical`` but trained on the SPAQ in-the-wild dataset.
-  Outputs a score in [0, 1] which is linearly rescaled to [1, 10].
+  Outputs a score in [1, 10].
 """
 
 from __future__ import annotations
@@ -35,22 +35,23 @@ from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, Varia
 
 #: pyiqa metric name for each scorer variant.
 _VARIANT_PYIQA_METRIC: dict[str, str] = {
-    "aesthetic": "nima",  # inception_resnet_v2, AVA dataset, score range 0–10
-    "aesthetic-vgg16": "nima-vgg16-ava",  # vgg16, AVA dataset, score range 0–10
-    "technical": "nima-koniq",  # inception_resnet_v2, KonIQ-10k dataset, score range ~0–1
-    "technical-spaq": "nima-spaq",  # inception_resnet_v2, SPAQ dataset, score range ~0–1
+    "aesthetic": "nima",  # inception_resnet_v2, AVA dataset, score range [1, 10]
+    "aesthetic-vgg16": "nima-vgg16-ava",  # vgg16, AVA dataset, score range [1, 10]
+    "technical": "nima-koniq",  # inception_resnet_v2, KonIQ-10k dataset, score range [0, 1]
+    "technical-spaq": "nima-spaq",  # inception_resnet_v2, SPAQ dataset, score range [1, 10]
 }
 
 #: Native output range (min, max) per variant.  Used to rescale to the
 #: common [1, 10] display range before clamping.
-#: Aesthetic variants already output in [1, 10] (mean of a 1–10 AVA rating
-#: distribution), so their native range matches the display range exactly.
-#: Technical variants output ~[0, 1] and are linearly mapped to [1, 10].
+#: Aesthetic variants output the expected value E[rating] over a 10-bin
+#: distribution with bin labels 1–10, so their native range is [1, 10].
+#: nima-koniq (technical) outputs in [0, 1] and is linearly rescaled to [1, 10].
+#: nima-spaq (technical-spaq) outputs in [1, 10] (same as the aesthetic variants).
 _VARIANT_NATIVE_RANGE: dict[str, tuple[float, float]] = {
     "aesthetic": (1.0, 10.0),
     "aesthetic-vgg16": (1.0, 10.0),
     "technical": (0.0, 1.0),
-    "technical-spaq": (0.0, 1.0),
+    "technical-spaq": (1.0, 10.0),
 }
 
 #: Number of images to forward through the metric in a single call.
@@ -82,10 +83,10 @@ class NIMAScorer(BaseScorer):
       Raw output is in [1, 10]; clamped for safety.
     - ``technical``: ``nima-koniq`` (inception_resnet_v2, KonIQ-10k) — more
       sensitive to blur, noise, and compression artefacts.
-      Raw output is in [0, 1]; rescaled to [1, 10].
+      Raw output is in [0, 1]; linearly rescaled to [1, 10].
     - ``technical-spaq``: ``nima-spaq`` (inception_resnet_v2, SPAQ) — similar
       to ``technical`` but trained on in-the-wild smartphone photos.
-      Raw output is in [0, 1]; rescaled to [1, 10].
+      Raw output is in [1, 10].
 
     All variants output a single float in [1, 10] stored under the metric
     key ``nima_score``.  A separate scorer run is required for each variant.
@@ -118,11 +119,11 @@ class NIMAScorer(BaseScorer):
                 "Neural Image Assessment (NIMA, Google 2018). Predicts the mean "
                 "human rating of image quality on a 1–10 scale. Backed by the "
                 "pyiqa library. Aesthetic variants: nima (inception_resnet_v2, AVA) and "
-                "nima-vgg16-ava (vgg16, AVA). Technical variants: nima-koniq "
-                "(inception_resnet_v2, KonIQ-10k; rescaled to 1–10) and nima-spaq "
-                "(inception_resnet_v2, SPAQ; rescaled to 1–10)."
+                "nima-vgg16-ava (vgg16, AVA) — native output [1, 10]. Technical variants: "
+                "nima-koniq (inception_resnet_v2, KonIQ-10k; native output [0, 1], rescaled to "
+                "[1, 10]) and nima-spaq (inception_resnet_v2, SPAQ; native output [1, 10])."
             ),
-            version="3",
+            version="4",
             metrics=(
                 MetricSpec(
                     key="nima_score",
@@ -160,7 +161,8 @@ class NIMAScorer(BaseScorer):
                     display_name="Technical (KonIQ-10k)",
                     description=(
                         "NIMA trained on the KonIQ-10k dataset.  Predicts technical "
-                        "quality: sharpness, noise level, and compression artefacts."
+                        "quality: sharpness, noise level, and compression artefacts.  "
+                        "Native output [0, 1] is rescaled to [1, 10]."
                     ),
                 ),
                 VariantSpec(
