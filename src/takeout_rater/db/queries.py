@@ -697,7 +697,8 @@ def get_asset_scores(
 
     Returns:
         List of dicts with keys ``scorer_id``, ``variant_id``, ``metric_key``,
-        ``value``, and ``finished_at``.  Ordered by ``finished_at DESC``.
+        ``value``, and ``finished_at``.  Ordered alphabetically by
+        ``scorer_id``, ``variant_id``, ``metric_key``.
     """
     rows = conn.execute(
         "SELECT scorer_id, variant_id, metric_key, value, finished_at"
@@ -712,7 +713,7 @@ def get_asset_scores(
         "   WHERE s.asset_id = ? AND r.finished_at IS NOT NULL"
         " )"
         " WHERE rn = 1"
-        " ORDER BY finished_at DESC",
+        " ORDER BY scorer_id, variant_id, metric_key",
         (asset_id,),
     ).fetchall()
     return [
