@@ -180,7 +180,7 @@ def build_clusters(
     Returns:
         Number of clusters persisted to the DB.
     """
-    params: dict = {"threshold": threshold, "window": window}
+    params: dict[str, int | bool] = {"threshold": threshold, "window": window}
     if single_linkage:
         params["single_linkage"] = True
     params_json = json.dumps(params, separators=(",", ":"), sort_keys=True)

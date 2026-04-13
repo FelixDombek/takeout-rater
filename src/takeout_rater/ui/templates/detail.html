@@ -289,7 +289,7 @@ function switchTab(name) {
 
 {% if phash_hex %}
 (function () {
-  const hex = "{{ phash_hex }}";
+  const hex = {{ phash_hex | tojson }};
   const BITS = 256;
   const SIDE = 16;
   const BLOCK = 4;

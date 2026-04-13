@@ -515,7 +515,7 @@
     var statusEl = document.getElementById('clear-status');
     if (btn) btn.disabled = true;
     if (statusEl) { statusEl.textContent = 'Clearing…'; statusEl.style.color = '#888'; }
-    fetch('/api/clusters/clear', { method: 'POST' })
+    fetch('/api/clusters/clear', { method: 'DELETE' })
       .then(function(r) {
         if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
         return r.json();

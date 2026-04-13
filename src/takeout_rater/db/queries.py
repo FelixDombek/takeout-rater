@@ -1088,10 +1088,10 @@ def delete_all_clusters(conn: sqlite3.Connection) -> int:
     Returns:
         Number of cluster rows deleted.
     """
-    count = conn.execute("SELECT COUNT(*) FROM clusters").fetchone()[0]
-    conn.execute("DELETE FROM cluster_members")
-    conn.execute("DELETE FROM clusters")
-    conn.commit()
+    with conn:
+        count = conn.execute("SELECT COUNT(*) FROM clusters").fetchone()[0]
+        conn.execute("DELETE FROM cluster_members")
+        conn.execute("DELETE FROM clusters")
     return count
 
 

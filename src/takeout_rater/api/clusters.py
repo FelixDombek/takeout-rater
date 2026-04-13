@@ -41,7 +41,7 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     yield conn
 
 
-@router.post("/api/clusters/clear")
+@router.delete("/api/clusters/clear")
 def clear_clusters(
     request: Request,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
