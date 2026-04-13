@@ -53,9 +53,9 @@ def _add_asset(conn: sqlite3.Connection, relpath: str = "Photos/img.jpg") -> int
     )
 
 
-def _make_run(conn: sqlite3.Connection, method: str = "m", params: str | None = None) -> int:
+def _make_run(conn: sqlite3.Connection, method: str = "m", params_json: str | None = None) -> int:
     """Insert a clustering_run row and return its id."""
-    return insert_clustering_run(conn, method, params)
+    return insert_clustering_run(conn, method, params_json)
 
 
 # ---------------------------------------------------------------------------

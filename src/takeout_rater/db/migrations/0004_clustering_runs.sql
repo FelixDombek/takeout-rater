@@ -14,8 +14,10 @@ CREATE TABLE IF NOT EXISTS clustering_runs (
 );
 
 -- SQLite does not allow adding a NOT NULL column without a DEFAULT via ALTER TABLE,
--- so run_id is added as nullable here.  All new inserts from the application will
--- always supply a run_id value (enforced at the application layer).
+-- so run_id is added as nullable here.  All new cluster rows are inserted via
+-- insert_cluster() in queries.py which always receives a run_id from the builder;
+-- any NULL run_id in this column would only arise from a direct SQL insert that
+-- bypasses the application layer, which is not supported.
 ALTER TABLE clusters ADD COLUMN run_id INTEGER REFERENCES clustering_runs(id);
 
 CREATE INDEX IF NOT EXISTS idx_clusters_run_id ON clusters (run_id);

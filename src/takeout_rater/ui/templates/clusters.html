@@ -560,7 +560,7 @@
       })
       .then(function(data) {
         if (statusEl) {
-          statusEl.textContent = '\u2713 Cleared ' + data.deleted + ' run(s).';
+          statusEl.textContent = '\u2713 Cleared ' + data.deleted + ' run' + (data.deleted !== 1 ? 's' : '') + '.';
           statusEl.style.color = '#1e7e34';
         }
         setTimeout(function() { window.location.reload(); }, 800);
