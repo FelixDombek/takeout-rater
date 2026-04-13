@@ -83,7 +83,7 @@ class CLIPIQAScorer(BaseScorer):
                 "similarity. The score is the softmax probability that the image "
                 "matches 'Good photo.' over 'Bad photo.' using CLIP ViT-L/14."
             ),
-            version="1",
+            version="2",
             metrics=(
                 MetricSpec(
                     key="clip_quality",
@@ -243,7 +243,9 @@ class CLIPIQAScorer(BaseScorer):
                             with torch.no_grad():
                                 img_feat = self._clip_model.encode_image(tensor)
                                 img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
-                                sim = self._logit_scale * (img_feat @ self._text_features.T)  # (1, 2)
+                                sim = self._logit_scale * (
+                                    img_feat @ self._text_features.T
+                                )  # (1, 2)
                                 prob = torch.softmax(sim, dim=-1)
                                 sub_scores[idx] = max(0.0, min(1.0, float(prob[0, 0].item())))
                         except (OSError, ValueError, RuntimeError):

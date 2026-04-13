@@ -138,7 +138,7 @@ class CafeStyleScorer(BaseScorer):
                 "Outputs five metrics (``style_photo``, ``style_anime``, "
                 "``style_illustration``, ``style_3d``, ``style_cgi``) that sum to ≈ 1.0."
             ),
-            version="1",
+            version="2",
             metrics=(
                 MetricSpec(
                     key="style_photo",

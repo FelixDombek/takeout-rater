@@ -130,6 +130,9 @@ def _make_mock_scorer(good_prob: float = 0.75) -> CLIPIQAScorer:
     scorer._clip_model = fake_clip
     scorer._preprocess = lambda img: torch.zeros(3, 224, 224)
     scorer._text_features = text_features
+    scorer._logit_scale = torch.tensor(
+        1.0
+    )  # neutralise scale so text_features encodes desired prob
     scorer._device = torch.device("cpu")
 
     return scorer

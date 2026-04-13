@@ -132,7 +132,7 @@ class NIMAScorer(BaseScorer):
                 "(inception_resnet_v2, KonIQ-10k) and nima-spaq "
                 "(inception_resnet_v2, SPAQ)."
             ),
-            version="3",
+            version="4",
             metrics=(
                 MetricSpec(
                     key="nima_score",
