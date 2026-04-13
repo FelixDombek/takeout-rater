@@ -27,6 +27,11 @@
     cursor: pointer;
   }
   .card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .card--active {
+    outline: 3px solid #4a90d9;
+    outline-offset: -2px;
+    box-shadow: 0 0 0 4px rgba(74,144,217,0.35);
+  }
   .card a { display: block; color: inherit; text-decoration: none; }
   .card-thumb {
     width: 100%;
@@ -998,6 +1003,14 @@ function savePreset() {
   let lbIndex = 0;
   let lbDetailAbort = null;
 
+  // Scroll a card into view even while the body scroll is locked by the lightbox.
+  function scrollCardIntoView(card) {
+    const wasLocked = document.body.style.overflow === 'hidden';
+    if (wasLocked) document.body.style.overflow = '';
+    card.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+    if (wasLocked) document.body.style.overflow = 'hidden';
+  }
+
   function highlightJson(pre) {
     const text = pre.textContent;
     let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1058,6 +1071,12 @@ function savePreset() {
     if (!cards.length) return;
     lbIndex = Math.max(0, Math.min(index, cards.length - 1));
     const card = cards[lbIndex];
+
+    // Update active-card highlight.
+    const prev = document.querySelector('.card--active');
+    if (prev) prev.classList.remove('card--active');
+    card.classList.add('card--active');
+
     lbImg.src = card.dataset.lbSrc;
     lbImg.alt = card.dataset.lbTitle;
     lbTitle.textContent = card.dataset.lbTitle;
@@ -1066,12 +1085,17 @@ function savePreset() {
     lightbox.style.display = 'flex';
     lightbox.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+    // Keep the highlighted card visible in the grid behind the lightbox so
+    // the virtual-scroll buffer stays centred on the right area.
+    scrollCardIntoView(card);
     lbImg.focus();
     loadDetails(card.dataset.lbId);
   }
 
   function lbClose() {
     if (lbDetailAbort) { lbDetailAbort.abort(); lbDetailAbort = null; }
+    const active = document.querySelector('.card--active');
+    if (active) active.classList.remove('card--active');
     lightbox.style.display = 'none';
     lightbox.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
