@@ -8,12 +8,18 @@ This implementation delegates to the ``pyiqa`` library (IQA-PyTorch), which
 ships its own pre-trained NIMA checkpoints and manages weight downloads
 automatically via ``~/.cache/pyiqa``.
 
-Two variants are available:
+Four variants are available:
 
-- ``aesthetic`` variant — ``nima-ava``, trained on the AVA aesthetic dataset.
-- ``technical`` variant — ``nima-inception_resnet_v2-koniq``, trained on the
-  KonIQ-10k technical quality dataset; more sensitive to blur, noise, and
-  compression artefacts.
+- ``aesthetic`` — ``nima`` (inception_resnet_v2, AVA dataset).
+  Outputs a score in [1, 10]; clamped for safety.
+- ``aesthetic-vgg16`` — ``nima-vgg16-ava`` (vgg16, AVA dataset).
+  Same purpose as ``aesthetic`` with a different backbone; score in [1, 10].
+- ``technical`` — ``nima-koniq`` (inception_resnet_v2, KonIQ-10k dataset).
+  More sensitive to blur, noise, and compression artefacts.
+  Outputs a score in [0, 1] which is linearly rescaled to [1, 10].
+- ``technical-spaq`` — ``nima-spaq`` (inception_resnet_v2, SPAQ dataset).
+  Similar to ``technical`` but trained on the SPAQ in-the-wild dataset.
+  Outputs a score in [0, 1] which is linearly rescaled to [1, 10].
 """
 
 from __future__ import annotations
@@ -29,8 +35,22 @@ from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, Varia
 
 #: pyiqa metric name for each scorer variant.
 _VARIANT_PYIQA_METRIC: dict[str, str] = {
-    "aesthetic": "nima-ava",
-    "technical": "nima-inception_resnet_v2-koniq",
+    "aesthetic": "nima",  # inception_resnet_v2, AVA dataset, score range 0–10
+    "aesthetic-vgg16": "nima-vgg16-ava",  # vgg16, AVA dataset, score range 0–10
+    "technical": "nima-koniq",  # inception_resnet_v2, KonIQ-10k dataset, score range ~0–1
+    "technical-spaq": "nima-spaq",  # inception_resnet_v2, SPAQ dataset, score range ~0–1
+}
+
+#: Native output range (min, max) per variant.  Used to rescale to the
+#: common [1, 10] display range before clamping.
+#: Aesthetic variants already output in [1, 10] (mean of a 1–10 AVA rating
+#: distribution), so their native range matches the display range exactly.
+#: Technical variants output ~[0, 1] and are linearly mapped to [1, 10].
+_VARIANT_NATIVE_RANGE: dict[str, tuple[float, float]] = {
+    "aesthetic": (1.0, 10.0),
+    "aesthetic-vgg16": (1.0, 10.0),
+    "technical": (0.0, 1.0),
+    "technical-spaq": (0.0, 1.0),
 }
 
 #: Number of images to forward through the metric in a single call.
@@ -47,20 +67,27 @@ _MAX_SCORE = 10.0
 
 
 class NIMAScorer(BaseScorer):
-    """NIMA (Neural Image Assessment) scorer — aesthetic and technical variants.
+    """NIMA (Neural Image Assessment) scorer — four variants.
 
     Predicts human aesthetic / technical quality ratings on a 1–10 scale using
     pre-trained NIMA models from the ``pyiqa`` library (IQA-PyTorch).
 
-    Two variants are available:
+    Four variants are available:
 
-    - ``aesthetic``: ``nima-ava`` — trained on the AVA aesthetic dataset.
-      Predicts perceived aesthetic quality (composition, colour, subject matter).
-    - ``technical``: ``nima-inception_resnet_v2-koniq`` — trained on the
-      KonIQ-10k technical quality dataset.  More sensitive to blur, noise, and
-      compression artefacts.
+    - ``aesthetic``: ``nima`` (inception_resnet_v2, AVA dataset) — predicts
+      perceived aesthetic quality (composition, colour, subject matter).
+      Raw output is in [1, 10]; clamped for safety.
+    - ``aesthetic-vgg16``: ``nima-vgg16-ava`` (vgg16, AVA dataset) — same
+      purpose as ``aesthetic`` with a VGG-16 backbone.
+      Raw output is in [1, 10]; clamped for safety.
+    - ``technical``: ``nima-koniq`` (inception_resnet_v2, KonIQ-10k) — more
+      sensitive to blur, noise, and compression artefacts.
+      Raw output is in [0, 1]; rescaled to [1, 10].
+    - ``technical-spaq``: ``nima-spaq`` (inception_resnet_v2, SPAQ) — similar
+      to ``technical`` but trained on in-the-wild smartphone photos.
+      Raw output is in [0, 1]; rescaled to [1, 10].
 
-    Both variants output a single float in [1, 10] stored under the metric
+    All variants output a single float in [1, 10] stored under the metric
     key ``nima_score``.  A separate scorer run is required for each variant.
     Model weights are downloaded and cached by ``pyiqa`` in ``~/.cache/pyiqa``
     on first use.
@@ -83,17 +110,19 @@ class NIMAScorer(BaseScorer):
             description=(
                 "Neural Image Assessment (NIMA) predicts how human viewers would rate a photo "
                 "on a 1–10 scale, using a neural network trained on professional photo ratings. "
-                "Two variants: aesthetic quality (composition, lighting, colour) and technical "
-                "quality (sharpness, noise, exposure). "
+                "Four variants: two aesthetic quality models (composition, lighting, colour) and "
+                "two technical quality models (sharpness, noise, exposure). "
                 "Requires model download on first use (managed by pyiqa)."
             ),
             technical_description=(
                 "Neural Image Assessment (NIMA, Google 2018). Predicts the mean "
                 "human rating of image quality on a 1–10 scale. Backed by the "
-                "pyiqa library: aesthetic variant uses nima-ava (AVA dataset), "
-                "technical variant uses nima-inception_resnet_v2-koniq (KonIQ-10k)."
+                "pyiqa library. Aesthetic variants: nima (inception_resnet_v2, AVA) and "
+                "nima-vgg16-ava (vgg16, AVA). Technical variants: nima-koniq "
+                "(inception_resnet_v2, KonIQ-10k; rescaled to 1–10) and nima-spaq "
+                "(inception_resnet_v2, SPAQ; rescaled to 1–10)."
             ),
-            version="2",
+            version="3",
             metrics=(
                 MetricSpec(
                     key="nima_score",
@@ -110,10 +139,20 @@ class NIMAScorer(BaseScorer):
             variants=(
                 VariantSpec(
                     variant_id="aesthetic",
-                    display_name="Aesthetic (AVA)",
+                    display_name="Aesthetic (AVA, inception_resnet_v2)",
                     description=(
-                        "NIMA trained on the AVA dataset.  Predicts perceived aesthetic "
-                        "quality: composition, colour harmony, and subject interest."
+                        "NIMA trained on the AVA dataset (inception_resnet_v2 backbone).  "
+                        "Predicts perceived aesthetic quality: composition, colour harmony, "
+                        "and subject interest."
+                    ),
+                ),
+                VariantSpec(
+                    variant_id="aesthetic-vgg16",
+                    display_name="Aesthetic (AVA, VGG-16)",
+                    description=(
+                        "NIMA trained on the AVA dataset (VGG-16 backbone).  "
+                        "Same aesthetic purpose as the inception_resnet_v2 variant "
+                        "with a different model architecture."
                     ),
                 ),
                 VariantSpec(
@@ -122,6 +161,14 @@ class NIMAScorer(BaseScorer):
                     description=(
                         "NIMA trained on the KonIQ-10k dataset.  Predicts technical "
                         "quality: sharpness, noise level, and compression artefacts."
+                    ),
+                ),
+                VariantSpec(
+                    variant_id="technical-spaq",
+                    display_name="Technical (SPAQ)",
+                    description=(
+                        "NIMA trained on the SPAQ dataset of in-the-wild smartphone photos.  "
+                        "Predicts technical quality with a focus on real-world capture conditions."
                     ),
                 ),
             ),
@@ -205,6 +252,18 @@ class NIMAScorer(BaseScorer):
 
         self._ensure_loaded()
 
+        # Some variants (e.g. nima-koniq) output scores in a range other than
+        # [1, 10].  Linearly rescale raw output to [1, 10] before clamping.
+        native_min, native_max = _VARIANT_NATIVE_RANGE.get(self.variant_id, (0.0, 10.0))
+        native_span = native_max - native_min
+        display_span = _MAX_SCORE - _MIN_SCORE
+
+        def _rescale(raw: float) -> float:
+            if native_span == 0:
+                return _MIN_SCORE
+            scaled = (raw - native_min) / native_span * display_span + _MIN_SCORE
+            return max(_MIN_SCORE, min(_MAX_SCORE, scaled))
+
         scores: list[float] = []
 
         for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
@@ -231,7 +290,7 @@ class NIMAScorer(BaseScorer):
                         raise RuntimeError("scalar output — fall back to per-image")
                     score_values: list[float] = raw_out.view(-1).tolist()
                     for j, idx in enumerate(valid_indices):
-                        sub_scores[idx] = max(_MIN_SCORE, min(_MAX_SCORE, float(score_values[j])))
+                        sub_scores[idx] = _rescale(float(score_values[j]))
                 except RuntimeError:
                     # Fallback: score each valid image individually (e.g. scalar output)
                     for _j, idx in enumerate(valid_indices):
@@ -240,7 +299,7 @@ class NIMAScorer(BaseScorer):
                             img = Image.open(path).convert("RGB")
                             tensor = to_tensor(img).unsqueeze(0)
                             raw = float(self._model(tensor).item())
-                            sub_scores[idx] = max(_MIN_SCORE, min(_MAX_SCORE, raw))
+                            sub_scores[idx] = _rescale(raw)
                         except (OSError, ValueError, RuntimeError):
                             pass
 
