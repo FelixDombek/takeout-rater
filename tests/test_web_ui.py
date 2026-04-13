@@ -444,6 +444,57 @@ def test_browse_invalid_score_returns_200(client_with_scores: TestClient) -> Non
     assert resp.status_code == 200
 
 
+def test_sort_options_only_include_scored_metrics(tmp_path: Path) -> None:
+    """Sort dropdown should only list metrics that have completed scorer runs."""
+    conn = _make_db()
+    for i in range(3):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    # No scorer runs have been finished — dropdown should have no scorer options
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get("/assets")
+    assert resp.status_code == 200
+    # The sort dropdown should only have the default "date taken" option
+    assert "simple:sharpness" not in resp.text
+
+
+def test_sort_options_appear_after_scoring(tmp_path: Path) -> None:
+    """Sort dropdown should include metrics once a scorer run has completed."""
+    from takeout_rater.db.queries import (  # noqa: PLC0415
+        bulk_insert_asset_scores,
+        finish_scorer_run,
+        insert_scorer_run,
+    )
+
+    conn = _make_db()
+    ids = [_add_asset(conn, f"Photos/img{i}.jpg") for i in range(3)]
+    # Use scorer_id "simple" matching the real BlurScorer spec
+    run_id = insert_scorer_run(conn, "simple", "blur")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    resp = client.get("/assets")
+    assert resp.status_code == 200
+    assert "simple:sharpness" in resp.text
+
+
+def test_sort_by_unscored_metric_shows_helpful_message(tmp_path: Path) -> None:
+    """Manually requesting an unscored metric should show a helpful message, not 'No photos indexed'."""
+    conn = _make_db()
+    for i in range(3):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn)
+    client = TestClient(app, follow_redirects=True)
+    # Force sort_by via URL for a metric with no scores
+    resp = client.get("/assets?sort_by=blur:sharpness")
+    assert resp.status_code == 200
+    assert "No photos indexed yet" not in resp.text
+    assert "No scored photos for this metric" in resp.text
+
+
 # ── preset API ────────────────────────────────────────────────────────────────
 
 

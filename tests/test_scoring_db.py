@@ -390,6 +390,38 @@ def test_list_assets_by_score_range_filter() -> None:
     assert all(10.0 <= s <= 30.0 for s in scores)
 
 
+def test_list_assets_by_score_non_default_variant() -> None:
+    """Run with a non-'default' variant_id should be found via metric_key lookup."""
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
+    # Use a non-default variant_id (like the real SimpleScorer "blur" variant)
+    run_id = insert_scorer_run(conn, "simple", "blur")
+    bulk_insert_asset_scores(
+        conn,
+        run_id,
+        [(ids[0], "sharpness", 10.0), (ids[1], "sharpness", 80.0), (ids[2], "sharpness", 50.0)],
+    )
+    finish_scorer_run(conn, run_id)
+
+    # Without passing variant_id, should still find results via metric_key
+    pairs = list_assets_by_score(conn, "simple", "sharpness")
+    assert len(pairs) == 3
+    scores = [s for _, s in pairs]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_count_assets_with_score_non_default_variant() -> None:
+    """Count should work for non-'default' variant_id via metric_key lookup."""
+    conn = _open_in_memory()
+    ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(4)]
+    run_id = insert_scorer_run(conn, "simple", "blur")
+    bulk_insert_asset_scores(
+        conn, run_id, [(aid, "sharpness", float(i)) for i, aid in enumerate(ids)]
+    )
+    finish_scorer_run(conn, run_id)
+    assert count_assets_with_score(conn, "simple", "sharpness") == 4
+
+
 # ── upsert_phash / get_phash ──────────────────────────────────────────────────
 
 
