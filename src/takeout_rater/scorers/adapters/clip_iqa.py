@@ -16,10 +16,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scorers.base import (
+    BaseScorer,
+    MetricSpec,
+    ScorerSpec,
+    VariantSpec,
+    _run_pipelined_batches,
+)
 
 if TYPE_CHECKING:
-    import torch
+    pass
 
 # ---------------------------------------------------------------------------
 # Text prompts used as quality anchors
@@ -41,6 +47,9 @@ _CLIP_PRETRAINED = "openai"
 #: 64 fits comfortably within the VRAM budget of an 8 GB GPU alongside
 #: the ViT-L/14 weights (~900 MB).  Tune down if you hit VRAM OOM errors.
 _SCORE_BATCH_SIZE = 64
+
+#: Number of preprocessed batches to keep ready ahead of GPU inference.
+_PREFETCH_BATCHES = 2
 
 
 class CLIPIQAScorer(BaseScorer):
@@ -180,6 +189,11 @@ class CLIPIQAScorer(BaseScorer):
         each chunk is forwarded through CLIP ViT-L/14 in a single GPU pass,
         making full use of hardware parallelism.
 
+        CPU preprocessing (PIL decode + CLIP transforms) and GPU inference are
+        **pipelined**: while the GPU processes chunk N, a background thread
+        preprocesses chunk N+1 so that neither device sits idle waiting for
+        the other.
+
         Within each chunk, images that fail to open are skipped and receive a
         score of ``0.0``.  If the whole-chunk forward pass raises
         ``RuntimeError`` (e.g. VRAM OOM), the chunk falls back to per-image
@@ -201,26 +215,33 @@ class CLIPIQAScorer(BaseScorer):
 
         self._ensure_loaded()
 
-        scores: list[float] = []
+        chunks = [
+            image_paths[start : start + _SCORE_BATCH_SIZE]
+            for start in range(0, len(image_paths), _SCORE_BATCH_SIZE)
+        ]
 
-        for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
-            chunk = image_paths[batch_start : batch_start + _SCORE_BATCH_SIZE]
-            tensors: list[torch.Tensor] = []
-            valid_indices: list[int] = []
-
+        def _preprocess(chunk: list[Path]) -> tuple[list[Any], set[int]]:
+            tensors: list[Any] = []
+            failed: set[int] = set()
             for i, path in enumerate(chunk):
                 try:
                     img = Image.open(path).convert("RGB")
                     tensors.append(self._preprocess(img))
-                    valid_indices.append(i)
                 except (OSError, ValueError):
-                    pass
+                    failed.add(i)
+                    tensors.append(None)
+            return tensors, failed
 
+        def _infer(
+            tensors: list[Any], failed: set[int], chunk: list[Path]
+        ) -> list[dict[str, float]]:
+            valid_tensors = [t for t in tensors if t is not None]
+            valid_indices = [i for i, t in enumerate(tensors) if t is not None]
             sub_scores = [0.0] * len(chunk)
 
-            if tensors:
+            if valid_tensors:
                 try:
-                    batch = torch.stack(tensors).to(self._device)
+                    batch = torch.stack(valid_tensors).to(self._device)
                     with torch.no_grad():
                         img_features = self._clip_model.encode_image(batch)  # (N, D)
                         img_features = img_features / img_features.norm(dim=-1, keepdim=True)
@@ -251,6 +272,6 @@ class CLIPIQAScorer(BaseScorer):
                         except (OSError, ValueError, RuntimeError):
                             pass
 
-            scores.extend(sub_scores)
+            return [{"clip_quality": s} for s in sub_scores]
 
-        return [{"clip_quality": s} for s in scores]
+        return _run_pipelined_batches(chunks, _preprocess, _infer, prefetch=_PREFETCH_BATCHES)
