@@ -31,7 +31,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scorers.base import (
+    BaseScorer,
+    MetricSpec,
+    ScorerSpec,
+    VariantSpec,
+    _run_pipelined_batches,
+)
 
 # ---------------------------------------------------------------------------
 # Variant definitions
@@ -66,6 +72,9 @@ def _to_higher_is_better(variant_id: str, raw: float) -> float:
 #: Number of images to stack into a single metric call.  Most pyiqa metrics
 #: accept a ``(N, C, H, W)`` batch tensor.  Tune down if you hit VRAM OOM.
 _SCORE_BATCH_SIZE = 32
+
+#: Number of preprocessed batches to keep ready ahead of GPU inference.
+_PREFETCH_BATCHES = 2
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +219,11 @@ class PyIQAScorer(BaseScorer):
         tensor and passed to the pyiqa metric in one call, amortising model
         overhead across many images.
 
+        CPU preprocessing (PIL decode + ``to_tensor``) and GPU inference are
+        **pipelined**: while the GPU processes chunk N, a background thread
+        preprocesses chunk N+1 so that neither device sits idle waiting for
+        the other.
+
         If the pyiqa metric returns a per-image tensor (shape ``(N,)`` or
         ``(N, 1)``), each value is normalised individually.  If it returns a
         scalar (some metrics only support N=1), the chunk falls back to
@@ -235,26 +249,33 @@ class PyIQAScorer(BaseScorer):
 
         self._ensure_loaded()
 
-        scores: list[float] = []
+        chunks = [
+            image_paths[start : start + _SCORE_BATCH_SIZE]
+            for start in range(0, len(image_paths), _SCORE_BATCH_SIZE)
+        ]
 
-        for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
-            chunk = image_paths[batch_start : batch_start + _SCORE_BATCH_SIZE]
-            tensors: list[torch.Tensor] = []
-            valid_indices: list[int] = []
-
+        def _preprocess(chunk: list[Path]) -> tuple[list[Any], set[int]]:
+            tensors: list[Any] = []
+            failed: set[int] = set()
             for i, path in enumerate(chunk):
                 try:
                     img = Image.open(path).convert("RGB")
                     tensors.append(to_tensor(img))
-                    valid_indices.append(i)
                 except (OSError, ValueError):
-                    pass
+                    failed.add(i)
+                    tensors.append(None)
+            return tensors, failed
 
+        def _infer(
+            tensors: list[Any], failed: set[int], chunk: list[Path]
+        ) -> list[dict[str, float]]:
+            valid_tensors = [t for t in tensors if t is not None]
+            valid_indices = [i for i, t in enumerate(tensors) if t is not None]
             sub_scores = [0.0] * len(chunk)
 
-            if tensors:
+            if valid_tensors:
                 try:
-                    batch = torch.stack(tensors)  # (N, C, H, W) — on CPU for pyiqa
+                    batch = torch.stack(valid_tensors)  # (N, C, H, W) — on CPU for pyiqa
                     raw_out = self._metric(batch)
                     # pyiqa metrics return (N, 1) or (N,); fall back if scalar.
                     if raw_out.dim() == 0:
@@ -274,6 +295,6 @@ class PyIQAScorer(BaseScorer):
                         except (OSError, ValueError, RuntimeError):
                             pass
 
-            scores.extend(sub_scores)
+            return [{"iqa_quality": s} for s in sub_scores]
 
-        return [{"iqa_quality": s} for s in scores]
+        return _run_pipelined_batches(chunks, _preprocess, _infer, prefetch=_PREFETCH_BATCHES)

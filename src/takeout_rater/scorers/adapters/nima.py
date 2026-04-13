@@ -27,7 +27,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scorers.base import (
+    BaseScorer,
+    MetricSpec,
+    ScorerSpec,
+    VariantSpec,
+    _run_pipelined_batches,
+)
 
 # ---------------------------------------------------------------------------
 # Variant definitions
@@ -56,6 +62,9 @@ _VARIANT_NATIVE_RANGE: dict[str, tuple[float, float]] = {
 
 #: Number of images to forward through the metric in a single call.
 _SCORE_BATCH_SIZE = 32
+
+#: Number of preprocessed batches to keep ready ahead of GPU inference.
+_PREFETCH_BATCHES = 2
 
 #: Rating scale bounds used for clamping output.
 _MIN_SCORE = 1.0
@@ -233,6 +242,11 @@ class NIMAScorer(BaseScorer):
         the pyiqa metric.  If the metric returns a scalar (some metrics only
         support N=1), the chunk falls back to per-image processing.
 
+        CPU preprocessing (PIL decode + ``to_tensor``) and GPU inference are
+        **pipelined**: while the GPU processes chunk N, a background thread
+        preprocesses chunk N+1 so that neither device sits idle waiting for
+        the other.
+
         A failed image (``OSError``, ``ValueError``) defaults to the minimum
         score (``1.0``).
 
@@ -266,26 +280,33 @@ class NIMAScorer(BaseScorer):
             scaled = (raw - native_min) / native_span * display_span + _MIN_SCORE
             return max(_MIN_SCORE, min(_MAX_SCORE, scaled))
 
-        scores: list[float] = []
+        chunks = [
+            image_paths[start : start + _SCORE_BATCH_SIZE]
+            for start in range(0, len(image_paths), _SCORE_BATCH_SIZE)
+        ]
 
-        for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
-            chunk = image_paths[batch_start : batch_start + _SCORE_BATCH_SIZE]
-            tensors: list[torch.Tensor] = []
-            valid_indices: list[int] = []
-
+        def _preprocess(chunk: list[Path]) -> tuple[list[Any], set[int]]:
+            tensors: list[Any] = []
+            failed: set[int] = set()
             for i, path in enumerate(chunk):
                 try:
                     img = Image.open(path).convert("RGB")
                     tensors.append(to_tensor(img))
-                    valid_indices.append(i)
                 except (OSError, ValueError):
-                    pass
+                    failed.add(i)
+                    tensors.append(None)
+            return tensors, failed
 
+        def _infer(
+            tensors: list[Any], failed: set[int], chunk: list[Path]
+        ) -> list[dict[str, float]]:
+            valid_tensors = [t for t in tensors if t is not None]
+            valid_indices = [i for i, t in enumerate(tensors) if t is not None]
             sub_scores = [_MIN_SCORE] * len(chunk)
 
-            if tensors:
+            if valid_tensors:
                 try:
-                    batch = torch.stack(tensors)
+                    batch = torch.stack(valid_tensors)
                     raw_out = self._model(batch)
                     # pyiqa metrics return (N,) or (N, 1); fall back if scalar.
                     if raw_out.dim() == 0:
@@ -305,6 +326,6 @@ class NIMAScorer(BaseScorer):
                         except (OSError, ValueError, RuntimeError):
                             pass
 
-            scores.extend(sub_scores)
+            return [{"nima_score": s} for s in sub_scores]
 
-        return [{"nima_score": s} for s in scores]
+        return _run_pipelined_batches(chunks, _preprocess, _infer, prefetch=_PREFETCH_BATCHES)

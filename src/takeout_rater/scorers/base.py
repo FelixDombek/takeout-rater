@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -77,6 +80,79 @@ class ScorerSpec:
     variants: tuple[VariantSpec, ...] = field(default_factory=tuple)
     default_variant_id: str = "default"
     requires_extras: tuple[str, ...] = field(default_factory=tuple)
+
+
+def _run_pipelined_batches(
+    chunks: list[list[Path]],
+    preprocess_fn: Callable[[list[Path]], tuple[Any, set[int]]],
+    infer_fn: Callable[[Any, set[int], list[Path]], list[dict[str, float]]],
+    prefetch: int = 2,
+) -> list[dict[str, float]]:
+    """Run batched scoring with CPU preprocessing and GPU inference pipelined.
+
+    A background thread runs *preprocess_fn* on each chunk concurrently with
+    the main thread running *infer_fn* on the previously preprocessed chunk,
+    so that CPU image loading and transformation overlap with GPU model inference.
+
+    Args:
+        chunks: Non-overlapping sub-lists of image paths to process in order.
+        preprocess_fn: CPU-side function.  Receives a list of paths and returns
+            ``(preprocessed, failed)`` where ``failed`` is a ``set[int]`` of
+            chunk-positions that could not be loaded.  Must not raise; handle
+            errors internally and record them in *failed*.
+        infer_fn: GPU-side function.  Receives ``(preprocessed, failed, chunk)``
+            and returns a list of score dicts — one per path in ``chunk``.
+        prefetch: Maximum number of pre-processed chunks to buffer in the queue
+            before the producer blocks.  Higher values use more CPU memory but
+            keep the GPU better fed.
+
+    Returns:
+        Concatenated list of score dicts for all chunks, in input order.
+    """
+    cancel = threading.Event()
+    q: queue.Queue[tuple[Any, set[int], list[Path]] | None] = queue.Queue(maxsize=prefetch)
+
+    def _producer() -> None:
+        try:
+            for chunk in chunks:
+                if cancel.is_set():
+                    return
+                preprocessed, failed = preprocess_fn(chunk)
+                while True:
+                    try:
+                        q.put((preprocessed, failed, chunk), timeout=0.1)
+                        break
+                    except queue.Full:
+                        if cancel.is_set():
+                            return
+        finally:
+            q.put(None)  # sentinel — always placed so the consumer unblocks
+
+    producer = threading.Thread(target=_producer, daemon=True)
+    producer.start()
+
+    results: list[dict[str, float]] = []
+    try:
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            preprocessed, failed, chunk = item
+            results.extend(infer_fn(preprocessed, failed, chunk))
+    except Exception:
+        cancel.set()
+        # Drain the queue so the producer is not blocked on a full put() and
+        # can observe the cancel event and exit promptly.
+        try:
+            while True:
+                q.get_nowait()
+        except queue.Empty:
+            pass
+        raise
+    finally:
+        producer.join()
+
+    return results
 
 
 class BaseScorer(ABC):
