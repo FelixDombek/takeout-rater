@@ -71,6 +71,18 @@ def test_variant_pyiqa_metric_technical_uses_koniq() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _ensure_loaded validates variant
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_loaded_unknown_variant_raises() -> None:
+    scorer = NIMAScorer.create(variant_id="aesthetic")
+    scorer.variant_id = "unknown_variant"  # type: ignore[misc]
+    with pytest.raises(ValueError, match="Unknown NIMA variant"):
+        scorer._ensure_loaded()
+
+
+# ---------------------------------------------------------------------------
 # Availability check
 # ---------------------------------------------------------------------------
 

@@ -154,11 +154,17 @@ class NIMAScorer(BaseScorer):
         if self._model is not None:
             return
 
+        metric_name = _VARIANT_PYIQA_METRIC.get(self.variant_id)
+        if metric_name is None:
+            raise ValueError(
+                f"Unknown NIMA variant '{self.variant_id}'. "
+                f"Expected one of: {list(_VARIANT_PYIQA_METRIC)}"
+            )
+
         import pyiqa  # noqa: PLC0415
         import torch  # noqa: PLC0415
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        metric_name = _VARIANT_PYIQA_METRIC[self.variant_id]
         self._model = pyiqa.create_metric(metric_name, device=str(device))
 
     # ------------------------------------------------------------------
