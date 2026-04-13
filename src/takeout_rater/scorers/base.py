@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import io
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from PIL import Image as PILImage
 
 
 @dataclass(frozen=True)
@@ -158,3 +163,33 @@ class BaseScorer(ABC):
         """Convenience wrapper: score a single image."""
         results = self.score_batch([image_path], variant_id=variant_id)
         return results[0]
+
+    def score_image(
+        self,
+        image: PILImage.Image,
+        *,
+        variant_id: str | None = None,
+    ) -> dict[str, float]:
+        """Score a pre-loaded PIL image.
+
+        The default implementation serialises *image* to a temporary JPEG file
+        on disk and delegates to :meth:`score_batch`.  Scorers that can work
+        directly with PIL images (or tensors) should override this method to
+        avoid the round-trip through the filesystem.
+
+        Args:
+            image: Pre-loaded PIL image.
+            variant_id: Which variant to use; falls back to the spec default.
+
+        Returns:
+            Dict mapping ``metric_key`` → ``float`` value.
+        """
+        buf = io.BytesIO()
+        # Ensure the image is in a mode that JPEG can encode.
+        save_image = image.convert("RGB") if image.mode not in ("RGB", "L") else image
+        save_image.save(buf, format="JPEG", quality=95)
+        buf.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=True) as tmp:
+            tmp.write(buf.read())
+            tmp.flush()
+            return self.score_batch([Path(tmp.name)], variant_id=variant_id)[0]

@@ -13,13 +13,22 @@ configurable batches, calls ``scorer.score_batch()``, and writes each result
 to ``asset_scores``.  When finished it sets ``scorer_runs.finished_at`` and
 returns the run ID.  ``finish_scorer_run()`` is always called via a
 ``try/finally`` block, even if an error occurs mid-run.
+
+For running multiple scorers together, :func:`run_scorers_parallel` provides a
+more efficient alternative: it loads each thumbnail once and fans out scoring
+tasks across a thread pool, so I/O cost is paid only once per asset regardless
+of how many scorers are requested.
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import queue
 import sqlite3
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from takeout_rater.db.queries import (
@@ -275,3 +284,228 @@ def run_scorer_by_id(
         on_progress=on_progress,
         cancel_check=cancel_check,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sentinel used to signal the DB-writer thread to stop.
+# ---------------------------------------------------------------------------
+
+_STOP = object()
+
+
+def run_scorers_parallel(
+    conn: sqlite3.Connection,
+    scorers: list[BaseScorer],
+    thumbs_dir: Path,
+    *,
+    skip_existing: bool = True,
+    max_workers: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> dict[tuple[str, str], int]:
+    """Run multiple scorers over assets in parallel, loading each thumbnail once.
+
+    This is a more efficient alternative to calling :func:`run_scorer`
+    sequentially for each scorer.  The pipeline has three stages:
+
+    1. **Planning** — determine which assets each scorer still needs to score
+       (respecting *skip_existing*) and build a per-asset work list.
+    2. **Execution** — a :class:`~concurrent.futures.ThreadPoolExecutor` with
+       one thread per CPU core picks up assets from the work list.  Each worker
+       loads the thumbnail with PIL once, then calls
+       :meth:`~takeout_rater.scorers.base.BaseScorer.score_image` for every
+       scorer that needs that asset, protected by a per-scorer
+       :class:`threading.Lock` to keep non-thread-safe ML models safe.
+    3. **DB writing** — a dedicated thread drains a results queue and calls
+       :func:`~takeout_rater.db.queries.bulk_insert_asset_scores`, so all
+       SQLite writes are serialised.
+
+    Each scorer gets its own ``scorer_runs`` record created before the pool
+    starts; all records are finalised (``finished_at`` set) in a ``finally``
+    block even if an error occurs.
+
+    Args:
+        conn: Open library database connection.  Used only by the DB-writer
+            thread; the worker threads do not touch it.
+        scorers: Instantiated scorer instances to run.  Each must have been
+            created via :meth:`~takeout_rater.scorers.base.BaseScorer.create`.
+            Scorers with the same ``scorer_id``/``variant_id`` should not
+            appear more than once (the second would have no work to do).
+        thumbs_dir: Directory containing pre-generated thumbnail files.
+        skip_existing: When ``True`` (default), skip assets that already have a
+            score for the first metric declared by each scorer.
+        max_workers: Size of the thread pool.  Defaults to
+            ``os.cpu_count()`` (minimum 1).
+        on_progress: Optional callback invoked after each asset is fully
+            processed (all scorers done for that asset), called with
+            ``(assets_done, total_assets)``.
+        cancel_check: Optional callable that returns ``True`` when the run
+            should be aborted.  Workers check this before each asset; when it
+            returns ``True`` they stop submitting new tasks and let in-flight
+            tasks finish.
+
+    Returns:
+        Dict mapping ``(scorer_id, variant_id)`` → ``scorer_run_id`` for every
+        scorer that was run.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    if not scorers:
+        return {}
+
+    n_workers = max(1, max_workers if max_workers is not None else (os.cpu_count() or 1))
+
+    # ── Phase 1: Planning ────────────────────────────────────────────────────
+    # For each scorer, determine which asset IDs need to be scored.
+    # Build: asset_id → list of BaseScorer instances needed for that asset.
+
+    # Collect the union of all asset IDs across scorers.
+    all_asset_ids_set: set[int] = set()
+    scorer_needed_ids: dict[int, set[int]] = {}  # scorer object id → set of asset IDs
+
+    for scorer in scorers:
+        spec = scorer.spec()
+        if skip_existing and spec.metrics:
+            first_metric = spec.metrics[0].key
+            needed = set(
+                list_asset_ids_without_score(conn, spec.scorer_id, scorer.variant_id, first_metric)
+            )
+        else:
+            cur = conn.execute("SELECT id FROM assets ORDER BY id")
+            needed = {int(row[0]) for row in cur.fetchall()}
+        scorer_needed_ids[id(scorer)] = needed
+        all_asset_ids_set |= needed
+
+    if not all_asset_ids_set:
+        # Nothing to do — still create + immediately finish scorer runs so that
+        # caller gets valid run IDs.
+        run_ids: dict[tuple[str, str], int] = {}
+        for scorer in scorers:
+            spec = scorer.spec()
+            run_id = insert_scorer_run(
+                conn, spec.scorer_id, scorer.variant_id, scorer_version=spec.version
+            )
+            finish_scorer_run(conn, run_id)
+            run_ids[(spec.scorer_id, scorer.variant_id)] = run_id
+        return run_ids
+
+    # Sort for deterministic order.
+    all_asset_ids = sorted(all_asset_ids_set)
+
+    # asset_id → list of (scorer, run_id) pairs needed for that asset.
+    asset_scorer_map: dict[int, list[tuple[BaseScorer, int]]] = {aid: [] for aid in all_asset_ids}
+
+    # Create scorer_runs records and populate asset_scorer_map.
+    run_ids_map: dict[tuple[str, str], int] = {}
+    for scorer in scorers:
+        spec = scorer.spec()
+        run_id = insert_scorer_run(
+            conn, spec.scorer_id, scorer.variant_id, scorer_version=spec.version
+        )
+        run_ids_map[(spec.scorer_id, scorer.variant_id)] = run_id
+        for aid in scorer_needed_ids[id(scorer)]:
+            if aid in asset_scorer_map:
+                asset_scorer_map[aid].append((scorer, run_id))
+
+    # Remove assets that ended up with no scorers to run.
+    asset_scorer_map = {aid: pairs for aid, pairs in asset_scorer_map.items() if pairs}
+    effective_total = len(asset_scorer_map)
+    effective_asset_ids = sorted(asset_scorer_map)
+
+    # Per-scorer locks to serialise calls into potentially non-thread-safe ML models.
+    scorer_locks: dict[int, threading.Lock] = {id(s): threading.Lock() for s in scorers}
+
+    # ── Phase 2 + 3: Execution and DB writing ────────────────────────────────
+    # results_queue carries (run_id, rows) tuples or _STOP.
+    results_queue: queue.Queue[object] = queue.Queue(maxsize=n_workers * 4)
+    db_errors: list[Exception] = []
+
+    def _db_writer() -> None:
+        """Drain results_queue and write to DB (single-threaded)."""
+        while True:
+            item = results_queue.get()
+            if item is _STOP:
+                break
+            run_id_w, rows_w = item  # type: ignore[misc]
+            try:
+                bulk_insert_asset_scores(conn, run_id_w, rows_w)
+            except Exception as exc:  # noqa: BLE001
+                _logger.error("DB writer error: %s", exc)
+                db_errors.append(exc)
+
+    db_thread = threading.Thread(target=_db_writer, daemon=True, name="tr-scorer-db-writer")
+    db_thread.start()
+
+    assets_done = 0
+    lock_for_progress = threading.Lock()
+
+    def _process_asset(asset_id: int, scorer_run_pairs: list[tuple[BaseScorer, int]]) -> None:
+        """Load thumbnail once; run all required scorers; enqueue results."""
+        thumb = thumb_path_for_id(thumbs_dir, asset_id)
+        if not thumb.exists():
+            return
+
+        try:
+            img = Image.open(thumb)
+            img.load()  # Ensure file is fully decoded before closing.
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("Could not load thumbnail %s: %s", thumb, exc)
+            return
+
+        for scorer, run_id in scorer_run_pairs:
+            spec = scorer.spec()
+            try:
+                with scorer_locks[id(scorer)]:
+                    score_dict = scorer.score_image(img)
+            except Exception as exc:  # noqa: BLE001
+                _logger.error(
+                    "Scorer %r (variant %r) failed on asset %d [%s]: %s",
+                    spec.scorer_id,
+                    scorer.variant_id,
+                    asset_id,
+                    thumb,
+                    exc,
+                )
+                continue
+
+            rows: list[tuple[int, str, float]] = [
+                (asset_id, metric_key, value) for metric_key, value in score_dict.items()
+            ]
+            if rows:
+                results_queue.put((run_id, rows))
+
+    try:
+        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="tr-scorer") as pool:
+            futures = {}
+            for asset_id in effective_asset_ids:
+                if cancel_check is not None and cancel_check():
+                    break
+                pairs = asset_scorer_map[asset_id]
+                future = pool.submit(_process_asset, asset_id, pairs)
+                futures[future] = asset_id
+
+            for future in as_completed(futures):
+                exc = future.exception()
+                if exc is not None:
+                    aid = futures[future]
+                    _logger.error("Unexpected error processing asset %d: %s", aid, exc)
+                with lock_for_progress:
+                    assets_done += 1
+                    done_snapshot = assets_done
+                if on_progress is not None:
+                    on_progress(done_snapshot, effective_total)
+    finally:
+        # Signal DB writer to stop and wait for it to flush.
+        results_queue.put(_STOP)
+        db_thread.join()
+
+        # Finalise all scorer run records.
+        for run_id in run_ids_map.values():
+            finish_scorer_run(conn, run_id)
+
+    if db_errors:
+        raise RuntimeError(
+            f"DB writer encountered {len(db_errors)} error(s): {db_errors[0]}"
+        ) from db_errors[0]
+
+    return run_ids_map

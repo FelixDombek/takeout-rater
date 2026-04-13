@@ -357,7 +357,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         )
         from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
         from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
-        from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
+        from takeout_rater.scoring.pipeline import run_scorers_parallel  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
         thumbs_dir = library_state_dir(library_root) / "thumbs"
@@ -392,60 +392,54 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
 
             progress.current_item = ""
 
-            # ── Phase 2: Run scorers ─────────────────────────────────────────
-            # Build the list of (scorer_id, variant_id) pairs to run.
+            # ── Phase 2: Run scorers in parallel ─────────────────────────────
+            # Build the list of scorer instances to run.
             # When no specific scorer is requested every available scorer is
             # run for *all* of its variants (or its single default variant if
             # the scorer defines no explicit variants).
+            scorer_instances = []
             if scorer_id:
                 cls_map = {cls.spec().scorer_id: cls for cls in list_scorers()}
                 target_cls = cls_map.get(scorer_id)
                 if target_cls:
                     spec = target_cls.spec()
                     if variant_id:
-                        scorer_variant_pairs = [(scorer_id, variant_id)]
+                        scorer_instances.append(target_cls.create(variant_id=variant_id))
                     elif spec.variants:
-                        scorer_variant_pairs = [(scorer_id, v.variant_id) for v in spec.variants]
+                        for v in spec.variants:
+                            scorer_instances.append(target_cls.create(variant_id=v.variant_id))
                     else:
-                        scorer_variant_pairs = [(scorer_id, None)]
+                        scorer_instances.append(target_cls.create())
                 else:
-                    scorer_variant_pairs = [(scorer_id, variant_id)]
+                    # Unknown scorer id — will surface as empty run.
+                    pass
             else:
-                scorer_variant_pairs = []
                 for cls in list_scorers(available_only=True):
                     spec = cls.spec()
                     if spec.variants:
                         for v in spec.variants:
-                            scorer_variant_pairs.append((spec.scorer_id, v.variant_id))
+                            scorer_instances.append(cls.create(variant_id=v.variant_id))
                     else:
-                        scorer_variant_pairs.append((spec.scorer_id, None))
+                        scorer_instances.append(cls.create())
 
-            total_pairs = len(scorer_variant_pairs)
-            for idx, (sid, vid) in enumerate(scorer_variant_pairs):
-                if progress.cancel_event.is_set():
-                    break
-                _label_name = sid if not vid else f"{sid}:{vid}"
-                _scorer_label = f"{_label_name!r} ({idx + 1}/{total_pairs})"
-                progress.current_scorer_id = sid
-                progress.current_variant_id = vid or ""
-                progress.message = f"Scoring with {_scorer_label}…"
-                progress.processed = 0
-                progress.total = 0
+            n_scorers = len(scorer_instances)
+            progress.message = f"Scoring with {n_scorers} scorer(s)…"
+            progress.processed = 0
+            progress.total = 0
 
-                def _cb(scored: int, total: int, _label: str = _scorer_label) -> None:
-                    progress.processed = scored
-                    progress.total = total
-                    progress.message = f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
+            def _parallel_progress(done: int, total: int) -> None:
+                progress.processed = done
+                progress.total = total
+                progress.message = f"Scoring… {done}\u202f/\u202f{total} assets"
 
-                run_scorer_by_id(
-                    worker_conn,
-                    sid,
-                    thumbs_dir,
-                    variant_id=vid,
-                    skip_existing=not rerun,
-                    on_progress=_cb,
-                    cancel_check=progress.cancel_event.is_set,
-                )
+            run_scorers_parallel(
+                worker_conn,
+                scorer_instances,
+                thumbs_dir,
+                skip_existing=not rerun,
+                on_progress=_parallel_progress,
+                cancel_check=progress.cancel_event.is_set,
+            )
 
             progress.current_scorer_id = ""
             progress.current_variant_id = ""
