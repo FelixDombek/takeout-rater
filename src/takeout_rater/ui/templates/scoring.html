@@ -506,7 +506,13 @@
     }
 
     if (running) {
-      if (!_jobStats.score) {
+      // Re-anchor the baseline whenever no new items have been processed since
+      // the last anchor.  This handles model-loading time (processed stays at 0
+      // for many seconds) and per-scorer phase resets (processed drops back to 0
+      // for each new scorer), both of which would otherwise inflate elapsed time
+      // relative to doneInSession and produce wildly pessimistic ETA estimates.
+      var scoreStats = _jobStats.score;
+      if (!scoreStats || data.processed <= scoreStats.startProcessed) {
         _jobStats.score = { startTime: Date.now(), startProcessed: data.processed };
       }
     } else {
