@@ -241,6 +241,42 @@ class TestClipBackbone:
 
         assert EMBEDDING_DIM == 768
 
+    def test_get_clip_model_passes_quick_gelu(self, monkeypatch) -> None:
+        """get_clip_model must pass quick_gelu=True to suppress the openai pretrained warning."""
+        import takeout_rater.scorers.adapters.clip_backbone as backbone  # noqa: PLC0415
+
+        create_calls: list[dict] = []
+
+        from unittest.mock import MagicMock  # noqa: PLC0415
+
+        fake_model = MagicMock()
+
+        def fake_create(model_name, pretrained=None, **kwargs):  # type: ignore[no-untyped-def]
+            create_calls.append({"model_name": model_name, "pretrained": pretrained, **kwargs})
+            return fake_model, None, MagicMock()
+
+        # Reset the singleton so get_clip_model triggers a fresh load
+        monkeypatch.setattr(backbone, "_clip_model", None)
+        monkeypatch.setattr(backbone, "_preprocess", None)
+        monkeypatch.setattr(backbone, "_tokenizer", None)
+        monkeypatch.setattr(backbone, "_device", None)
+
+        import open_clip  # noqa: PLC0415
+
+        monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
+        monkeypatch.setattr(open_clip, "get_tokenizer", lambda _name: MagicMock())
+
+        backbone.get_clip_model()
+
+        assert len(create_calls) == 1
+        assert create_calls[0].get("quick_gelu") is True
+
+        # Clean up singleton state so other tests are not affected
+        monkeypatch.setattr(backbone, "_clip_model", None)
+        monkeypatch.setattr(backbone, "_preprocess", None)
+        monkeypatch.setattr(backbone, "_tokenizer", None)
+        monkeypatch.setattr(backbone, "_device", None)
+
 
 # ---------------------------------------------------------------------------
 # Migration test
