@@ -88,10 +88,10 @@ def test_schema_creates_asset_scores_table() -> None:
     assert "asset_scores" in tables
 
 
-def test_schema_user_version_is_9() -> None:
+def test_schema_user_version_is_10() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 9
+    assert version == 10
 
 
 def test_migrate_is_idempotent() -> None:
@@ -99,11 +99,11 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 9
+    assert version == 10
 
 
-def test_migrate_incremental_v6_to_v9() -> None:
-    """A v6 database must be automatically upgraded to v9."""
+def test_migrate_incremental_v6_to_v10() -> None:
+    """A v6 database must be automatically upgraded to v10."""
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -150,7 +150,7 @@ def test_migrate_incremental_v6_to_v9() -> None:
     migrate(conn)
 
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 9
+    assert version == 10
     # Verify the diameter column exists (v7 migration)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(clusters)").fetchall()}
     assert "diameter" in cols
@@ -209,7 +209,7 @@ def test_migrate_incremental_v7_to_v9() -> None:
     migrate(conn)
 
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 9
+    assert version == 10
     # All three old rows should have been renamed to scorer_id='simple'
     rows = conn.execute("SELECT scorer_id, variant_id FROM scorer_runs").fetchall()
     assert len(rows) == 3

@@ -143,8 +143,10 @@ def test_download_mlp_weights_uses_fallback(monkeypatch, tmp_path: Path) -> None
 
 
 def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
-    """_ensure_loaded must pass quick_gelu=True to open_clip.create_model_and_transforms."""
+    """_ensure_loaded must pass quick_gelu=True via the shared clip_backbone."""
     import torch  # noqa: PLC0415
+
+    import takeout_rater.scorers.adapters.clip_backbone as backbone  # noqa: PLC0415
 
     fake_model = MagicMock()
     fake_model.encode_image.return_value = torch.zeros(1, _EMBEDDING_DIM)
@@ -161,9 +163,16 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
     fake_mlp.eval = MagicMock(return_value=fake_mlp)
     fake_mlp.to = MagicMock(return_value=fake_mlp)
 
+    # Reset the backbone singleton so _ensure_loaded triggers a fresh load
+    monkeypatch.setattr(backbone, "_clip_model", None)
+    monkeypatch.setattr(backbone, "_preprocess", None)
+    monkeypatch.setattr(backbone, "_tokenizer", None)
+    monkeypatch.setattr(backbone, "_device", None)
+
     import open_clip  # noqa: PLC0415
 
     monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
+    monkeypatch.setattr(open_clip, "get_tokenizer", lambda _name: MagicMock())
 
     from takeout_rater.scorers.adapters import laion
 
@@ -184,6 +193,12 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
 
     assert len(create_calls) == 1
     assert create_calls[0].get("quick_gelu") is True
+
+    # Clean up singleton state so other tests are not affected
+    monkeypatch.setattr(backbone, "_clip_model", None)
+    monkeypatch.setattr(backbone, "_preprocess", None)
+    monkeypatch.setattr(backbone, "_tokenizer", None)
+    monkeypatch.setattr(backbone, "_device", None)
 
 
 # ---------------------------------------------------------------------------

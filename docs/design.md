@@ -1,6 +1,6 @@
 # Design: takeout-rater
 
-*Last updated: 2026-04 (Iteration 11 complete: rescan regenerates thumbnails; Rescan promoted in UI)*
+*Last updated: 2026-04 (Iteration 12 complete: CLIP semantic search with embed job, search API, and live search UI)*
 
 ---
 
@@ -225,6 +225,7 @@ If HEIC decoding fails for a specific file, the asset is indexed but marked `uns
 | **9** ✅ | Timeline scrollbar: `/api/timeline` (year range) and `/api/timeline/seek` (jump to timestamp); infinite-scroll lightbox navigation |
 | **10** ✅ | Extended scorer suite: BRISQUEScorer, CLIPIQAScorer, NIMAScorer, PyIQAScorer; dedicated `/scoring` page with Simple/Technical description toggle; `piq` and `pyiqa` as core dependencies |
 | **11** ✅ | Rescan extended to regenerate thumbnails: `missing_only` fills absent thumbs; `full` overwrites all (fixes stale/corrupt thumbs after pillow-heif or orientation upgrades); `CURRENT_INDEXER_VERSION` bumped 1→2 |
+| **12** ✅ | CLIP semantic search: `clip_embeddings` table (schema v10), shared CLIP backbone singleton, `embed` background job (batch CLIP ViT-L/14 image embedding), `/api/search` endpoint with in-memory cosine similarity, `/search` page with live-as-you-type results, 🔍 Search nav link |
 
 ---
 

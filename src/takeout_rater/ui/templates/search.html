@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}Search – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .search-page { max-width: 1400px; margin: 0 auto; }
+  .search-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .search-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
+
+  .search-bar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    align-items: center;
+  }
+  .search-bar input[type="text"] {
+    flex: 1;
+    padding: 0.6rem 1rem;
+    font-size: 1rem;
+    border: 2px solid #ccc;
+    border-radius: 8px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-bar input[type="text"]:focus {
+    border-color: #1a5cdb;
+  }
+  .search-hint {
+    color: #888;
+    font-size: 0.8rem;
+    margin-top: -1rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Results grid — same as browse page */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+  }
+  .card {
+    background: white;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.1);
+    transition: transform 0.1s;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 3px 8px rgba(0,0,0,.15); }
+  .card a { display: block; text-decoration: none; color: inherit; }
+  .card-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #eee;
+  }
+  .card-thumb-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #f0f0f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    color: #ccc;
+  }
+  .card-body {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.75rem;
+    color: #444;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .score-badge {
+    display: inline-block;
+    background: #1a5cdb;
+    color: white;
+    font-size: 0.65rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    margin-left: 0.25rem;
+  }
+
+  .search-status {
+    color: #666;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+    min-height: 1.5em;
+  }
+  .search-status.loading { color: #1a5cdb; }
+
+  .no-embeddings-notice {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    color: #856404;
+  }
+  .no-embeddings-notice a { color: #533f03; font-weight: 600; }
+
+  .empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: #888;
+    font-size: 1.1rem;
+  }
+  .empty-state .icon { font-size: 3rem; margin-bottom: 0.5rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="search-page">
+  <h1>🔍 Semantic Search</h1>
+  <p class="subtitle">
+    Search your photos by describing what you're looking for. Uses CLIP to match
+    text descriptions against image content.
+  </p>
+
+  <div class="search-bar">
+    <input type="text"
+           id="search-input"
+           placeholder="e.g. sunset over the ocean, birthday cake, dog playing in snow…"
+           autocomplete="off"
+           autofocus>
+  </div>
+  <p class="search-hint">Results update as you type. Try describing colors, objects, scenes, or activities.</p>
+
+  <div id="search-status" class="search-status"></div>
+  <div id="search-results" class="grid"></div>
+</div>
+
+<script>
+(function () {
+  var input = document.getElementById('search-input');
+  var resultsEl = document.getElementById('search-results');
+  var statusEl = document.getElementById('search-status');
+  var debounceTimer = null;
+  var currentQuery = '';
+  var currentPage = 1;
+  var isLoadingMore = false;
+
+  function doSearch(query, page) {
+    if (!query.trim()) {
+      resultsEl.innerHTML = '';
+      statusEl.textContent = '';
+      statusEl.className = 'search-status';
+      currentQuery = '';
+      currentPage = 1;
+      return;
+    }
+
+    if (page === 1) {
+      statusEl.textContent = 'Searching…';
+      statusEl.className = 'search-status loading';
+    }
+
+    var url = '/api/search?q=' + encodeURIComponent(query) + '&limit=50&page=' + page + '&partial=1';
+    fetch(url)
+      .then(function(r) {
+        if (!r.ok) throw new Error('Search failed');
+        return r.text();
+      })
+      .then(function(html) {
+        if (query !== currentQuery && page === 1) {
+          // Query changed while we were fetching — discard stale results
+          return;
+        }
+        if (page === 1) {
+          resultsEl.innerHTML = html;
+        } else {
+          // Append results for infinite scroll
+          var temp = document.createElement('div');
+          temp.innerHTML = html;
+          while (temp.firstChild) {
+            resultsEl.appendChild(temp.firstChild);
+          }
+        }
+        isLoadingMore = false;
+
+        // Update status from data attributes on the injected meta div
+        var meta = resultsEl.querySelector('[data-search-meta]');
+        if (meta) {
+          var totalEmbedded = meta.getAttribute('data-total-embedded');
+          var totalResults = meta.getAttribute('data-total-results');
+          var noEmbed = meta.getAttribute('data-no-embeddings');
+          meta.remove();
+
+          if (noEmbed === 'true') {
+            statusEl.innerHTML = '⚠️ No CLIP embeddings computed yet. <a href="/jobs">Go to Jobs</a> to run the Embed job first.';
+            statusEl.className = 'search-status';
+          } else if (totalResults) {
+            var shown = resultsEl.querySelectorAll('.card').length;
+            statusEl.textContent = 'Showing ' + shown + ' of ' + totalResults + ' results (from ' + totalEmbedded + ' embedded images)';
+            statusEl.className = 'search-status';
+          }
+        } else if (resultsEl.children.length === 0) {
+          statusEl.textContent = 'No results found.';
+          statusEl.className = 'search-status';
+        }
+      })
+      .catch(function(err) {
+        statusEl.textContent = '✗ ' + err.message;
+        statusEl.className = 'search-status';
+        isLoadingMore = false;
+      });
+  }
+
+  input.addEventListener('input', function() {
+    clearTimeout(debounceTimer);
+    var q = input.value;
+    debounceTimer = setTimeout(function() {
+      currentQuery = q;
+      currentPage = 1;
+      doSearch(q, 1);
+    }, 300);
+  });
+
+  // Infinite scroll for more results
+  window.addEventListener('scroll', function() {
+    if (isLoadingMore || !currentQuery) return;
+    var scrollBottom = window.innerHeight + window.scrollY;
+    if (scrollBottom >= document.body.offsetHeight - 400) {
+      isLoadingMore = true;
+      currentPage++;
+      doSearch(currentQuery, currentPage);
+    }
+  });
+})();
+</script>
+{% endblock %}

@@ -147,18 +147,12 @@ class CLIPIQAScorer(BaseScorer):
         if self._clip_model is not None:
             return
 
-        import open_clip  # noqa: PLC0415
         import torch  # noqa: PLC0415
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        from takeout_rater.scorers.adapters.clip_backbone import get_clip_model  # noqa: PLC0415
 
-        clip_model, _, preprocess = open_clip.create_model_and_transforms(
-            _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED, quick_gelu=True
-        )
-        clip_model.eval()
-        clip_model.to(device)
+        clip_model, preprocess, tokenizer, device = get_clip_model()
 
-        tokenizer = open_clip.get_tokenizer(_CLIP_MODEL_NAME)
         tokens = tokenizer([_PROMPT_GOOD, _PROMPT_BAD]).to(device)
         with torch.no_grad():
             text_features = clip_model.encode_text(tokens)

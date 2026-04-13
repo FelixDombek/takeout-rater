@@ -47,7 +47,7 @@ def test_jobs_status_returns_list_by_default(client_no_db: TestClient) -> None:
     data = resp.json()
     assert isinstance(data, list)
     job_types = {item["job_type"] for item in data}
-    assert job_types == {"index", "score", "cluster", "export", "rehash", "rescan"}
+    assert job_types == {"index", "score", "cluster", "export", "rehash", "rescan", "embed"}
 
 
 def test_jobs_status_initial_all_not_running(client_no_db: TestClient) -> None:
@@ -95,7 +95,9 @@ def test_list_scorers_returns_200(client_no_db: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("job_type", ["index", "score", "cluster", "export", "rehash", "rescan"])
+@pytest.mark.parametrize(
+    "job_type", ["index", "score", "cluster", "export", "rehash", "rescan", "embed"]
+)
 def test_start_job_without_db_returns_503(client_no_db: TestClient, job_type: str) -> None:
     resp = client_no_db.post(f"/api/jobs/{job_type}/start", json={})
     assert resp.status_code == 503

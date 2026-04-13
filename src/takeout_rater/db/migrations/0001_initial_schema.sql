@@ -127,6 +127,13 @@ CREATE TABLE IF NOT EXISTS view_presets (
     updated_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS clip_embeddings (
+    asset_id    INTEGER PRIMARY KEY REFERENCES assets(id),
+    embedding   BLOB NOT NULL,
+    model_id    TEXT NOT NULL DEFAULT 'ViT-L-14/openai',
+    computed_at INTEGER NOT NULL
+);
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_assets_taken_at         ON assets (taken_at);
 CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
@@ -137,4 +144,4 @@ CREATE INDEX IF NOT EXISTS idx_asset_scores_run_metric ON asset_scores (scorer_r
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_id         ON clusters (run_id);
 
-PRAGMA user_version = 9;
+PRAGMA user_version = 10;
