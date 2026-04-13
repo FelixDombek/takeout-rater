@@ -527,10 +527,47 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
     def _worker() -> None:
         from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
-        from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+        from takeout_rater.db.connection import (
+            library_state_dir,  # noqa: PLC0415
+            open_library_db,  # noqa: PLC0415
+        )
+        from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
+        thumbs_dir = library_state_dir(library_root) / "thumbs"
         try:
+            # ── Phase 1: Ensure all assets have a current dhash16 hash ──────
+            progress.message = "Computing perceptual hashes…"
+            progress.processed = 0
+            progress.total = 0
+            progress.current_item = ""
+
+            _id_to_relpath: dict[int, str] = {
+                row[0]: row[1]
+                for row in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
+            }
+
+            def _phash_progress(done: int, total: int) -> None:
+                progress.processed = done
+                progress.total = total
+                progress.message = f"Computing perceptual hashes… {done}\u202f/\u202f{total}"
+
+            def _phash_item(asset_id: int, done: int, total: int) -> None:
+                progress.current_item = _id_to_relpath.get(asset_id, "")
+
+            compute_phash_all(
+                worker_conn,
+                thumbs_dir,
+                on_progress=_phash_progress,
+                on_item=_phash_item,
+                cancel_check=progress.cancel_event.is_set,
+            )
+
+            progress.current_item = ""
+            progress.processed = 0
+            progress.total = 0
+
+            # ── Phase 2: Build clusters ──────────────────────────────────────
             progress.message = "Building clusters…"
 
             def _cb(processed: int, total: int) -> None:
