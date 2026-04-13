@@ -337,11 +337,17 @@ def test_jobs_page_returns_200_with_db(client_with_db: TestClient) -> None:
 
 def test_jobs_page_contains_job_cards(client_with_db: TestClient) -> None:
     resp = client_with_db.get("/jobs")
-    assert "Score" in resp.text
-    assert "Cluster" in resp.text
-    assert "Export" in resp.text
     assert "Rehash" in resp.text
     assert "Rescan" in resp.text
+    assert "Run Clustering" not in resp.text
+    assert "Run Export" not in resp.text
+
+
+def test_clusters_page_contains_job_cards(client_with_db: TestClient) -> None:
+    resp = client_with_db.get("/clusters")
+    assert resp.status_code == 200
+    assert "Cluster" in resp.text
+    assert "Export" in resp.text
 
 
 def test_jobs_page_redirects_without_db(client_no_db: TestClient) -> None:
