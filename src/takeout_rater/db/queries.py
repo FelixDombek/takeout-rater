@@ -1610,3 +1610,107 @@ def count_assets_needing_rescan(conn: sqlite3.Connection) -> int:
         (CURRENT_INDEXER_VERSION,),
     ).fetchone()
     return row[0] if row else 0
+
+
+# ---------------------------------------------------------------------------
+# CLIP embeddings
+# ---------------------------------------------------------------------------
+
+
+def list_asset_ids_without_embedding(conn: sqlite3.Connection) -> list[int]:
+    """Return IDs of assets that do not yet have a stored CLIP embedding.
+
+    Used by the ``embed`` job to find assets that need their CLIP image
+    embedding computed.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of integer asset IDs ordered by ID.
+    """
+    rows = conn.execute(
+        "SELECT a.id FROM assets a"
+        " LEFT JOIN clip_embeddings ce ON a.id = ce.asset_id"
+        " WHERE ce.asset_id IS NULL"
+        " ORDER BY a.id"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def count_clip_embeddings(conn: sqlite3.Connection) -> int:
+    """Return the number of stored CLIP embeddings.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        Count of rows in ``clip_embeddings``.
+    """
+    row = conn.execute("SELECT COUNT(*) FROM clip_embeddings").fetchone()
+    return row[0] if row else 0
+
+
+def upsert_clip_embedding(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    embedding_blob: bytes,
+    model_id: str = "ViT-L-14/openai",
+) -> None:
+    """Insert or update the CLIP embedding for an asset.
+
+    Args:
+        conn: Open database connection.
+        asset_id: Foreign key into ``assets``.
+        embedding_blob: Raw bytes of the float32 embedding vector.
+        model_id: Identifier for the CLIP backbone used.
+    """
+    conn.execute(
+        "INSERT INTO clip_embeddings (asset_id, embedding, model_id, computed_at)"
+        " VALUES (?, ?, ?, ?)"
+        " ON CONFLICT(asset_id) DO UPDATE SET embedding = excluded.embedding,"
+        "   model_id = excluded.model_id, computed_at = excluded.computed_at",
+        (asset_id, embedding_blob, model_id, int(time.time())),
+    )
+
+
+def bulk_upsert_clip_embeddings(
+    conn: sqlite3.Connection,
+    rows: list[tuple[int, bytes]],
+    model_id: str = "ViT-L-14/openai",
+) -> None:
+    """Insert or update CLIP embeddings for multiple assets in one transaction.
+
+    Args:
+        conn: Open database connection.
+        rows: List of ``(asset_id, embedding_blob)`` tuples.
+        model_id: Identifier for the CLIP backbone used.
+    """
+    now = int(time.time())
+    conn.executemany(
+        "INSERT INTO clip_embeddings (asset_id, embedding, model_id, computed_at)"
+        " VALUES (?, ?, ?, ?)"
+        " ON CONFLICT(asset_id) DO UPDATE SET embedding = excluded.embedding,"
+        "   model_id = excluded.model_id, computed_at = excluded.computed_at",
+        [(aid, blob, model_id, now) for aid, blob in rows],
+    )
+    conn.commit()
+
+
+def load_all_clip_embeddings(conn: sqlite3.Connection) -> list[tuple[int, bytes]]:
+    """Load all CLIP embeddings from the database.
+
+    Returns a list of ``(asset_id, embedding_blob)`` tuples ordered by
+    ``asset_id``.  Each ``embedding_blob`` is the raw bytes of a 768-element
+    float32 vector (3072 bytes).
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of ``(asset_id, embedding_blob)`` tuples.
+    """
+    rows = conn.execute(
+        "SELECT asset_id, embedding FROM clip_embeddings ORDER BY asset_id"
+    ).fetchall()
+    return [(row[0], row[1]) for row in rows]

@@ -1,0 +1,23 @@
+<div data-search-meta
+     data-total-embedded="{{ total_embedded }}"
+     data-total-results="{{ total_results|default(0) }}"
+     {% if no_embeddings|default(false) %}data-no-embeddings="true"{% endif %}
+     style="display:none"></div>
+{% for item in results %}
+<div class="card">
+  <a href="/assets/{{ item.asset.id }}" aria-label="{{ item.asset.title or item.asset.filename }}">
+    <img
+      class="card-thumb"
+      src="/thumbs/{{ item.asset.id }}"
+      alt="{{ item.asset.title or item.asset.filename }}"
+      loading="lazy"
+      onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+    >
+    <div class="card-thumb-placeholder" style="display:none">🖼</div>
+    <div class="card-body">
+      {{ item.asset.filename }}{% if item.asset.favorited %}<span class="fav-badge">⭐</span>{% endif %}
+      <span class="score-badge" title="Similarity">{{ "%.2f"|format(item.score) }}</span>
+    </div>
+  </a>
+</div>
+{% endfor %}

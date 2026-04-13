@@ -149,7 +149,7 @@ def test_view_presets_table_exists_after_migration() -> None:
     assert "view_presets" in tables
 
 
-def test_schema_version_is_9() -> None:
+def test_schema_version_is_10() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 9
+    assert version == 10

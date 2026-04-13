@@ -40,7 +40,7 @@ router = APIRouter()
 # Job progress dataclass
 # ---------------------------------------------------------------------------
 
-_JOB_TYPES = ("index", "score", "cluster", "export", "rehash", "rescan")
+_JOB_TYPES = ("index", "score", "cluster", "export", "rehash", "rescan", "embed")
 
 
 @dataclass
@@ -1031,6 +1031,154 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             worker_conn.close()
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-rescan")
+    thread.start()
+
+    return JSONResponse({"status": "started"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/embed/start
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/embed/start")
+def start_embed_job(request: Request) -> JSONResponse:
+    """Start a background CLIP embedding computation job.
+
+    Computes CLIP ViT-L/14 image embeddings for all assets that don't yet
+    have one stored in ``clip_embeddings``.  Embeddings are used by the
+    semantic search feature.
+
+    Returns ``409`` if an embed job is already running.
+    """
+    _require_library_root(request)
+    jobs = _get_jobs(request.app)
+
+    existing = jobs.get("embed")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="An embed job is already running.")
+
+    library_root: Path = request.app.state.library_root
+    progress = JobProgress(job_type="embed", running=True, message="Starting…")
+    jobs["embed"] = progress
+
+    def _worker() -> None:
+        import struct  # noqa: PLC0415
+
+        from takeout_rater.db.connection import (
+            library_state_dir,  # noqa: PLC0415
+            open_library_db,  # noqa: PLC0415
+        )
+        from takeout_rater.db.queries import (
+            bulk_upsert_clip_embeddings,  # noqa: PLC0415
+            list_asset_ids_without_embedding,  # noqa: PLC0415
+        )
+        from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+
+        worker_conn = open_library_db(library_root)
+        thumbs_dir = library_state_dir(library_root) / "thumbs"
+        batch_size = 64
+        try:
+            asset_ids = list_asset_ids_without_embedding(worker_conn)
+            total = len(asset_ids)
+            progress.total = total
+            if total == 0:
+                progress.message = "All assets already have CLIP embeddings."
+                progress.running = False
+                progress.done = True
+                worker_conn.close()
+                return
+            progress.message = f"Computing embeddings for {total} asset(s)…"
+
+            # Lazy-load CLIP model
+            import torch  # noqa: PLC0415
+            from PIL import Image  # noqa: PLC0415
+
+            from takeout_rater.scorers.adapters.clip_backbone import (
+                get_clip_model,  # noqa: PLC0415
+            )
+
+            clip_model, preprocess, _tokenizer, device = get_clip_model()
+
+            embedded = 0
+            for batch_start in range(0, total, batch_size):
+                if progress.cancel_event.is_set():
+                    break
+
+                batch_ids = asset_ids[batch_start : batch_start + batch_size]
+
+                # Load and preprocess thumbnails
+                valid_pairs: list[tuple[int, Path]] = []
+                for aid in batch_ids:
+                    thumb = thumb_path_for_id(thumbs_dir, aid)
+                    if thumb.exists():
+                        valid_pairs.append((aid, thumb))
+
+                if not valid_pairs:
+                    embedded += len(batch_ids)
+                    progress.processed = embedded
+                    continue
+
+                # Preprocess images
+                tensors = []
+                failed: set[int] = set()
+                for i, (_aid, path) in enumerate(valid_pairs):
+                    try:
+                        img = Image.open(path).convert("RGB")
+                        tensors.append(preprocess(img))
+                    except (OSError, ValueError):
+                        failed.add(i)
+                        tensors.append(None)
+
+                # Filter to valid tensors only
+                valid_items = [
+                    (valid_pairs[i][0], tensors[i])
+                    for i in range(len(valid_pairs))
+                    if i not in failed and tensors[i] is not None
+                ]
+
+                if valid_items:
+                    ids_in_batch = [item[0] for item in valid_items]
+                    batch_tensor = torch.stack([item[1] for item in valid_items]).to(device)
+
+                    with torch.no_grad():
+                        embeddings = clip_model.encode_image(batch_tensor)
+                        embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
+                        embeddings = embeddings.cpu().float().numpy()
+
+                    # Convert to blob rows
+                    db_rows: list[tuple[int, bytes]] = []
+                    for j, aid in enumerate(ids_in_batch):
+                        blob = struct.pack(f"{embeddings.shape[1]}f", *embeddings[j])
+                        db_rows.append((aid, blob))
+
+                    bulk_upsert_clip_embeddings(worker_conn, db_rows)
+
+                embedded += len(batch_ids)
+                progress.processed = embedded
+                progress.message = f"Computing embeddings… {embedded}\u202f/\u202f{total}"
+
+            # Invalidate the in-memory search index so the next search rebuilds it.
+            if hasattr(request.app.state, "clip_index"):
+                request.app.state.clip_index = None
+
+            progress.current_item = ""
+            if progress.cancel_event.is_set():
+                progress.message = "Embedding cancelled."
+            else:
+                progress.message = f"Embedding complete — {embedded} asset(s) processed."
+            progress.running = False
+            progress.done = True
+        except Exception as exc:  # noqa: BLE001
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+            progress.current_item = ""
+            progress.running = False
+            progress.done = True
+        finally:
+            worker_conn.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-embed")
     thread.start()
 
     return JSONResponse({"status": "started"})
