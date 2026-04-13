@@ -887,7 +887,7 @@ def upsert_phash(
     conn: sqlite3.Connection,
     asset_id: int,
     phash_hex: str,
-    algo: str = "dhash",
+    algo: str = "dhash16",
 ) -> None:
     """Insert or update the perceptual hash for an asset.
 
@@ -895,7 +895,8 @@ def upsert_phash(
         conn: Open database connection.
         asset_id: Foreign key into ``assets``.
         phash_hex: Hex-encoded hash string.
-        algo: Hash algorithm name (default ``"dhash"``).
+        algo: Hash algorithm name (default ``"dhash16"`` for the 256-bit
+            difference hash).
     """
     conn.execute(
         "INSERT INTO phash (asset_id, phash_hex, algo, computed_at)"
@@ -926,21 +927,37 @@ def get_phash(conn: sqlite3.Connection, asset_id: int) -> dict[str, Any] | None:
     return {"phash_hex": row["phash_hex"], "algo": row["algo"], "computed_at": row["computed_at"]}
 
 
-def list_asset_ids_without_phash(conn: sqlite3.Connection) -> list[int]:
+def list_asset_ids_without_phash(conn: sqlite3.Connection, algo: str | None = None) -> list[int]:
     """Return IDs of assets that do not yet have a stored pHash.
+
+    When *algo* is given, assets whose existing hash was computed with a
+    *different* algorithm are also included, so they will be re-hashed with
+    the current algorithm.
 
     Args:
         conn: Open database connection.
+        algo: If provided, also return assets whose stored ``phash.algo``
+            does not match this value (i.e. hashes that need to be recomputed
+            for the new algorithm).
 
     Returns:
         List of integer asset IDs.
     """
-    rows = conn.execute(
-        "SELECT a.id FROM assets a"
-        " LEFT JOIN phash p ON p.asset_id = a.id"
-        " WHERE p.asset_id IS NULL"
-        " ORDER BY a.id",
-    ).fetchall()
+    if algo is None:
+        rows = conn.execute(
+            "SELECT a.id FROM assets a"
+            " LEFT JOIN phash p ON p.asset_id = a.id"
+            " WHERE p.asset_id IS NULL"
+            " ORDER BY a.id",
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT a.id FROM assets a"
+            " LEFT JOIN phash p ON p.asset_id = a.id"
+            " WHERE p.asset_id IS NULL OR p.algo != ?"
+            " ORDER BY a.id",
+            (algo,),
+        ).fetchall()
     return [row[0] for row in rows]
 
 
@@ -960,16 +977,25 @@ def list_all_asset_ids(conn: sqlite3.Connection) -> list[int]:
     return [row[0] for row in rows]
 
 
-def list_all_phashes(conn: sqlite3.Connection) -> list[tuple[int, str]]:
-    """Return all stored perceptual hashes as ``(asset_id, phash_hex)`` pairs.
+def list_all_phashes(conn: sqlite3.Connection, algo: str | None = None) -> list[tuple[int, str]]:
+    """Return stored perceptual hashes as ``(asset_id, phash_hex)`` pairs.
 
     Args:
         conn: Open database connection.
+        algo: When given, only return hashes whose ``algo`` column matches
+            this value.  When ``None`` (default) all hashes are returned
+            regardless of algorithm.
 
     Returns:
         List of ``(asset_id, phash_hex)`` tuples ordered by ``asset_id``.
     """
-    rows = conn.execute("SELECT asset_id, phash_hex FROM phash ORDER BY asset_id").fetchall()
+    if algo is None:
+        rows = conn.execute("SELECT asset_id, phash_hex FROM phash ORDER BY asset_id").fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT asset_id, phash_hex FROM phash WHERE algo = ? ORDER BY asset_id",
+            (algo,),
+        ).fetchall()
     return [(row[0], row[1]) for row in rows]
 
 
@@ -977,6 +1003,7 @@ def insert_cluster(
     conn: sqlite3.Connection,
     method: str,
     params_json: str | None,
+    diameter: float | None = None,
 ) -> int:
     """Insert a new cluster row and return its ID.
 
@@ -984,13 +1011,16 @@ def insert_cluster(
         conn: Open database connection.
         method: Algorithm identifier (e.g. ``"dhash_hamming"``).
         params_json: JSON-serialised clustering parameters.
+        diameter: Intra-cluster diameter — the maximum pairwise Hamming
+            distance among all cluster members.  ``None`` when unknown.
 
     Returns:
         The integer primary key of the new ``clusters`` row.
     """
     row = conn.execute(
-        "INSERT INTO clusters (method, params_json, created_at) VALUES (?, ?, ?) RETURNING id",
-        (method, params_json, int(time.time())),
+        "INSERT INTO clusters (method, params_json, created_at, diameter)"
+        " VALUES (?, ?, ?, ?) RETURNING id",
+        (method, params_json, int(time.time()), diameter),
     ).fetchone()
     conn.commit()
     return row[0]
@@ -1064,10 +1094,10 @@ def list_clusters_with_representatives(
 
     Returns:
         List of dicts with keys: ``cluster_id``, ``method``, ``member_count``,
-        ``rep_asset_id``, ``rep_filename``, ``created_at``.
+        ``rep_asset_id``, ``rep_filename``, ``created_at``, ``diameter``.
     """
     rows = conn.execute(
-        "SELECT c.id AS cluster_id, c.method, c.created_at,"
+        "SELECT c.id AS cluster_id, c.method, c.created_at, c.diameter,"
         "   COUNT(cm.asset_id) AS member_count,"
         "   cm2.asset_id AS rep_asset_id,"
         "   a.filename AS rep_filename"
@@ -1088,6 +1118,7 @@ def list_clusters_with_representatives(
             "rep_asset_id": row["rep_asset_id"],
             "rep_filename": row["rep_filename"],
             "created_at": row["created_at"],
+            "diameter": row["diameter"],
         }
         for row in rows
     ]
@@ -1128,6 +1159,59 @@ def get_cluster_members(
         (cluster_id,),
     ).fetchall()
     return [(_row_to_asset(row), row["distance"], bool(row["is_representative"])) for row in rows]
+
+
+def get_cluster_info(
+    conn: sqlite3.Connection,
+    cluster_id: int,
+) -> dict[str, Any] | None:
+    """Return metadata for a single cluster row.
+
+    Args:
+        conn: Open database connection.
+        cluster_id: The cluster to look up.
+
+    Returns:
+        Dict with keys ``cluster_id``, ``method``, ``params_json``,
+        ``diameter``, ``created_at``, or ``None`` if not found.
+    """
+    row = conn.execute(
+        "SELECT id, method, params_json, diameter, created_at FROM clusters WHERE id = ?",
+        (cluster_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "cluster_id": row["id"],
+        "method": row["method"],
+        "params_json": row["params_json"],
+        "diameter": row["diameter"],
+        "created_at": row["created_at"],
+    }
+
+
+def get_cluster_member_hashes(
+    conn: sqlite3.Connection,
+    cluster_id: int,
+) -> dict[int, str | None]:
+    """Return a mapping of asset_id → phash_hex for all members of a cluster.
+
+    Args:
+        conn: Open database connection.
+        cluster_id: The cluster to look up.
+
+    Returns:
+        Dict mapping each member's asset ID to its stored hex hash string,
+        or to ``None`` when no hash has been computed for that asset.
+    """
+    rows = conn.execute(
+        "SELECT cm.asset_id, p.phash_hex"
+        " FROM cluster_members cm"
+        " LEFT JOIN phash p ON p.asset_id = cm.asset_id"
+        " WHERE cm.cluster_id = ?",
+        (cluster_id,),
+    ).fetchall()
+    return {row["asset_id"]: row["phash_hex"] for row in rows}
 
 
 def list_asset_ids_without_score(

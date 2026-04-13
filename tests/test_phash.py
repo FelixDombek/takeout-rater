@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from takeout_rater.db.queries import get_phash, list_asset_ids_without_phash, upsert_asset
+from takeout_rater.db.queries import (
+    get_phash,
+    list_asset_ids_without_phash,
+    upsert_asset,
+    upsert_phash,
+)
 from takeout_rater.db.schema import migrate
 from takeout_rater.scoring.phash import compute_dhash, compute_phash_all, hamming_distance
 
@@ -62,7 +67,7 @@ def test_compute_dhash_returns_hex_string(tmp_path: Path) -> None:
 
     result = compute_dhash(img_path)
     assert isinstance(result, str)
-    assert len(result) == 16  # 64-bit hash → 16 hex chars
+    assert len(result) == 64  # 256-bit hash → 64 hex chars
 
 
 def test_compute_dhash_hex_chars_only(tmp_path: Path) -> None:
@@ -154,8 +159,8 @@ def test_compute_phash_all_stores_hashes(tmp_path: Path) -> None:
 
     result = get_phash(conn, asset_id)
     assert result is not None
-    assert len(result["phash_hex"]) == 16
-    assert result["algo"] == "dhash"
+    assert len(result["phash_hex"]) == 64
+    assert result["algo"] == "dhash16"
 
 
 def test_compute_phash_all_skips_missing_thumbnails(tmp_path: Path) -> None:
@@ -250,3 +255,31 @@ def test_compute_phash_all_cancel_check_stops_early(tmp_path: Path) -> None:
     # Only the first item should have been processed (cancel fires before item 2)
     assert len(processed_items) == 1
     assert count == 1
+
+
+# ── list_asset_ids_without_phash (algo filter) ────────────────────────────────
+
+
+def test_list_asset_ids_without_phash_algo_filter_includes_wrong_algo() -> None:
+    """Assets whose stored hash uses a different algo should be returned."""
+    conn = _open_in_memory()
+    asset_id = _add_asset(conn, "p/a.jpg")
+    # Store an old-style "dhash" (64-bit) hash
+    upsert_phash(conn, asset_id, "0000000000000000", algo="dhash")
+
+    # Without algo filter: asset has a phash row → not returned
+    assert list_asset_ids_without_phash(conn) == []
+
+    # With algo="dhash16" filter: the stored "dhash" algo doesn't match → returned
+    result = list_asset_ids_without_phash(conn, algo="dhash16")
+    assert asset_id in result
+
+
+def test_list_asset_ids_without_phash_algo_filter_excludes_matching_algo() -> None:
+    """Assets with the correct algo should NOT be returned."""
+    conn = _open_in_memory()
+    asset_id = _add_asset(conn, "p/a.jpg")
+    upsert_phash(conn, asset_id, "0" * 64, algo="dhash16")
+
+    result = list_asset_ids_without_phash(conn, algo="dhash16")
+    assert result == []

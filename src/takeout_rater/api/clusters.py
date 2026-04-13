@@ -10,6 +10,8 @@ from fastapi.responses import HTMLResponse
 
 from takeout_rater.db.queries import (
     count_clusters,
+    get_cluster_info,
+    get_cluster_member_hashes,
     get_cluster_members,
     list_clusters_with_representatives,
 )
@@ -78,6 +80,9 @@ def cluster_detail(
     if not members:
         raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")
 
+    cluster_info = get_cluster_info(conn, cluster_id)
+    phash_by_id = get_cluster_member_hashes(conn, cluster_id)
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "cluster_detail.html",
@@ -85,5 +90,7 @@ def cluster_detail(
             "request": request,
             "cluster_id": cluster_id,
             "members": members,
+            "cluster_diameter": cluster_info["diameter"] if cluster_info else None,
+            "phash_by_id": phash_by_id,
         },
     )

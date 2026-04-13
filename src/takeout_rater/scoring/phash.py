@@ -1,12 +1,12 @@
 """Perceptual hash (pHash) computation for near-duplicate detection.
 
 The hash is computed using the *difference hash* (dhash) algorithm, which
-requires only Pillow.  The result is a 64-bit integer encoded as a 16-character
-hexadecimal string, stored in the ``phash`` table under ``algo = "dhash"``.
+requires only Pillow.  The result is a 256-bit integer encoded as a 64-character
+hexadecimal string, stored in the ``phash`` table under ``algo = "dhash16"``.
 
 Hamming distance between two hex hashes can be computed with
-:func:`hamming_distance`.  A distance of ≤ 10 is a common threshold for
-near-duplicate detection (out of 64 total bits).
+:func:`hamming_distance`.  A distance of ≤ 20 is a common threshold for
+near-duplicate detection (out of 256 total bits) at this hash size.
 
 Usage::
 
@@ -25,8 +25,9 @@ from pathlib import Path
 from takeout_rater.db.queries import list_asset_ids_without_phash, upsert_phash
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 
-_DHASH_ALGO = "dhash"
-_HASH_SIZE = 8  # produces a 64-bit hash (8 × 8 grid)
+#: Algorithm name stored in the ``phash.algo`` column for the 256-bit dhash.
+DHASH_ALGO = "dhash16"
+_HASH_SIZE = 16  # produces a 256-bit hash (16 × 16 grid)
 
 
 def compute_dhash(image_path: Path, *, hash_size: int = _HASH_SIZE) -> str:
@@ -38,10 +39,10 @@ def compute_dhash(image_path: Path, *, hash_size: int = _HASH_SIZE) -> str:
 
     Args:
         image_path: Path to the image file.
-        hash_size: Side length of the hash grid (default 8 → 64-bit hash).
+        hash_size: Side length of the hash grid (default 16 → 256-bit hash).
 
     Returns:
-        Hexadecimal string of length ``hash_size² / 4`` (16 chars for 64-bit).
+        Hexadecimal string of length ``hash_size² / 4`` (64 chars for 256-bit).
 
     Raises:
         OSError: If the image file cannot be opened.
@@ -126,7 +127,7 @@ def compute_phash_all(
         ) from exc
 
     if asset_ids is None:
-        asset_ids = list_asset_ids_without_phash(conn)
+        asset_ids = list_asset_ids_without_phash(conn, algo=DHASH_ALGO)
 
     import logging  # noqa: PLC0415
 
@@ -145,7 +146,7 @@ def compute_phash_all(
         if thumb.exists():
             try:
                 phash_hex = compute_dhash(thumb)
-                upsert_phash(conn, aid, phash_hex, algo=_DHASH_ALGO)
+                upsert_phash(conn, aid, phash_hex, algo=DHASH_ALGO)
                 written += 1
             except OSError as exc:
                 logger.warning("Could not compute dhash for asset %d (%s): %s", aid, thumb, exc)

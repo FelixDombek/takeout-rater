@@ -49,8 +49,16 @@
     font-size: 0.75rem;
     color: #555;
   }
-  .cluster-size {
+  .cluster-diameter {
     display: inline-block;
+    padding: 0 5px;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
     padding: 0 5px;
     background: #e8f0fe;
     color: #1a5cdb;
@@ -186,7 +194,7 @@
     </p>
     <div class="job-options">
       <label for="cluster-threshold">Threshold (bits):</label>
-      <input type="number" id="cluster-threshold" value="10" min="1" max="32" style="width:4rem;">
+      <input type="number" id="cluster-threshold" value="20" min="1" max="128" style="width:4rem;">
       <label for="cluster-window">Window:</label>
       <input type="number" id="cluster-window" value="200" min="10" max="1000" style="width:5rem;">
       <label for="cluster-minsize">Min&nbsp;size:</label>
@@ -249,6 +257,9 @@
         <div class="cluster-thumb-placeholder" style="display:none">🖼</div>
         <div class="cluster-body">
           <span class="cluster-size">{{ cluster.member_count }} photos</span>
+          {% if cluster.diameter is not none %}
+          <span class="cluster-diameter" title="Max pairwise Hamming distance">⌀ {{ cluster.diameter | int }}b</span>
+          {% endif %}
           {{ cluster.rep_filename }}
         </div>
       </a>
@@ -429,7 +440,7 @@
     var body = {};
 
     if (jobType === 'cluster') {
-      body.threshold = parseInt(document.getElementById('cluster-threshold').value, 10) || 10;
+      body.threshold = parseInt(document.getElementById('cluster-threshold').value, 10) || 20;
       body.window    = parseInt(document.getElementById('cluster-window').value, 10) || 200;
       body.min_size  = parseInt(document.getElementById('cluster-minsize').value, 10) || 2;
     } else if (jobType === 'export') {

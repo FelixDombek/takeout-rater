@@ -10,6 +10,8 @@ from takeout_rater.db.queries import (
     bulk_insert_cluster_members,
     count_clusters,
     delete_clusters_by_method_params,
+    get_cluster_info,
+    get_cluster_member_hashes,
     get_cluster_members,
     insert_cluster,
     list_all_phashes,
@@ -83,6 +85,26 @@ def test_list_all_phashes_ordered_by_asset_id() -> None:
 
     result = list_all_phashes(conn)
     assert [r[0] for r in result] == sorted([id1, id2, id3])
+
+
+def test_list_all_phashes_algo_filter() -> None:
+    """list_all_phashes with algo='dhash16' returns only matching hashes."""
+    conn = _open_in_memory()
+    id1 = _add_asset(conn, "p/a.jpg")
+    id2 = _add_asset(conn, "p/b.jpg")
+    upsert_phash(conn, id1, "aabb000000000000", algo="dhash")
+    upsert_phash(conn, id2, "ccdd000000000000", algo="dhash16")
+
+    result_all = list_all_phashes(conn)
+    assert len(result_all) == 2
+
+    result_dhash16 = list_all_phashes(conn, algo="dhash16")
+    assert len(result_dhash16) == 1
+    assert result_dhash16[0][0] == id2
+
+    result_dhash = list_all_phashes(conn, algo="dhash")
+    assert len(result_dhash) == 1
+    assert result_dhash[0][0] == id1
 
 
 # ---------------------------------------------------------------------------
@@ -243,3 +265,82 @@ def test_list_clusters_with_representatives_sorted_by_size() -> None:
     # Largest cluster should be first
     assert result[0]["member_count"] == 3
     assert result[1]["member_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# insert_cluster with diameter
+# ---------------------------------------------------------------------------
+
+
+def test_insert_cluster_with_diameter() -> None:
+    conn = _open_in_memory()
+    cid = insert_cluster(conn, "dhash_hamming", '{"threshold":20}', diameter=7.0)
+    assert cid > 0
+    info = get_cluster_info(conn, cid)
+    assert info is not None
+    assert info["diameter"] == 7.0
+
+
+def test_insert_cluster_without_diameter_is_none() -> None:
+    conn = _open_in_memory()
+    cid = insert_cluster(conn, "dhash_hamming", None)
+    info = get_cluster_info(conn, cid)
+    assert info is not None
+    assert info["diameter"] is None
+
+
+# ---------------------------------------------------------------------------
+# get_cluster_info
+# ---------------------------------------------------------------------------
+
+
+def test_get_cluster_info_nonexistent_returns_none() -> None:
+    conn = _open_in_memory()
+    assert get_cluster_info(conn, 999) is None
+
+
+def test_get_cluster_info_returns_expected_fields() -> None:
+    conn = _open_in_memory()
+    cid = insert_cluster(conn, "dhash_hamming", '{"threshold":20}', diameter=5.0)
+    info = get_cluster_info(conn, cid)
+    assert info is not None
+    assert info["cluster_id"] == cid
+    assert info["method"] == "dhash_hamming"
+    assert info["params_json"] == '{"threshold":20}'
+    assert info["diameter"] == 5.0
+    assert isinstance(info["created_at"], int)
+
+
+# ---------------------------------------------------------------------------
+# get_cluster_member_hashes
+# ---------------------------------------------------------------------------
+
+
+def test_get_cluster_member_hashes_returns_phash_hex() -> None:
+    conn = _open_in_memory()
+    id1 = _add_asset(conn, "p/a.jpg")
+    id2 = _add_asset(conn, "p/b.jpg")
+    upsert_phash(conn, id1, "aabb000000000000")
+    upsert_phash(conn, id2, "ccdd000000000000")
+    cid = insert_cluster(conn, "m", None)
+    bulk_insert_cluster_members(conn, cid, [(id1, None, 1), (id2, None, 0)])
+
+    result = get_cluster_member_hashes(conn, cid)
+    assert result[id1] == "aabb000000000000"
+    assert result[id2] == "ccdd000000000000"
+
+
+def test_get_cluster_member_hashes_without_phash_returns_none() -> None:
+    conn = _open_in_memory()
+    id1 = _add_asset(conn, "p/a.jpg")
+    cid = insert_cluster(conn, "m", None)
+    bulk_insert_cluster_members(conn, cid, [(id1, None, 1)])
+
+    result = get_cluster_member_hashes(conn, cid)
+    assert result[id1] is None
+
+
+def test_get_cluster_member_hashes_nonexistent_cluster_returns_empty() -> None:
+    conn = _open_in_memory()
+    result = get_cluster_member_hashes(conn, 999)
+    assert result == {}
