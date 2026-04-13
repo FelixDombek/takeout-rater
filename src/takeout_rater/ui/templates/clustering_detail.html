@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Clustering #{{ run.run_id }} – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .run-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .run-header h1 { font-size: 1.25rem; margin: 0; }
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .badge-clusters { background: #e8f0fe; color: #1a5cdb; }
+  .badge-params   { background: #f3f4f6; color: #374151; font-family: monospace; }
+  .back-link { margin-bottom: 1rem; display: inline-block; }
+
+  .cluster-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .cluster-card {
+    background: #fff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    transition: box-shadow 0.15s;
+  }
+  .cluster-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .cluster-card a { display: block; color: inherit; text-decoration: none; }
+  .cluster-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #e0e0e0;
+  }
+  .cluster-thumb-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 2rem;
+  }
+  .cluster-body {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.75rem;
+    color: #555;
+  }
+  .cluster-diameter {
+    display: inline-block;
+    padding: 0 5px;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+  .cluster-size {
+    display: inline-block;
+    padding: 0 5px;
+    background: #e8f0fe;
+    color: #1a5cdb;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 4rem 1rem;
+    color: #888;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<a class="btn back-link" href="/clusters">← All clusterings</a>
+
+<div class="run-header">
+  <h1>Clustering #{{ run.run_id }}</h1>
+  <span class="badge badge-clusters">
+    {{ clusters | length }} cluster{{ 's' if clusters | length != 1 else '' }}
+  </span>
+  {% if run.params %}
+    {% for k, v in run.params.items() %}
+    <span class="badge badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
+    {% endfor %}
+  {% endif %}
+  <span style="font-size:0.85rem; color:#888;">🕐 {{ run.created_at | timestamp_fmt }}</span>
+</div>
+
+{% if clusters %}
+  <div class="cluster-grid">
+    {% for cluster in clusters %}
+    <div class="cluster-card">
+      <a href="/clusters/{{ cluster.cluster_id }}">
+        <img
+          class="cluster-thumb"
+          src="/thumbs/{{ cluster.rep_asset_id }}"
+          alt="{{ cluster.rep_filename }}"
+          loading="lazy"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+        >
+        <div class="cluster-thumb-placeholder" style="display:none">🖼</div>
+        <div class="cluster-body">
+          <span class="cluster-size">{{ cluster.member_count }} photos</span>
+          {% if cluster.diameter is not none %}
+          <span class="cluster-diameter" title="Max pairwise Hamming distance">⌀ {{ cluster.diameter | int }}b</span>
+          {% endif %}
+          {{ cluster.rep_filename }}
+        </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>This clustering run produced no clusters.</p>
+  </div>
+{% endif %}
+{% endblock %}

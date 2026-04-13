@@ -269,7 +269,7 @@ def test_clusters_returns_html(client: TestClient) -> None:
 
 def test_clusters_empty_shows_no_clusters_message(client: TestClient) -> None:
     resp = client.get("/clusters")
-    assert "No clusters" in resp.text
+    assert "No clustering" in resp.text
 
 
 def test_clusters_shows_cluster_count(client_with_clusters: TestClient) -> None:
@@ -279,8 +279,52 @@ def test_clusters_shows_cluster_count(client_with_clusters: TestClient) -> None:
 
 
 def test_clusters_page2_returns_200(client_with_clusters: TestClient) -> None:
+    # Extra query params are ignored; page should still return 200.
     resp = client_with_clusters.get("/clusters?page=2")
     assert resp.status_code == 200
+
+
+# ── GET /clusterings/{run_id} ────────────────────────────────────────────────
+
+
+def test_clustering_detail_returns_200(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusterings/1")
+    assert resp.status_code == 200
+
+
+def test_clustering_detail_not_found_returns_404(client: TestClient) -> None:
+    resp = client.get("/clusterings/99999")
+    assert resp.status_code == 404
+
+
+def test_clustering_detail_shows_clusters(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusterings/1")
+    assert "a.jpg" in resp.text or "b.jpg" in resp.text
+
+
+def test_clustering_detail_has_back_link(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusterings/1")
+    assert "/clusters" in resp.text
+
+
+# ── DELETE /api/clusterings/{run_id} ─────────────────────────────────────────
+
+
+def test_delete_clustering_run_returns_200(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.delete("/api/clusterings/1")
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == 1
+
+
+def test_delete_clustering_run_not_found_returns_404(client: TestClient) -> None:
+    resp = client.delete("/api/clusterings/99999")
+    assert resp.status_code == 404
+
+
+def test_delete_clustering_run_removes_from_list(client_with_clusters: TestClient) -> None:
+    client_with_clusters.delete("/api/clusterings/1")
+    resp = client_with_clusters.get("/clusters")
+    assert "No clustering" in resp.text
 
 
 # ── GET /clusters/{id} ───────────────────────────────────────────────────────
@@ -304,6 +348,11 @@ def test_cluster_detail_shows_members(client_with_clusters: TestClient) -> None:
 def test_cluster_detail_shows_rep_badge(client_with_clusters: TestClient) -> None:
     resp = client_with_clusters.get("/clusters/1")
     assert "REP" in resp.text
+
+
+def test_cluster_detail_back_link_points_to_run(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusters/1")
+    assert "/clusterings/1" in resp.text
 
 
 # ── nav link ─────────────────────────────────────────────────────────────────
@@ -482,6 +531,13 @@ def test_clusters_returns_503_when_not_configured(client_unconfigured: TestClien
 
 def test_cluster_detail_returns_503_when_not_configured(client_unconfigured: TestClient) -> None:
     resp = client_unconfigured.get("/clusters/1")
+    assert resp.status_code == 503
+
+
+def test_clustering_detail_returns_503_when_not_configured(
+    client_unconfigured: TestClient,
+) -> None:
+    resp = client_unconfigured.get("/clusterings/1")
     assert resp.status_code == 503
 
 

@@ -999,11 +999,152 @@ def list_all_phashes(conn: sqlite3.Connection, algo: str | None = None) -> list[
     return [(row[0], row[1]) for row in rows]
 
 
+def insert_clustering_run(
+    conn: sqlite3.Connection,
+    method: str,
+    params_json: str | None,
+) -> int:
+    """Insert a new clustering_run row and return its ID.
+
+    Args:
+        conn: Open database connection.
+        method: Algorithm identifier (e.g. ``"dhash_hamming"``).
+        params_json: JSON-serialised clustering parameters, or ``None``.
+
+    Returns:
+        The integer primary key of the new ``clustering_runs`` row.
+    """
+    row = conn.execute(
+        "INSERT INTO clustering_runs (method, params_json, created_at) VALUES (?, ?, ?)"
+        " RETURNING id",
+        (method, params_json, int(time.time())),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def list_clustering_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return all clustering runs ordered by most-recent first.
+
+    Each dict contains ``run_id``, ``method``, ``params_json``, ``created_at``,
+    ``n_clusters``, and ``rep_asset_id`` (representative thumbnail from the
+    first cluster of the run, or ``None``).
+    """
+    rows = conn.execute(
+        "SELECT r.id AS run_id, r.method, r.params_json, r.created_at,"
+        "   COUNT(DISTINCT c.id) AS n_clusters,"
+        "   cm_rep.asset_id AS rep_asset_id"
+        " FROM clustering_runs r"
+        " LEFT JOIN clusters c ON c.run_id = r.id"
+        " LEFT JOIN cluster_members cm_rep"
+        "   ON cm_rep.cluster_id = (SELECT MIN(c2.id) FROM clusters c2 WHERE c2.run_id = r.id)"
+        "   AND cm_rep.is_representative = 1"
+        " GROUP BY r.id"
+        " ORDER BY r.created_at DESC, r.id DESC",
+    ).fetchall()
+    return [
+        {
+            "run_id": row["run_id"],
+            "method": row["method"],
+            "params_json": row["params_json"],
+            "created_at": row["created_at"],
+            "n_clusters": row["n_clusters"],
+            "rep_asset_id": row["rep_asset_id"],
+        }
+        for row in rows
+    ]
+
+
+def get_clustering_run(
+    conn: sqlite3.Connection,
+    run_id: int,
+) -> dict[str, Any] | None:
+    """Return metadata for a single clustering_run row, or ``None`` if not found."""
+    row = conn.execute(
+        "SELECT id, method, params_json, created_at FROM clustering_runs WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "run_id": row["id"],
+        "method": row["method"],
+        "params_json": row["params_json"],
+        "created_at": row["created_at"],
+    }
+
+
+def delete_clustering_run(conn: sqlite3.Connection, run_id: int) -> bool:
+    """Delete a clustering run and all its clusters and members.
+
+    Args:
+        conn: Open database connection.
+        run_id: The clustering run to delete.
+
+    Returns:
+        ``True`` if the run existed and was deleted; ``False`` if not found.
+    """
+    cluster_ids = [
+        row[0]
+        for row in conn.execute("SELECT id FROM clusters WHERE run_id = ?", (run_id,)).fetchall()
+    ]
+    if cluster_ids:
+        conn.executemany(
+            "DELETE FROM cluster_members WHERE cluster_id = ?",
+            [(cid,) for cid in cluster_ids],
+        )
+        conn.execute("DELETE FROM clusters WHERE run_id = ?", (run_id,))
+    result = conn.execute("DELETE FROM clustering_runs WHERE id = ?", (run_id,))
+    conn.commit()
+    return result.rowcount > 0
+
+
+def list_clusters_for_run(
+    conn: sqlite3.Connection,
+    run_id: int,
+) -> list[dict[str, Any]]:
+    """Return all clusters for a clustering run, ordered by size (descending).
+
+    Args:
+        conn: Open database connection.
+        run_id: Foreign key into ``clustering_runs``.
+
+    Returns:
+        List of dicts with keys: ``cluster_id``, ``member_count``,
+        ``rep_asset_id``, ``rep_filename``, ``diameter``.
+    """
+    rows = conn.execute(
+        "SELECT c.id AS cluster_id, c.diameter,"
+        "   COUNT(cm.asset_id) AS member_count,"
+        "   cm2.asset_id AS rep_asset_id,"
+        "   a.filename AS rep_filename"
+        " FROM clusters c"
+        " JOIN cluster_members cm ON cm.cluster_id = c.id"
+        " JOIN cluster_members cm2 ON cm2.cluster_id = c.id AND cm2.is_representative = 1"
+        " JOIN assets a ON a.id = cm2.asset_id"
+        " WHERE c.run_id = ?"
+        " GROUP BY c.id"
+        " ORDER BY member_count DESC, c.id",
+        (run_id,),
+    ).fetchall()
+    return [
+        {
+            "cluster_id": row["cluster_id"],
+            "member_count": row["member_count"],
+            "rep_asset_id": row["rep_asset_id"],
+            "rep_filename": row["rep_filename"],
+            "diameter": row["diameter"],
+        }
+        for row in rows
+    ]
+
+
 def insert_cluster(
     conn: sqlite3.Connection,
     method: str,
     params_json: str | None,
     diameter: float | None = None,
+    run_id: int | None = None,
 ) -> int:
     """Insert a new cluster row and return its ID.
 
@@ -1013,14 +1154,16 @@ def insert_cluster(
         params_json: JSON-serialised clustering parameters.
         diameter: Intra-cluster diameter — the maximum pairwise Hamming
             distance among all cluster members.  ``None`` when unknown.
+        run_id: Foreign key into ``clustering_runs``.  Must be provided for
+            all new clusters (the column is ``NOT NULL`` in the schema).
 
     Returns:
         The integer primary key of the new ``clusters`` row.
     """
     row = conn.execute(
-        "INSERT INTO clusters (method, params_json, created_at, diameter)"
-        " VALUES (?, ?, ?, ?) RETURNING id",
-        (method, params_json, int(time.time()), diameter),
+        "INSERT INTO clusters (method, params_json, created_at, diameter, run_id)"
+        " VALUES (?, ?, ?, ?, ?) RETURNING id",
+        (method, params_json, int(time.time()), diameter, run_id),
     ).fetchone()
     conn.commit()
     return row[0]
@@ -1080,18 +1223,19 @@ def delete_clusters_by_method_params(
 
 
 def delete_all_clusters(conn: sqlite3.Connection) -> int:
-    """Delete all clusters and their members from the database.
+    """Delete all clustering runs, clusters, and their members from the database.
 
     Args:
         conn: Open database connection.
 
     Returns:
-        Number of cluster rows deleted.
+        Number of clustering run rows deleted.
     """
     with conn:
-        count = conn.execute("SELECT COUNT(*) FROM clusters").fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM clustering_runs").fetchone()[0]
         conn.execute("DELETE FROM cluster_members")
         conn.execute("DELETE FROM clusters")
+        conn.execute("DELETE FROM clustering_runs")
     return count
 
 
@@ -1189,10 +1333,10 @@ def get_cluster_info(
 
     Returns:
         Dict with keys ``cluster_id``, ``method``, ``params_json``,
-        ``diameter``, ``created_at``, or ``None`` if not found.
+        ``diameter``, ``created_at``, ``run_id``, or ``None`` if not found.
     """
     row = conn.execute(
-        "SELECT id, method, params_json, diameter, created_at FROM clusters WHERE id = ?",
+        "SELECT id, method, params_json, diameter, created_at, run_id FROM clusters WHERE id = ?",
         (cluster_id,),
     ).fetchone()
     if row is None:
@@ -1203,6 +1347,7 @@ def get_cluster_info(
         "params_json": row["params_json"],
         "diameter": row["diameter"],
         "created_at": row["created_at"],
+        "run_id": row["run_id"],
     }
 
 
