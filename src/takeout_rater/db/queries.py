@@ -949,6 +949,216 @@ def count_assets_with_score(
 
 
 # ---------------------------------------------------------------------------
+# Multi-criteria sort helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SortCriterion:
+    """One level of a multi-key sort/filter specification."""
+
+    scorer_id: str
+    metric_key: str
+    min_score: float | None = None
+    max_score: float | None = None
+
+
+def list_assets_multi_sort(
+    conn: sqlite3.Connection,
+    criteria: list[SortCriterion],
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    favorited: bool | None = None,
+    trashed: bool | None = None,
+) -> list[tuple[AssetRow, float]]:
+    """Return assets sorted by multiple score criteria.
+
+    The *first* criterion is mandatory (INNER JOIN); subsequent ones use LEFT
+    JOINs so that assets without a secondary score still appear (sorted last).
+
+    Only assets that have a score from the latest finished run for the *first*
+    criterion are returned.  If a ``min_score`` / ``max_score`` is provided for
+    any criterion, assets that lack a score for that criterion (NULL from the
+    LEFT JOIN) are excluded.
+
+    Args:
+        conn: Open database connection.
+        criteria: Ordered list of sort levels.  Must contain at least one entry.
+        limit: Maximum number of rows.
+        offset: Rows to skip (for pagination).
+        favorited: Optional favorited filter (applied at the asset level).
+        trashed: Optional trashed filter.
+
+    Returns:
+        List of ``(AssetRow, primary_score_value)`` tuples.
+    """
+    if not criteria:
+        raise ValueError("criteria must contain at least one SortCriterion")
+
+    # Resolve run IDs for each criterion; bail early if the primary has no run.
+    run_ids: list[int | None] = []
+    for c in criteria:
+        rid = get_latest_scorer_run_id_for_metric(conn, c.scorer_id, c.metric_key)
+        run_ids.append(rid)
+
+    if run_ids[0] is None:
+        return []
+
+    select_cols = ["a.*", "s1.value AS score_value"]
+    joins = [
+        "INNER JOIN asset_scores s1"
+        " ON s1.asset_id = a.id"
+        " AND s1.scorer_run_id = ?"
+        " AND s1.metric_key = ?"
+    ]
+    join_params: list[Any] = [run_ids[0], criteria[0].metric_key]
+    order_cols = ["s1.value DESC"]
+
+    for i, (c, rid) in enumerate(zip(criteria[1:], run_ids[1:], strict=True), start=2):
+        alias = f"s{i}"
+        select_cols.append(f"{alias}.value AS score_value_{i}")
+        if rid is not None:
+            joins.append(
+                f"LEFT JOIN asset_scores {alias}"
+                f" ON {alias}.asset_id = a.id"
+                f" AND {alias}.scorer_run_id = ?"
+                f" AND {alias}.metric_key = ?"
+            )
+            join_params.extend([rid, c.metric_key])
+        else:
+            # No run exists for this criterion – emit a NULL column so the
+            # ORDER BY clause still references a valid alias.
+            joins.append(
+                f"LEFT JOIN (SELECT NULL AS asset_id, NULL AS value) {alias}"
+                f" ON {alias}.asset_id = a.id"
+            )
+        order_cols.append(f"{alias}.value DESC NULLS LAST")
+
+    conditions: list[str] = []
+    where_params: list[Any] = []
+
+    if favorited is not None:
+        conditions.append("a.favorited = ?")
+        where_params.append(1 if favorited else 0)
+    if trashed is not None:
+        conditions.append("a.trashed = ?")
+        where_params.append(1 if trashed else 0)
+
+    # Range filters for all criteria (including primary).
+    for i, c in enumerate(criteria, start=1):
+        alias = f"s{i}"
+        if c.min_score is not None:
+            conditions.append(f"{alias}.value >= ?")
+            where_params.append(c.min_score)
+        if c.max_score is not None:
+            conditions.append(f"{alias}.value <= ?")
+            where_params.append(c.max_score)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    join_sql = " ".join(joins)
+    select_sql = ", ".join(select_cols)
+    order_sql = ", ".join(order_cols)
+
+    # All literals are code-controlled, not user input.  # noqa: S608
+    sql = (
+        f"SELECT {select_sql}"
+        f" FROM assets a"
+        f" {join_sql}"
+        f" {where_clause}"
+        f" ORDER BY {order_sql}"
+        f" LIMIT ? OFFSET ?"
+    )
+    params = join_params + where_params + [limit, offset]
+    rows = conn.execute(sql, params).fetchall()
+    return [(_row_to_asset(row), row["score_value"]) for row in rows]
+
+
+def count_assets_multi_sort(
+    conn: sqlite3.Connection,
+    criteria: list[SortCriterion],
+    *,
+    favorited: bool | None = None,
+    trashed: bool | None = None,
+) -> int:
+    """Count assets that satisfy a multi-criteria sort/filter specification.
+
+    Mirrors the filtering logic of :func:`list_assets_multi_sort`.
+
+    Args:
+        conn: Open database connection.
+        criteria: Ordered list of sort levels.
+        favorited: Optional favorited filter.
+        trashed: Optional trashed filter.
+
+    Returns:
+        Integer count.
+    """
+    if not criteria:
+        raise ValueError("criteria must contain at least one SortCriterion")
+
+    run_ids: list[int | None] = []
+    for c in criteria:
+        rid = get_latest_scorer_run_id_for_metric(conn, c.scorer_id, c.metric_key)
+        run_ids.append(rid)
+
+    if run_ids[0] is None:
+        return 0
+
+    joins = [
+        "INNER JOIN asset_scores s1"
+        " ON s1.asset_id = a.id"
+        " AND s1.scorer_run_id = ?"
+        " AND s1.metric_key = ?"
+    ]
+    join_params: list[Any] = [run_ids[0], criteria[0].metric_key]
+
+    for i, (c, rid) in enumerate(zip(criteria[1:], run_ids[1:], strict=True), start=2):
+        alias = f"s{i}"
+        if rid is not None:
+            joins.append(
+                f"LEFT JOIN asset_scores {alias}"
+                f" ON {alias}.asset_id = a.id"
+                f" AND {alias}.scorer_run_id = ?"
+                f" AND {alias}.metric_key = ?"
+            )
+            join_params.extend([rid, c.metric_key])
+        else:
+            joins.append(
+                f"LEFT JOIN (SELECT NULL AS asset_id, NULL AS value) {alias}"
+                f" ON {alias}.asset_id = a.id"
+            )
+
+    conditions: list[str] = []
+    where_params: list[Any] = []
+
+    if favorited is not None:
+        conditions.append("a.favorited = ?")
+        where_params.append(1 if favorited else 0)
+    if trashed is not None:
+        conditions.append("a.trashed = ?")
+        where_params.append(1 if trashed else 0)
+
+    for i, c in enumerate(criteria, start=1):
+        alias = f"s{i}"
+        if c.min_score is not None:
+            conditions.append(f"{alias}.value >= ?")
+            where_params.append(c.min_score)
+        if c.max_score is not None:
+            conditions.append(f"{alias}.value <= ?")
+            where_params.append(c.max_score)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    join_sql = " ".join(joins)
+
+    sql = (  # noqa: S608
+        f"SELECT COUNT(*) FROM assets a {join_sql} {where_clause}"
+    )
+    params = join_params + where_params
+    return conn.execute(sql, params).fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
 # pHash helpers
 # ---------------------------------------------------------------------------
 
