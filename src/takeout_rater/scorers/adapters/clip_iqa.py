@@ -220,7 +220,7 @@ class CLIPIQAScorer(BaseScorer):
             for start in range(0, len(image_paths), _SCORE_BATCH_SIZE)
         ]
 
-        def _preprocess_chunk(chunk: list[Path]) -> tuple[list[Any], set[int]]:
+        def _preprocess(chunk: list[Path]) -> tuple[list[Any], set[int]]:
             tensors: list[Any] = []
             failed: set[int] = set()
             for i, path in enumerate(chunk):
@@ -274,4 +274,4 @@ class CLIPIQAScorer(BaseScorer):
 
             return [{"clip_quality": s} for s in sub_scores]
 
-        return _run_pipelined_batches(chunks, _preprocess_chunk, _infer, prefetch=_PREFETCH_BATCHES)
+        return _run_pipelined_batches(chunks, _preprocess, _infer, prefetch=_PREFETCH_BATCHES)
