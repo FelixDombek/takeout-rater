@@ -43,11 +43,19 @@ class VariantSpec:
         variant_id: Stable identifier stored in ``scorer_runs`` (e.g. ``"laion_v2"``).
         display_name: Human-readable label for the UI.
         description: Short explanation of what distinguishes this variant.
+        primary_metric_key: The metric key used to determine whether an asset
+            has already been scored by this variant.  When ``None`` (default),
+            the pipeline falls back to the first key in :attr:`ScorerSpec.metrics`.
+            Set this explicitly when different variants of the same scorer write
+            *different* metric keys (e.g. ``"luminosity"`` writes ``"brightness"``
+            while ``"blur"`` writes ``"sharpness"``), so that skip-existing checks
+            query the correct metric rather than the scorer's global first metric.
     """
 
     variant_id: str
     display_name: str
     description: str = ""
+    primary_metric_key: str | None = None
 
 
 @dataclass(frozen=True)
