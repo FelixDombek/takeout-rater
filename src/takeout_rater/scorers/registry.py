@@ -20,15 +20,11 @@ from takeout_rater.scorers.adapters.nima import NIMAScorer
 from takeout_rater.scorers.adapters.nsfw import NSFWScorer
 from takeout_rater.scorers.adapters.pyiqa_adapter import PyIQAScorer
 from takeout_rater.scorers.base import BaseScorer, ScorerSpec
-from takeout_rater.scorers.heuristics.blur import BlurScorer
 from takeout_rater.scorers.heuristics.brisque import BRISQUEScorer
-from takeout_rater.scorers.heuristics.luminosity import LuminosityScorer
-from takeout_rater.scorers.heuristics.noise import NoiseScorer
+from takeout_rater.scorers.heuristics.simple import SimpleScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
-    BlurScorer,
-    LuminosityScorer,
-    NoiseScorer,
+    SimpleScorer,
     BRISQUEScorer,
     AestheticScorer,
     NSFWScorer,
