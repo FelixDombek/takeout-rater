@@ -6,9 +6,15 @@ import sqlite3
 import time
 from pathlib import Path
 
-from takeout_rater.clustering.builder import _UnionFind, build_clusters, hamming_distance_int
+from takeout_rater.clustering.builder import (
+    _split_by_complete_linkage,
+    _UnionFind,
+    build_clusters,
+    hamming_distance_int,
+)
 from takeout_rater.db.queries import (
     count_clusters,
+    get_cluster_info,
     get_cluster_members,
     list_clusters_with_representatives,
     upsert_asset,
@@ -282,3 +288,101 @@ def test_list_clusters_pagination() -> None:
     assert len(page1) == 1
     assert len(page2) == 1
     assert page1[0]["cluster_id"] != page2[0]["cluster_id"]
+
+
+# ---------------------------------------------------------------------------
+# _split_by_complete_linkage
+# ---------------------------------------------------------------------------
+
+
+def test_split_complete_linkage_pair_within_threshold_unchanged() -> None:
+    """A 2-member component where both are within threshold stays as one sub-cluster."""
+    hash_map = {1: 0, 2: 1}  # dist = 1
+    result = _split_by_complete_linkage([1, 2], hash_map, threshold=5)
+    assert len(result) == 1
+    assert set(result[0]) == {1, 2}
+
+
+def test_split_complete_linkage_pair_exceeds_threshold_splits() -> None:
+    """A 2-member component where distance exceeds threshold splits into singletons."""
+    hash_map = {1: 0, 2: 0x7FF}  # dist = 11
+    result = _split_by_complete_linkage([1, 2], hash_map, threshold=5)
+    assert len(result) == 2
+    assert all(len(sc) == 1 for sc in result)
+
+
+def test_split_complete_linkage_chain_splits_correctly() -> None:
+    """A-B similar, B-C similar, A-C NOT similar → only A-B in same sub-cluster."""
+    # A=0, B=0x3FF (bits 0-9), C=0xFFC00 (bits 10-19)
+    # dist(A,B)=10, dist(A,C)=10, dist(B,C)=20
+    hash_map = {1: 0, 2: 0x3FF, 3: 0xFFC00}
+    result = _split_by_complete_linkage([1, 2, 3], hash_map, threshold=10)
+    # A and B must be in the same sub-cluster; C must be separate
+    sizes = sorted(len(sc) for sc in result)
+    assert sizes == [1, 2]
+    two_member = next(sc for sc in result if len(sc) == 2)
+    assert set(two_member) == {1, 2}
+
+
+# ---------------------------------------------------------------------------
+# Chaining prevention (integration: build_clusters + complete linkage)
+# ---------------------------------------------------------------------------
+
+
+def test_build_clusters_complete_linkage_prevents_chaining() -> None:
+    """Single-linkage would chain A-B-C but complete-linkage splits correctly."""
+    conn = _open_in_memory()
+    # A=0, B=0x3FF (dist(A,B)=10), C=0xFFC00 (dist(A,C)=10, dist(B,C)=20)
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", f"{0x3FF:016x}")
+    _add_asset_with_phash(conn, "p/c.jpg", f"{0xFFC00:016x}")
+
+    # threshold=10: A-B ok, A-C ok (both 10 bits), B-C not ok (20 bits)
+    # Single-linkage: {A,B,C} in one component; complete-linkage post: {A,B} + {C}
+    # C is a singleton → filtered by min_cluster_size=2 → only 1 cluster stored
+    result = build_clusters(conn, threshold=10)
+    assert result == 1
+    assert count_clusters(conn) == 1
+
+
+# ---------------------------------------------------------------------------
+# Cluster diameter
+# ---------------------------------------------------------------------------
+
+
+def test_build_clusters_stores_diameter() -> None:
+    """build_clusters must store the intra-cluster diameter on each cluster row."""
+    conn = _open_in_memory()
+    # Hashes differ by 1 bit → diameter = 1
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
+    build_clusters(conn, threshold=5)
+
+    info = get_cluster_info(conn, 1)
+    assert info is not None
+    assert info["diameter"] == 1.0
+
+
+def test_build_clusters_identical_hashes_diameter_zero() -> None:
+    """Identical hashes → cluster with diameter 0."""
+    conn = _open_in_memory()
+    _add_asset_with_phash(conn, "p/a.jpg", "aabbccdd11223344")
+    _add_asset_with_phash(conn, "p/b.jpg", "aabbccdd11223344")
+    build_clusters(conn, threshold=10)
+
+    info = get_cluster_info(conn, 1)
+    assert info is not None
+    assert info["diameter"] == 0.0
+
+
+def test_list_clusters_with_representatives_includes_diameter() -> None:
+    """list_clusters_with_representatives must include the diameter field."""
+    conn = _open_in_memory()
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
+    build_clusters(conn, threshold=5)
+
+    result = list_clusters_with_representatives(conn)
+    assert len(result) == 1
+    assert "diameter" in result[0]
+    assert result[0]["diameter"] == 1.0

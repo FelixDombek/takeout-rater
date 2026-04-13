@@ -400,7 +400,7 @@ def test_upsert_phash_stores_hash() -> None:
     result = get_phash(conn, asset_id)
     assert result is not None
     assert result["phash_hex"] == "deadbeef12345678"
-    assert result["algo"] == "dhash"
+    assert result["algo"] == "dhash16"
 
 
 def test_get_phash_missing_returns_none() -> None:

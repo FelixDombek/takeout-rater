@@ -96,7 +96,8 @@ CREATE TABLE IF NOT EXISTS clusters (
     id          INTEGER PRIMARY KEY,
     method      TEXT NOT NULL,
     params_json TEXT,
-    created_at  INTEGER NOT NULL
+    created_at  INTEGER NOT NULL,
+    diameter    REAL    -- max pairwise Hamming distance across cluster members
 );
 
 CREATE TABLE IF NOT EXISTS cluster_members (
@@ -127,4 +128,4 @@ CREATE INDEX IF NOT EXISTS idx_asset_scores_asset_id   ON asset_scores (asset_id
 CREATE INDEX IF NOT EXISTS idx_asset_scores_run_metric ON asset_scores (scorer_run_id, metric_key);
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;

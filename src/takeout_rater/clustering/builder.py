@@ -2,31 +2,28 @@
 
 Algorithm
 ---------
-1. Fetch all stored dhash values from the DB.
+1. Fetch all stored dhash values (algo = "dhash16") from the DB.
 2. Sort ``(asset_id, hash_int)`` pairs by their integer hash value.
 3. Slide a window of size *window* over the sorted list; for every pair
    within the window, compute Hamming distance.  If distance ≤ *threshold*,
    union the two assets.
 4. After processing all pairs, collect the resulting connected components
-   (Union-Find); each component with ≥ *min_cluster_size* members becomes a
-   cluster.
-5. Within each cluster, the *representative* is the asset with the lowest ID.
-6. The results are written to the ``clusters`` and ``cluster_members`` DB
-   tables (after first deleting any existing run for the same method+params).
-
-The window-over-sorted-hashes strategy is an efficient O(n × window)
-approximation.  Near-duplicate photos almost always have similar dhash
-integers (they share most bits), so they naturally end up adjacent in the
-sorted order.  The algorithm is exact for duplicates differing only in
-low-order bits and approximate (may miss some pairs) for duplicates that
-differ in high-order bits.  For a library of 236k photos a window of 200
-and threshold of 10 bits takes < 1 second.
+   (Union-Find); each component becomes a candidate cluster.
+5. Apply **complete-linkage post-processing** to each component: the component
+   is split into sub-clusters such that every pair of members within a
+   sub-cluster satisfies Hamming distance ≤ *threshold*.  This prevents
+   single-linkage chaining (where A≈B and B≈C incorrectly merges A and C even
+   when dist(A,C) > threshold).
+6. Sub-clusters with ≥ *min_cluster_size* members are persisted.  The
+   *representative* is the asset with the lowest ID; the *diameter* (maximum
+   pairwise Hamming distance within the sub-cluster) is stored on the cluster
+   row.
 
 Usage::
 
     from takeout_rater.clustering.builder import build_clusters
 
-    n_clusters = build_clusters(conn, threshold=10, window=200)
+    n_clusters = build_clusters(conn, threshold=20, window=200)
 """
 
 from __future__ import annotations
@@ -41,6 +38,7 @@ from takeout_rater.db.queries import (
     insert_cluster,
     list_all_phashes,
 )
+from takeout_rater.scoring.phash import DHASH_ALGO
 
 _METHOD = "dhash_hamming"
 
@@ -101,10 +99,56 @@ def hamming_distance_int(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+def _split_by_complete_linkage(
+    component: list[int],
+    hash_map: dict[int, int],
+    threshold: int,
+) -> list[list[int]]:
+    """Split a single-linkage component into complete-linkage sub-clusters.
+
+    Within each returned sub-cluster every pair of members satisfies
+    Hamming distance ≤ *threshold*.  Uses a greedy first-fit assignment
+    (members sorted by integer hash value for determinism).
+
+    Args:
+        component: Asset IDs forming a single-linkage connected component.
+        hash_map: Mapping of asset_id → integer hash value.
+        threshold: Maximum allowed pairwise Hamming distance.
+
+    Returns:
+        List of sub-clusters; each sub-cluster is a list of asset IDs.
+    """
+    # Sort by hash value for determinism
+    members = sorted(component, key=lambda aid: hash_map[aid])
+    sub_clusters: list[list[int]] = []
+    for member in members:
+        placed = False
+        h_member = hash_map[member]
+        for sc in sub_clusters:
+            if all(hamming_distance_int(h_member, hash_map[m]) <= threshold for m in sc):
+                sc.append(member)
+                placed = True
+                break
+        if not placed:
+            sub_clusters.append([member])
+    return sub_clusters
+
+
+def _compute_diameter(members: list[int], hash_map: dict[int, int]) -> float:
+    """Return the maximum pairwise Hamming distance within *members*."""
+    max_dist = 0
+    for i in range(len(members)):
+        for j in range(i + 1, len(members)):
+            d = hamming_distance_int(hash_map[members[i]], hash_map[members[j]])
+            if d > max_dist:
+                max_dist = d
+    return float(max_dist)
+
+
 def build_clusters(
     conn: sqlite3.Connection,
     *,
-    threshold: int = 10,
+    threshold: int = 20,
     window: int = 200,
     min_cluster_size: int = 2,
     on_progress: Callable[[int, int], None] | None = None,
@@ -117,7 +161,8 @@ def build_clusters(
     Args:
         conn: Open library database connection.
         threshold: Maximum Hamming distance for two images to be considered
-            near-duplicates (default 10, out of 64 bits).
+            near-duplicates (default 20, out of 256 bits for the 256-bit
+            dhash16 algorithm).
         window: Sliding-window size over the sorted hash list (default 200).
             Larger values find more near-duplicates at higher CPU cost.
         min_cluster_size: Minimum number of members for a group to be
@@ -131,8 +176,8 @@ def build_clusters(
     params = {"threshold": threshold, "window": window}
     params_json = json.dumps(params, separators=(",", ":"), sort_keys=True)
 
-    # Fetch all stored hashes
-    rows = list_all_phashes(conn)
+    # Fetch only hashes computed with the current algorithm
+    rows = list_all_phashes(conn, algo=DHASH_ALGO)
     if not rows:
         return 0
 
@@ -140,12 +185,15 @@ def build_clusters(
     pairs = sorted([(aid, int(h, 16)) for aid, h in rows], key=lambda x: x[1])
     n = len(pairs)
 
+    # Build a hash map for O(1) lookup during complete-linkage post-processing
+    hash_map: dict[int, int] = {aid: hash_int for aid, hash_int in pairs}
+
     uf = _UnionFind()
     # Initialise all nodes so singletons appear in components()
     for aid, _ in pairs:
         uf.find(aid)
 
-    # Sliding-window comparison
+    # Sliding-window single-linkage pass
     for i in range(n):
         if on_progress and i % 1000 == 0:
             on_progress(i, n)
@@ -155,22 +203,20 @@ def build_clusters(
             dist = hamming_distance_int(hash_i, hash_j)
             if dist <= threshold:
                 uf.union(aid_i, aid_j)
-            # Early-exit: if integer distance is very large, Hamming can't be ≤ threshold.
-            # This is a heuristic — not an exact bound, but saves work in practice.
-            elif (hash_j - hash_i) > (1 << (threshold + 4)):
-                break
 
     if on_progress:
         on_progress(n, n)
 
-    # Collect components that meet the minimum size
-    components = {
-        root: members
-        for root, members in uf.components().items()
-        if len(members) >= min_cluster_size
-    }
+    # Collect components, then apply complete-linkage post-processing to each
+    final_clusters: list[list[int]] = []
+    for members in uf.components().values():
+        if len(members) < 2:  # skip singletons early
+            continue
+        for sub in _split_by_complete_linkage(members, hash_map, threshold):
+            if len(sub) >= min_cluster_size:
+                final_clusters.append(sub)
 
-    if not components:
+    if not final_clusters:
         return 0
 
     # Delete previous run with same method+params
@@ -178,9 +224,10 @@ def build_clusters(
 
     # Persist clusters
     n_persisted = 0
-    for members in sorted(components.values(), key=lambda m: min(m)):
-        representative = min(members)  # lowest asset_id as representative
-        cluster_id = insert_cluster(conn, _METHOD, params_json)
+    for members in sorted(final_clusters, key=lambda m: min(m)):
+        representative = min(members)
+        diameter = _compute_diameter(members, hash_map)
+        cluster_id = insert_cluster(conn, _METHOD, params_json, diameter=diameter)
         rows_to_insert: list[tuple[int, float | None, int]] = [
             (aid, None, 1 if aid == representative else 0) for aid in members
         ]

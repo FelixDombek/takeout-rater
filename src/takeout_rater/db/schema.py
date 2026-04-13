@@ -9,15 +9,25 @@ from pathlib import Path
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 # The single schema version this codebase targets.
-CURRENT_SCHEMA_VERSION: int = 6
+CURRENT_SCHEMA_VERSION: int = 7
+
+# Earliest schema version from which incremental migrations are supported.
+# Databases older than this must be fully rebuilt (full re-scan).
+_INCREMENTAL_MIGRATION_BASE: int = 6
+
+# Map target_version → SQL file that upgrades from (target_version - 1) to target_version.
+_INCREMENTAL_MIGRATIONS: dict[int, Path] = {
+    7: _MIGRATIONS_DIR / "0002_cluster_diameter.sql",
+}
 
 
 class SchemaMismatchError(RuntimeError):
     """Raised when the on-disk database was created by an incompatible schema version.
 
-    This is a breaking-change release.  Databases at schema versions 1-5 cannot
-    be migrated automatically.  The library must be rebuilt from scratch with a
-    complete re-scan of the Takeout folder.
+    Databases at schema versions 1–5 cannot be migrated automatically.  The
+    library must be rebuilt from scratch with a complete re-scan of the Takeout
+    folder.  Databases at version 6 are automatically migrated to the current
+    version.
     """
 
     def __init__(self, found_version: int) -> None:
@@ -38,8 +48,13 @@ def migrate(conn: sqlite3.Connection) -> None:
     If the database already exists at :data:`CURRENT_SCHEMA_VERSION` this
     function is a no-op.
 
-    If the database exists at any *other* version, :class:`SchemaMismatchError`
-    is raised.  Callers are expected to surface this to the user and ask them to
+    If the database exists at :data:`_INCREMENTAL_MIGRATION_BASE` or higher
+    (but below :data:`CURRENT_SCHEMA_VERSION`), each incremental migration SQL
+    file is executed in order to bring the schema up to date.
+
+    If the database exists at any *other* version (i.e. older than
+    :data:`_INCREMENTAL_MIGRATION_BASE`), :class:`SchemaMismatchError` is
+    raised.  Callers are expected to surface this to the user and ask them to
     delete the database and re-scan their Takeout folder.
 
     Args:
@@ -47,18 +62,27 @@ def migrate(conn: sqlite3.Connection) -> None:
             for DDL statements (i.e. not in a read-only transaction).
 
     Raises:
-        SchemaMismatchError: When the on-disk schema version is not 0 and not
-            equal to :data:`CURRENT_SCHEMA_VERSION`.
+        SchemaMismatchError: When the on-disk schema version cannot be
+            migrated to :data:`CURRENT_SCHEMA_VERSION`.
     """
     current_version: int = conn.execute("PRAGMA user_version").fetchone()[0]
 
     if current_version == CURRENT_SCHEMA_VERSION:
         return
 
-    if current_version != 0:
-        raise SchemaMismatchError(current_version)
+    if current_version == 0:
+        # Fresh database – apply the consolidated baseline schema.
+        sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
+        conn.executescript(sql)
+        conn.commit()
+        return
 
-    # Fresh database – apply the baseline schema.
-    sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
-    conn.executescript(sql)
-    conn.commit()
+    if _INCREMENTAL_MIGRATION_BASE <= current_version < CURRENT_SCHEMA_VERSION:
+        # Apply each pending incremental migration in version order.
+        for target in range(current_version + 1, CURRENT_SCHEMA_VERSION + 1):
+            migration_file = _INCREMENTAL_MIGRATIONS[target]
+            conn.executescript(migration_file.read_text(encoding="utf-8"))
+        conn.commit()
+        return
+
+    raise SchemaMismatchError(current_version)

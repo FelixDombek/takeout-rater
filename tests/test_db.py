@@ -88,10 +88,10 @@ def test_schema_creates_asset_scores_table() -> None:
     assert "asset_scores" in tables
 
 
-def test_schema_user_version_is_6() -> None:
+def test_schema_user_version_is_7() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 6
+    assert version == 7
 
 
 def test_migrate_is_idempotent() -> None:
@@ -99,11 +99,50 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 6
+    assert version == 7
+
+
+def test_migrate_incremental_v6_to_v7() -> None:
+    """A v6 database must be automatically upgraded to v7 (adds diameter column)."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    # Bootstrap a v6 schema by applying the full initial schema but then manually
+    # rolling back the user_version to 6 (simulates an existing pre-v7 database).
+    from takeout_rater.db.schema import _MIGRATIONS_DIR  # noqa: PLC0415
+
+    sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
+    conn.executescript(sql)
+    conn.execute("PRAGMA user_version = 6")
+    # Remove the diameter column by recreating the clusters table without it
+    conn.execute("ALTER TABLE clusters RENAME TO clusters_old")
+    conn.execute(
+        "CREATE TABLE clusters ("
+        "id INTEGER PRIMARY KEY,"
+        "method TEXT NOT NULL,"
+        "params_json TEXT,"
+        "created_at INTEGER NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "INSERT INTO clusters SELECT id, method, params_json, created_at FROM clusters_old"
+    )
+    conn.execute("DROP TABLE clusters_old")
+    conn.commit()
+
+    # Now run migrate – it should add the diameter column
+    migrate(conn)
+
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    assert version == 7
+    # Verify the diameter column exists
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(clusters)").fetchall()}
+    assert "diameter" in cols
 
 
 def test_migrate_raises_on_stale_schema() -> None:
-    """migrate() must raise SchemaMismatchError for any pre-version-6 database."""
+    """migrate() must raise SchemaMismatchError for pre-version-6 databases."""
     for stale_version in range(1, 6):
         conn = sqlite3.connect(":memory:", check_same_thread=False)
         conn.row_factory = sqlite3.Row
