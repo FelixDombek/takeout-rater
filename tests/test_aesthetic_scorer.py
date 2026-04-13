@@ -138,6 +138,55 @@ def test_download_mlp_weights_uses_fallback(monkeypatch, tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
+# Model loading — quick_gelu
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
+    """_ensure_loaded must pass quick_gelu=True to open_clip.create_model_and_transforms."""
+    import torch  # noqa: PLC0415
+
+    fake_model = MagicMock()
+    fake_model.encode_image.return_value = torch.zeros(1, _EMBEDDING_DIM)
+
+    create_calls: list[dict] = []
+
+    def fake_create(model_name, pretrained=None, **kwargs):  # type: ignore[no-untyped-def]
+        create_calls.append({"model_name": model_name, "pretrained": pretrained, **kwargs})
+        fake_transform = MagicMock()
+        return fake_model, None, fake_transform
+
+    fake_mlp = MagicMock()
+    fake_mlp.return_value = torch.full((1, 1), 7.5)
+    fake_mlp.eval = MagicMock(return_value=fake_mlp)
+    fake_mlp.to = MagicMock(return_value=fake_mlp)
+
+    import open_clip  # noqa: PLC0415
+
+    monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
+
+    from takeout_rater.scorers.adapters import laion
+
+    monkeypatch.setattr(laion, "_build_mlp", lambda _dim: fake_mlp)
+    monkeypatch.setattr(
+        laion.AestheticScorer,
+        "_download_mlp_weights",
+        lambda self: tmp_path / "weights.pth",
+    )
+
+    import torch as torch_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(torch_mod, "load", lambda path, map_location=None, weights_only=False: {})
+    monkeypatch.setattr(fake_mlp, "load_state_dict", lambda state_dict: None)
+
+    scorer = AestheticScorer.create()
+    scorer._ensure_loaded()
+
+    assert len(create_calls) == 1
+    assert create_calls[0].get("quick_gelu") is True
+
+
+# ---------------------------------------------------------------------------
 # score_batch — empty input (no dependencies needed)
 # ---------------------------------------------------------------------------
 

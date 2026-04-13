@@ -258,7 +258,7 @@ class AestheticScorer(BaseScorer):
 
         # Load CLIP ViT-L/14 backbone
         clip_model, _, preprocess = open_clip.create_model_and_transforms(
-            _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED
+            _CLIP_MODEL_NAME, pretrained=_CLIP_PRETRAINED, quick_gelu=True
         )
         clip_model.eval()
         clip_model.to(device)

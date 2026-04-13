@@ -72,6 +72,41 @@ def test_is_available_false_when_open_clip_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Model loading — quick_gelu
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_loaded_passes_quick_gelu(monkeypatch) -> None:
+    """_ensure_loaded must pass quick_gelu=True to open_clip.create_model_and_transforms."""
+    import torch  # noqa: PLC0415
+
+    fake_model = MagicMock()
+    fake_model.logit_scale = torch.tensor(1.0)
+    fake_model.encode_text.return_value = torch.zeros(2, 16)
+
+    create_calls: list[dict] = []
+
+    def fake_create(model_name, pretrained=None, **kwargs):  # type: ignore[no-untyped-def]
+        create_calls.append({"model_name": model_name, "pretrained": pretrained, **kwargs})
+        fake_transform = MagicMock()
+        return fake_model, None, fake_transform
+
+    fake_tokenizer = MagicMock()
+    fake_tokenizer.return_value = torch.zeros(2, 77, dtype=torch.long)
+
+    import open_clip  # noqa: PLC0415
+
+    monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
+    monkeypatch.setattr(open_clip, "get_tokenizer", lambda _name: fake_tokenizer)
+
+    scorer = CLIPIQAScorer.create()
+    scorer._ensure_loaded()
+
+    assert len(create_calls) == 1
+    assert create_calls[0].get("quick_gelu") is True
+
+
+# ---------------------------------------------------------------------------
 # score_batch edge cases (no model required)
 # ---------------------------------------------------------------------------
 
