@@ -264,17 +264,17 @@ def test_score_batch_aesthetic_vgg16_variant(tmp_path: Path) -> None:
 
 
 def test_score_batch_technical_spaq_variant_rescales(tmp_path: Path) -> None:
-    """technical-spaq uses a 0–1 native range; 0.5 raw → 5.5 after rescaling."""
+    """technical-spaq native range is [1, 10]; score passes through unchanged."""
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
 
-    scorer = _make_mock_scorer(fixed_score=0.5, variant_id="technical-spaq")
+    scorer = _make_mock_scorer(fixed_score=5.5, variant_id="technical-spaq")
     assert scorer.variant_id == "technical-spaq"
     results = scorer.score_batch([img_path])
     assert "nima_score" in results[0]
-    # 0.5 * 9 + 1 = 5.5
+    # Native range is [1, 10] (same as display range) → identity mapping
     assert results[0]["nima_score"] == pytest.approx(5.5)
 
 
@@ -284,6 +284,6 @@ def test_score_batch_technical_spaq_value_in_range(tmp_path: Path) -> None:
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
 
-    scorer = _make_mock_scorer(fixed_score=0.7, variant_id="technical-spaq")
+    scorer = _make_mock_scorer(fixed_score=7.0, variant_id="technical-spaq")
     results = scorer.score_batch([img_path])
     assert 1.0 <= results[0]["nima_score"] <= 10.0

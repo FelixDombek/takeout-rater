@@ -16,10 +16,14 @@ Four variants are available:
   Same purpose as ``aesthetic`` with a different backbone; score in [1, 10].
 - ``technical`` — ``nima-koniq`` (inception_resnet_v2, KonIQ-10k dataset).
   More sensitive to blur, noise, and compression artefacts.
-  Outputs a score in [0, 1] which is linearly rescaled to [1, 10].
+  Outputs a score in [1, 10].
 - ``technical-spaq`` — ``nima-spaq`` (inception_resnet_v2, SPAQ dataset).
   Similar to ``technical`` but trained on the SPAQ in-the-wild dataset.
-  Outputs a score in [0, 1] which is linearly rescaled to [1, 10].
+  Outputs a score in [1, 10].
+
+All variants compute the expected value of a predicted 10-bin rating
+distribution with bin labels 1–10, so the native output range is [1, 10]
+for all of them.
 """
 
 from __future__ import annotations
@@ -35,22 +39,23 @@ from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, Varia
 
 #: pyiqa metric name for each scorer variant.
 _VARIANT_PYIQA_METRIC: dict[str, str] = {
-    "aesthetic": "nima",  # inception_resnet_v2, AVA dataset, score range 0–10
-    "aesthetic-vgg16": "nima-vgg16-ava",  # vgg16, AVA dataset, score range 0–10
-    "technical": "nima-koniq",  # inception_resnet_v2, KonIQ-10k dataset, score range ~0–1
-    "technical-spaq": "nima-spaq",  # inception_resnet_v2, SPAQ dataset, score range ~0–1
+    "aesthetic": "nima",  # inception_resnet_v2, AVA dataset, score range [1, 10]
+    "aesthetic-vgg16": "nima-vgg16-ava",  # vgg16, AVA dataset, score range [1, 10]
+    "technical": "nima-koniq",  # inception_resnet_v2, KonIQ-10k dataset, score range [1, 10]
+    "technical-spaq": "nima-spaq",  # inception_resnet_v2, SPAQ dataset, score range [1, 10]
 }
 
 #: Native output range (min, max) per variant.  Used to rescale to the
 #: common [1, 10] display range before clamping.
-#: Aesthetic variants already output in [1, 10] (mean of a 1–10 AVA rating
-#: distribution), so their native range matches the display range exactly.
-#: Technical variants output ~[0, 1] and are linearly mapped to [1, 10].
+#: All NIMA variants output the expected value of a predicted 10-bin rating
+#: distribution with bin labels 1–10, so the native range is always [1, 10].
+#: No rescaling is applied; this dict is kept for explicitness and to allow
+#: future variants with a different native scale.
 _VARIANT_NATIVE_RANGE: dict[str, tuple[float, float]] = {
     "aesthetic": (1.0, 10.0),
     "aesthetic-vgg16": (1.0, 10.0),
-    "technical": (0.0, 1.0),
-    "technical-spaq": (0.0, 1.0),
+    "technical": (1.0, 10.0),
+    "technical-spaq": (1.0, 10.0),
 }
 
 #: Number of images to forward through the metric in a single call.
@@ -72,6 +77,9 @@ class NIMAScorer(BaseScorer):
     Predicts human aesthetic / technical quality ratings on a 1–10 scale using
     pre-trained NIMA models from the ``pyiqa`` library (IQA-PyTorch).
 
+    All four variants compute the expected value of a predicted 10-bin rating
+    distribution with bin labels 1–10, giving a native output in [1, 10].
+
     Four variants are available:
 
     - ``aesthetic``: ``nima`` (inception_resnet_v2, AVA dataset) — predicts
@@ -82,10 +90,10 @@ class NIMAScorer(BaseScorer):
       Raw output is in [1, 10]; clamped for safety.
     - ``technical``: ``nima-koniq`` (inception_resnet_v2, KonIQ-10k) — more
       sensitive to blur, noise, and compression artefacts.
-      Raw output is in [0, 1]; rescaled to [1, 10].
+      Raw output is in [1, 10].
     - ``technical-spaq``: ``nima-spaq`` (inception_resnet_v2, SPAQ) — similar
       to ``technical`` but trained on in-the-wild smartphone photos.
-      Raw output is in [0, 1]; rescaled to [1, 10].
+      Raw output is in [1, 10].
 
     All variants output a single float in [1, 10] stored under the metric
     key ``nima_score``.  A separate scorer run is required for each variant.
@@ -117,10 +125,12 @@ class NIMAScorer(BaseScorer):
             technical_description=(
                 "Neural Image Assessment (NIMA, Google 2018). Predicts the mean "
                 "human rating of image quality on a 1–10 scale. Backed by the "
-                "pyiqa library. Aesthetic variants: nima (inception_resnet_v2, AVA) and "
+                "pyiqa library. All variants compute E[rating] over a 10-bin "
+                "predicted distribution (bins 1–10), giving a native [1, 10] output. "
+                "Aesthetic variants: nima (inception_resnet_v2, AVA) and "
                 "nima-vgg16-ava (vgg16, AVA). Technical variants: nima-koniq "
-                "(inception_resnet_v2, KonIQ-10k; rescaled to 1–10) and nima-spaq "
-                "(inception_resnet_v2, SPAQ; rescaled to 1–10)."
+                "(inception_resnet_v2, KonIQ-10k) and nima-spaq "
+                "(inception_resnet_v2, SPAQ)."
             ),
             version="3",
             metrics=(

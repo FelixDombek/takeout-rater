@@ -60,6 +60,7 @@ class CLIPIQAScorer(BaseScorer):
         self._clip_model: Any = None
         self._preprocess: Any = None
         self._text_features: Any = None  # pre-encoded text prompts, shape (2, 768)
+        self._logit_scale: Any = None  # scalar temperature for similarity scaling
         self._device: Any = None
 
     # ------------------------------------------------------------------
@@ -158,6 +159,10 @@ class CLIPIQAScorer(BaseScorer):
         self._clip_model = clip_model
         self._preprocess = preprocess
         self._text_features = text_features  # shape (2, D), float
+        # CLIP's learned temperature: multiplying similarities by logit_scale
+        # before softmax separates "Good photo" vs "Bad photo" probabilities
+        # into a meaningful range instead of collapsing near 0.5.
+        self._logit_scale = clip_model.logit_scale.exp().detach()
 
     # ------------------------------------------------------------------
     # Scoring
@@ -220,7 +225,10 @@ class CLIPIQAScorer(BaseScorer):
                         img_features = self._clip_model.encode_image(batch)  # (N, D)
                         img_features = img_features / img_features.norm(dim=-1, keepdim=True)
                         # sims: (N, 2) — column 0 = "Good photo.", column 1 = "Bad photo."
-                        sims = img_features @ self._text_features.T
+                        # Apply logit_scale (CLIP's learned temperature) so that small
+                        # cosine-similarity differences between the two prompts are
+                        # amplified into a meaningful probability spread.
+                        sims = self._logit_scale * (img_features @ self._text_features.T)
                         probs = torch.softmax(sims, dim=-1)  # (N, 2)
                         quality_values: list[float] = probs[:, 0].tolist()
                     for j, idx in enumerate(valid_indices):
@@ -235,7 +243,7 @@ class CLIPIQAScorer(BaseScorer):
                             with torch.no_grad():
                                 img_feat = self._clip_model.encode_image(tensor)
                                 img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
-                                sim = img_feat @ self._text_features.T  # (1, 2)
+                                sim = self._logit_scale * (img_feat @ self._text_features.T)  # (1, 2)
                                 prob = torch.softmax(sim, dim=-1)
                                 sub_scores[idx] = max(0.0, min(1.0, float(prob[0, 0].item())))
                         except (OSError, ValueError, RuntimeError):

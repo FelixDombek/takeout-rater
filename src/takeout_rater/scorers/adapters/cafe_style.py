@@ -46,13 +46,40 @@ _TOP_K = 5
 
 #: Mapping from the model's lowercase label strings to our metric keys.
 #: Labels returned by the pipeline are lowercased before lookup.
+#: The cafeai/cafe_style model (BEiT, id2label from config.json) uses
+#: "anime", "real_life", "3d", "manga_like", and "other" as its five class
+#: labels.  Generic aliases ("photo", "illustration", "cgi") are kept for
+#: test fixtures and any future model revision that uses different names.
 _LABEL_TO_METRIC: dict[str, str] = {
+    # Actual cafeai/cafe_style model labels (from config.json id2label)
     "anime": "style_anime",
-    "illustration": "style_illustration",
-    "photo": "style_photo",
+    "real_life": "style_photo",
     "3d": "style_3d",
+    "manga_like": "style_illustration",
+    "other": "style_cgi",
+    # Generic aliases kept for unit-test fixtures and future model variants
+    "photo": "style_photo",
+    "illustration": "style_illustration",
     "cgi": "style_cgi",
 }
+
+#: Keyword patterns for dynamically mapping unrecognised model label strings
+#: to metric keys at load time.  Each entry is ``(keywords, metric_key)``
+#: where *keywords* is a tuple of substrings that must all appear in the
+#: lowercased label string.  The first matching pattern wins.
+_LABEL_KEYWORD_PATTERNS: list[tuple[tuple[str, ...], str]] = [
+    (("anime",), "style_anime"),
+    (("manga",), "style_illustration"),
+    (("3d",), "style_3d"),
+    (("illust",), "style_illustration"),
+    (("illustration",), "style_illustration"),
+    (("drawing",), "style_illustration"),
+    (("real",), "style_photo"),
+    (("photo",), "style_photo"),
+    (("photograph",), "style_photo"),
+    (("cgi",), "style_cgi"),
+    (("computer",), "style_cgi"),
+]
 
 #: Safe default value returned for any metric when scoring fails.
 _DEFAULT_SCORE = 0.0
@@ -60,7 +87,7 @@ _DEFAULT_SCORE = 0.0
 
 def _empty_result() -> dict[str, float]:
     """Return a zeroed-out result dict for all known metrics."""
-    return {metric_key: _DEFAULT_SCORE for metric_key in _LABEL_TO_METRIC.values()}
+    return {metric_key: _DEFAULT_SCORE for metric_key in set(_LABEL_TO_METRIC.values())}
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +111,9 @@ class CafeStyleScorer(BaseScorer):
         super().__init__(variant_id=variant_id, **kwargs)
         # Lazy-loaded state — populated by _ensure_loaded()
         self._pipeline: Any = None
+        # Label→metric mapping resolved from the actual model config at load
+        # time; falls back to _LABEL_TO_METRIC for unit tests that skip loading.
+        self._label_to_metric: dict[str, str] = _LABEL_TO_METRIC
 
     # ------------------------------------------------------------------
     # Class-level API
@@ -193,7 +223,10 @@ class CafeStyleScorer(BaseScorer):
         """Load the image-classification pipeline on first call (lazy init).
 
         Downloads model weights to ``~/.cache/huggingface`` if not already
-        present.
+        present.  Also resolves the actual label strings used by the model
+        into the :data:`_LABEL_TO_METRIC` mapping so that unknown alternate
+        label names (e.g. ``"real"`` for *photo*, ``"cg"`` for *cgi*,
+        ``"illust"`` for *illustration*) are handled automatically.
         """
         if self._pipeline is not None:
             return
@@ -208,6 +241,23 @@ class CafeStyleScorer(BaseScorer):
             device=device,
             top_k=_TOP_K,
         )
+
+        # Build an augmented label mapping from the model's actual id2label so
+        # that any non-canonical label strings (like "real", "cg", "illust")
+        # are correctly routed to the right metric key.
+        self._label_to_metric = dict(_LABEL_TO_METRIC)
+        try:
+            id2label: dict = self._pipeline.model.config.id2label
+            for label in id2label.values():
+                label_lower = str(label).lower()
+                if label_lower in self._label_to_metric:
+                    continue  # already known
+                for keywords, metric_key in _LABEL_KEYWORD_PATTERNS:
+                    if all(kw in label_lower for kw in keywords):
+                        self._label_to_metric[label_lower] = metric_key
+                        break
+        except AttributeError:
+            pass  # pipeline without accessible model config — use static map
 
     # ------------------------------------------------------------------
     # Scoring
@@ -266,34 +316,40 @@ class CafeStyleScorer(BaseScorer):
                     valid_imgs, batch_size=_SCORE_BATCH_SIZE
                 )
                 for j, idx in enumerate(valid_indices):
-                    results[idx] = _preds_to_scores(all_preds[j])
+                    results[idx] = _preds_to_scores(all_preds[j], self._label_to_metric)
             except RuntimeError:  # noqa: BLE001
                 # Fallback: score each image individually if bulk call fails.
                 for _j, idx in enumerate(valid_indices):
                     try:
                         preds = self._pipeline(imgs[idx])
-                        results[idx] = _preds_to_scores(preds)
+                        results[idx] = _preds_to_scores(preds, self._label_to_metric)
                     except (OSError, ValueError, RuntimeError):
                         pass
 
         return results
 
 
-def _preds_to_scores(preds: list[dict[str, Any]]) -> dict[str, float]:
+def _preds_to_scores(
+    preds: list[dict[str, Any]],
+    label_to_metric: dict[str, str] | None = None,
+) -> dict[str, float]:
     """Convert pipeline prediction list to a metrics dict.
 
     Args:
         preds: List of ``{"label": str, "score": float}`` dicts returned by
             the image-classification pipeline.
+        label_to_metric: Mapping from lowercased label strings to metric keys.
+            Defaults to :data:`_LABEL_TO_METRIC` when ``None``.
 
     Returns:
         Dict mapping each of the five metric keys to a probability in [0, 1].
         Unknown labels are silently ignored; missing labels default to 0.0.
     """
+    mapping = label_to_metric if label_to_metric is not None else _LABEL_TO_METRIC
     scores = _empty_result()
     for pred in preds:
         label = pred.get("label", "").lower()
-        metric_key = _LABEL_TO_METRIC.get(label)
+        metric_key = mapping.get(label)
         if metric_key is not None:
             scores[metric_key] = float(pred["score"])
     return scores
