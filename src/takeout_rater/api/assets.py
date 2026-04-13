@@ -195,33 +195,21 @@ def _parse_score(raw: str | None) -> float | None:
         return None
 
 
-def _parse_sort_by(sort_by: str | None) -> tuple[str, str, str | None] | None:
-    """Parse a ``sort_by`` query parameter.
+def _parse_sort_by(sort_by: str | None) -> tuple[str, str, str] | None:
+    """Parse a ``sort_by`` query parameter of the form ``scorer_id:variant_id:metric_key``.
 
-    Supports two formats:
-
-    - ``scorer_id:metric_key`` — legacy two-part form (no variant; the latest
-      finished run for ``metric_key`` is used).
-    - ``scorer_id:variant_id:metric_key`` — three-part form that pins a specific
-      variant of a multi-variant scorer.
-
-    Returns a ``(scorer_id, metric_key, variant_id)`` triple, where
-    ``variant_id`` is ``None`` for the two-part legacy format.  Returns
-    ``None`` if *sort_by* is absent or malformed.
+    Returns a ``(scorer_id, variant_id, metric_key)`` triple, or ``None`` if
+    *sort_by* is absent or malformed.
     """
     if not sort_by:
         return None
     parts = sort_by.split(":")
-    if len(parts) == 2:
-        scorer_id, metric_key = parts
-        variant_id: str | None = None
-    elif len(parts) == 3:
-        scorer_id, variant_id, metric_key = parts
-    else:
+    if len(parts) != 3:
         return None
-    if not scorer_id or not metric_key:
+    scorer_id, variant_id, metric_key = parts
+    if not scorer_id or not variant_id or not metric_key:
         return None
-    return scorer_id, metric_key, variant_id
+    return scorer_id, variant_id, metric_key
 
 
 @router.get("/assets", response_class=HTMLResponse)

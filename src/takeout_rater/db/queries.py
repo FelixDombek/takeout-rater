@@ -773,44 +773,11 @@ def list_available_score_metrics_with_variants(
     return {(row[0], row[1], row[2]) for row in rows}
 
 
-def get_latest_scorer_run_id_for_metric(
-    conn: sqlite3.Connection,
-    scorer_id: str,
-    metric_key: str,
-) -> int | None:
-    """Find the latest *finished* scorer run that produced scores for a metric.
-
-    Unlike :func:`get_latest_scorer_run_id` which requires a ``variant_id``,
-    this function finds the run based on the actual scores stored in the
-    database — it looks for a finished run that has ``asset_scores`` rows
-    with the given ``metric_key``.
-
-    Args:
-        conn: Open database connection.
-        scorer_id: Scorer identifier.
-        metric_key: Metric key to look for in scored results.
-
-    Returns:
-        Integer run ID, or ``None`` if no matching finished run exists.
-    """
-    row = conn.execute(
-        "SELECT r.id FROM scorer_runs r"
-        " WHERE r.scorer_id = ? AND r.finished_at IS NOT NULL"
-        "   AND EXISTS ("
-        "     SELECT 1 FROM asset_scores s"
-        "     WHERE s.scorer_run_id = r.id AND s.metric_key = ?"
-        "   )"
-        " ORDER BY r.finished_at DESC, r.id DESC LIMIT 1",
-        (scorer_id, metric_key),
-    ).fetchone()
-    return row[0] if row else None
-
-
 def list_assets_by_score(
     conn: sqlite3.Connection,
     scorer_id: str,
     metric_key: str,
-    variant_id: str | None = None,
+    variant_id: str,
     *,
     limit: int = 100,
     offset: int = 0,
@@ -823,20 +790,14 @@ def list_assets_by_score(
     """Return assets that have been scored, sorted by score value.
 
     Only assets with a score from the *latest finished* run for the given
-    ``scorer_id`` are returned.  Assets without a score are excluded (per the
-    design: "only scored" view when a primary sort metric is active).
-
-    When ``variant_id`` is provided, the run is looked up by
-    ``(scorer_id, variant_id)``.  When ``None`` (default), the latest finished
-    run that actually produced scores for ``metric_key`` is used — this
-    correctly handles scorers whose variant IDs differ from ``"default"``.
+    ``scorer_id`` + ``variant_id`` are returned.  Assets without a score are
+    excluded (per the design: "only scored" view when a primary sort metric is active).
 
     Args:
         conn: Open database connection.
         scorer_id: Scorer whose scores to sort by.
         metric_key: Metric key to sort by.
-        variant_id: Variant ID.  When ``None``, the run is resolved via
-            ``metric_key`` instead.
+        variant_id: Variant identifier; the run is looked up by ``(scorer_id, variant_id)``.
         limit: Maximum number of rows.
         offset: Rows to skip (for pagination).
         descending: ``True`` (default) → highest score first.
@@ -851,10 +812,7 @@ def list_assets_by_score(
     if not metric_key:
         raise ValueError("metric_key must be a non-empty string")
 
-    if variant_id is not None:
-        run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
-    else:
-        run_id = get_latest_scorer_run_id_for_metric(conn, scorer_id, metric_key)
+    run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
     if run_id is None:
         return []
 
@@ -894,25 +852,20 @@ def count_assets_with_score(
     conn: sqlite3.Connection,
     scorer_id: str,
     metric_key: str,
-    variant_id: str | None = None,
+    variant_id: str,
     *,
     favorited: bool | None = None,
     trashed: bool | None = None,
     min_score: float | None = None,
     max_score: float | None = None,
 ) -> int:
-    """Count assets that have a score from the latest run for a scorer.
-
-    When ``variant_id`` is provided, the run is looked up by
-    ``(scorer_id, variant_id)``.  When ``None`` (default), the latest finished
-    run that actually produced scores for ``metric_key`` is used.
+    """Count assets that have a score from the latest run for a scorer+variant.
 
     Args:
         conn: Open database connection.
         scorer_id: Scorer ID.
         metric_key: Metric key.
-        variant_id: Variant ID.  When ``None``, the run is resolved via
-            ``metric_key`` instead.
+        variant_id: Variant identifier; the run is looked up by ``(scorer_id, variant_id)``.
         favorited: Optional favorited filter.
         trashed: Optional trashed filter.
         min_score: Optional inclusive lower bound on the score value.
@@ -921,10 +874,7 @@ def count_assets_with_score(
     Returns:
         Integer count.
     """
-    if variant_id is not None:
-        run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
-    else:
-        run_id = get_latest_scorer_run_id_for_metric(conn, scorer_id, metric_key)
+    run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
     if run_id is None:
         return 0
 
