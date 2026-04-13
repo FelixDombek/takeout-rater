@@ -81,7 +81,7 @@ def delete_run(
     return JSONResponse({"deleted": run_id})
 
 
-@router.get("/clusters", response_class=HTMLResponse)
+@router.get("/clusterings", response_class=HTMLResponse)
 def browse_clusters(
     request: Request,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
@@ -94,7 +94,7 @@ def browse_clusters(
 
     templates = request.app.state.templates
     return templates.TemplateResponse(
-        "clusters.html",
+        "clusterings.html",
         {
             "request": request,
             "runs": runs,

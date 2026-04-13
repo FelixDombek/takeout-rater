@@ -343,8 +343,8 @@ def test_jobs_page_contains_job_cards(client_with_db: TestClient) -> None:
     assert "Run Export" not in resp.text
 
 
-def test_clusters_page_contains_job_cards(client_with_db: TestClient) -> None:
-    resp = client_with_db.get("/clusters")
+def test_clusterings_page_contains_job_cards(client_with_db: TestClient) -> None:
+    resp = client_with_db.get("/clusterings")
     assert resp.status_code == 200
     assert "Cluster" in resp.text
     assert "Export" in resp.text

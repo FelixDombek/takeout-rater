@@ -254,33 +254,33 @@ def test_thumbnail_serves_jpeg(tmp_path: Path) -> None:
     assert resp.headers["content-type"] == "image/jpeg"
 
 
-# ── GET /clusters ─────────────────────────────────────────────────────────────
+# ── GET /clusterings ──────────────────────────────────────────────────────────
 
 
-def test_clusters_empty_db_returns_200(client: TestClient) -> None:
-    resp = client.get("/clusters")
+def test_clusterings_empty_db_returns_200(client: TestClient) -> None:
+    resp = client.get("/clusterings")
     assert resp.status_code == 200
 
 
-def test_clusters_returns_html(client: TestClient) -> None:
-    resp = client.get("/clusters")
+def test_clusterings_returns_html(client: TestClient) -> None:
+    resp = client.get("/clusterings")
     assert "text/html" in resp.headers["content-type"]
 
 
-def test_clusters_empty_shows_no_clusters_message(client: TestClient) -> None:
-    resp = client.get("/clusters")
+def test_clusterings_empty_shows_no_clusters_message(client: TestClient) -> None:
+    resp = client.get("/clusterings")
     assert "No clustering" in resp.text
 
 
-def test_clusters_shows_cluster_count(client_with_clusters: TestClient) -> None:
-    resp = client_with_clusters.get("/clusters")
+def test_clusterings_shows_cluster_count(client_with_clusters: TestClient) -> None:
+    resp = client_with_clusters.get("/clusterings")
     assert resp.status_code == 200
     assert "1 cluster" in resp.text
 
 
-def test_clusters_page2_returns_200(client_with_clusters: TestClient) -> None:
+def test_clusterings_page2_returns_200(client_with_clusters: TestClient) -> None:
     # Extra query params are ignored; page should still return 200.
-    resp = client_with_clusters.get("/clusters?page=2")
+    resp = client_with_clusters.get("/clusterings?page=2")
     assert resp.status_code == 200
 
 
@@ -323,7 +323,7 @@ def test_delete_clustering_run_not_found_returns_404(client: TestClient) -> None
 
 def test_delete_clustering_run_removes_from_list(client_with_clusters: TestClient) -> None:
     client_with_clusters.delete("/api/clusterings/1")
-    resp = client_with_clusters.get("/clusters")
+    resp = client_with_clusters.get("/clusterings")
     assert "No clustering" in resp.text
 
 
@@ -360,7 +360,7 @@ def test_cluster_detail_back_link_points_to_run(client_with_clusters: TestClient
 
 def test_browse_page_has_clusters_nav_link(client: TestClient) -> None:
     resp = client.get("/assets")
-    assert "/clusters" in resp.text
+    assert "/clusterings" in resp.text
 
 
 # ── score range filter ────────────────────────────────────────────────────────
@@ -524,8 +524,8 @@ def client_unconfigured(tmp_path: Path) -> TestClient:
     return TestClient(app, follow_redirects=False)
 
 
-def test_clusters_returns_503_when_not_configured(client_unconfigured: TestClient) -> None:
-    resp = client_unconfigured.get("/clusters")
+def test_clusterings_returns_503_when_not_configured(client_unconfigured: TestClient) -> None:
+    resp = client_unconfigured.get("/clusterings")
     assert resp.status_code == 503
 
 
@@ -541,10 +541,12 @@ def test_clustering_detail_returns_503_when_not_configured(
     assert resp.status_code == 503
 
 
-def test_clusters_redirects_to_setup_for_html_browser(client_unconfigured: TestClient) -> None:
-    """Browser navigation to /clusters while unconfigured should redirect to /setup."""
+def test_clusterings_redirects_to_setup_for_html_browser(
+    client_unconfigured: TestClient,
+) -> None:
+    """Browser navigation to /clusterings while unconfigured should redirect to /setup."""
     resp = client_unconfigured.get(
-        "/clusters", headers={"Accept": "text/html,application/xhtml+xml,*/*"}
+        "/clusterings", headers={"Accept": "text/html,application/xhtml+xml,*/*"}
     )
     assert resp.status_code in (302, 307)
     assert resp.headers["location"] == "/setup"
