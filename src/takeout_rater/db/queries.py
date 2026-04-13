@@ -752,6 +752,26 @@ def get_latest_scorer_run_id(
     return row[0] if row else None
 
 
+def list_available_score_metrics(
+    conn: sqlite3.Connection,
+) -> set[tuple[str, str]]:
+    """Return the set of (scorer_id, metric_key) pairs that have scored results.
+
+    Only considers scores from *finished* scorer runs so that partially-complete
+    runs are not surfaced in the UI.
+
+    Returns:
+        A set of ``(scorer_id, metric_key)`` tuples.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT r.scorer_id, s.metric_key"
+        " FROM asset_scores s"
+        " JOIN scorer_runs r ON r.id = s.scorer_run_id"
+        " WHERE r.finished_at IS NOT NULL"
+    ).fetchall()
+    return {(row[0], row[1]) for row in rows}
+
+
 def list_assets_by_score(
     conn: sqlite3.Connection,
     scorer_id: str,

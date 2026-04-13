@@ -505,7 +505,11 @@
 <div class="toolbar">
   <span class="toolbar-count">
     {% if total == 0 %}
-      No photos indexed yet
+      {% if sort_by and total_indexed %}
+        No scored photos for this metric
+      {% else %}
+        No photos indexed yet
+      {% endif %}
     {% else %}
       {{ total }} {% if dedupe %}unique {% endif %}photo{{ "s" if total != 1 else "" }}
     {% endif %}
@@ -604,7 +608,11 @@
 {% else %}
   <div class="empty-state">
     <h2>No photos found</h2>
-    {% if sort_by %}
+    {% if sort_by and total_indexed %}
+    <p>No photos have been scored with this metric yet.
+       Run the scorer from the <a href="/jobs">Jobs</a> page or use
+       <code>takeout-rater score &lt;path&gt;</code> first, then select the metric from the Sort by dropdown.</p>
+    {% elif sort_by %}
     <p>No photos have been scored yet. Run <code>takeout-rater score &lt;path&gt;</code> first.</p>
     {% else %}
     <p>

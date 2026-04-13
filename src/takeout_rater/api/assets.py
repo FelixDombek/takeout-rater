@@ -25,6 +25,7 @@ from takeout_rater.db.queries import (
     list_assets,
     list_assets_by_score,
     list_assets_deduped,
+    list_available_score_metrics,
     list_view_presets,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
@@ -286,15 +287,22 @@ def browse_assets(
 
     total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
-    # Build sort options from registered scorer specs
+    # Build sort options from registered scorer specs, but only include
+    # metrics that actually have scored results from a completed run.
+    available_metrics = list_available_score_metrics(conn)
     sort_options = [
         (f"{spec.scorer_id}:{m.key}", f"{spec.display_name} – {m.display_name}")
         for spec in list_specs()
         for m in spec.metrics
+        if (spec.scorer_id, m.key) in available_metrics
     ]
 
     # Load saved presets for the toolbar
     presets = list_view_presets(conn)
+
+    # When sorting by score, also fetch the total indexed count so the
+    # template can distinguish "no indexed photos" from "no scored photos".
+    total_indexed = count_assets(conn) if sort_parsed is not None and total == 0 else None
 
     templates = request.app.state.templates
     if partial == "1":
@@ -316,6 +324,7 @@ def browse_assets(
             "page": page,
             "total_pages": total_pages,
             "total": total,
+            "total_indexed": total_indexed,
             "favorited": favorited,
             "sort_by": canonical_sort_by,
             "sort_options": sort_options,
