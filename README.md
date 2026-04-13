@@ -70,6 +70,16 @@ See [`docs/design.md`](docs/design.md) for the full architecture overview.
 
 ---
 
+## Screenshots
+
+| 📷 Browse | 🔗 Clusters |
+|:---------:|:-----------:|
+| [![Browse](docs/screenshots/browse.png)](docs/screenshots/browse.png) | [![Clusters](docs/screenshots/clusters.png)](docs/screenshots/clusters.png) |
+| **🎯 Scoring** | **⚙ Jobs** |
+| [![Scoring](docs/screenshots/scoring.png)](docs/screenshots/scoring.png) | [![Jobs](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) |
+
+---
+
 ## Developer quick start (manual install)
 
 ```bash
