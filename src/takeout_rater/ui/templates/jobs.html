@@ -320,8 +320,13 @@
     setBtn(jt, data.running);
 
     if (data.running) {
-      // Initialise throughput tracking on the first running poll.
-      if (!_jobStats[jt]) {
+      // Re-anchor the throughput baseline whenever no new items have been
+      // processed since the last anchor.  This excludes model-loading time
+      // and per-scorer phase resets (which reset processed back to 0) from
+      // the rate calculation, preventing wildly inflated ETA estimates at
+      // the start of each scoring phase.
+      var stats = _jobStats[jt];
+      if (!stats || data.processed <= stats.startProcessed) {
         _jobStats[jt] = { startTime: Date.now(), startProcessed: data.processed };
       }
       setCurrentItem(jt, data.current_item || '');
