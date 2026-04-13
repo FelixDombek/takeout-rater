@@ -471,6 +471,7 @@ class _ClusterStartBody(BaseModel):
     threshold: int = 10
     window: int = 200
     min_size: int = 2
+    single_linkage: bool = False
 
 
 @router.post("/api/jobs/cluster/start")
@@ -493,6 +494,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
     threshold = body.threshold
     window = body.window
     min_size = body.min_size
+    single_linkage = body.single_linkage
 
     def _worker() -> None:
         from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
@@ -550,6 +552,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                 threshold=threshold,
                 window=window,
                 min_cluster_size=min_size,
+                single_linkage=single_linkage,
                 on_progress=_cb,
             )
             progress.message = f"Clustering complete — {n_clusters} cluster(s) found."

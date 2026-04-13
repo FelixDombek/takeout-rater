@@ -1079,6 +1079,22 @@ def delete_clusters_by_method_params(
     return len(cluster_ids)
 
 
+def delete_all_clusters(conn: sqlite3.Connection) -> int:
+    """Delete all clusters and their members from the database.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        Number of cluster rows deleted.
+    """
+    count = conn.execute("SELECT COUNT(*) FROM clusters").fetchone()[0]
+    conn.execute("DELETE FROM cluster_members")
+    conn.execute("DELETE FROM clusters")
+    conn.commit()
+    return count
+
+
 def list_clusters_with_representatives(
     conn: sqlite3.Connection,
     *,

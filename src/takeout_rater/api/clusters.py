@@ -6,10 +6,11 @@ import sqlite3
 from collections.abc import Generator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from takeout_rater.db.queries import (
     count_clusters,
+    delete_all_clusters,
     get_cluster_info,
     get_cluster_member_hashes,
     get_cluster_members,
@@ -38,6 +39,19 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     if conn is None:
         raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
     yield conn
+
+
+@router.post("/api/clusters/clear")
+def clear_clusters(
+    request: Request,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Delete all clusters and their members from the database.
+
+    Returns a JSON object with the number of clusters deleted.
+    """
+    n = delete_all_clusters(conn)
+    return JSONResponse({"deleted": n})
 
 
 @router.get("/clusters", response_class=HTMLResponse)

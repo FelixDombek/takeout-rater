@@ -12,6 +12,12 @@
     flex-wrap: wrap;
   }
   .toolbar-count { color: #444; font-size: 0.9rem; }
+  .btn-danger {
+    background: #dc3545;
+    color: #fff;
+    border-color: #dc3545;
+  }
+  .btn-danger:hover { background: #b02a37; border-color: #b02a37; }
 
   .cluster-grid {
     display: grid;
@@ -194,12 +200,27 @@
       been run first so that pHashes exist.
     </p>
     <div class="job-options">
-      <label for="cluster-threshold">Threshold (bits):</label>
-      <input type="number" id="cluster-threshold" value="20" min="1" max="128" style="width:4rem;">
-      <label for="cluster-window">Window:</label>
-      <input type="number" id="cluster-window" value="200" min="10" max="1000" style="width:5rem;">
+      <label for="cluster-threshold"
+             title="Maximum Hamming distance (number of differing bits out of 256) for two images to be grouped together. Lower = only very similar images; higher = more permissive matching.">
+        Threshold (bits):
+      </label>
+      <input type="number" id="cluster-threshold" value="20" min="1" max="128" style="width:4rem;"
+             title="Hamming distance threshold: two images are considered near-duplicates if their 256-bit dhash values differ in at most this many bits. Lower values (e.g. 10) find only very close duplicates; higher values (e.g. 30) group more loosely similar shots.">
+      <label for="cluster-window"
+             title="Number of neighbouring images (sorted by hash value) to compare against. Larger = finds more near-duplicates but takes longer.">
+        Window:
+      </label>
+      <input type="number" id="cluster-window" value="200" min="10" max="1000" style="width:5rem;"
+             title="Sliding-window size over the sorted hash list. Each image is compared to up to this many neighbours. Increase if you have many very similar images spread far apart in hash space.">
       <label for="cluster-minsize">Min&nbsp;size:</label>
       <input type="number" id="cluster-minsize" value="2" min="2" max="20" style="width:4rem;">
+    </div>
+    <div class="job-options" style="margin-top:-0.2rem;">
+      <label for="cluster-single-linkage" style="cursor:pointer;"
+             title="When checked, two photos can end up in the same cluster even if they are far apart, as long as there is a chain of step-by-step similar images connecting them (single-linkage / chain clustering). This lets gradual progressions of similar shots stay together. When unchecked (default), every photo in a cluster must be within the threshold distance of every other photo in that cluster (complete-linkage).">
+        <input type="checkbox" id="cluster-single-linkage">
+        Single-linkage mode (allow chaining — images that gradually become less similar can still share a cluster)
+      </label>
     </div>
     <div class="progress-bar-wrap" id="prog-wrap-cluster"><div class="progress-bar" id="prog-bar-cluster"></div></div>
     <div class="job-current-item" id="current-item-cluster"></div>
@@ -241,6 +262,10 @@
     {% endif %}
   </span>
   <a class="btn" href="/assets">← All photos</a>
+  {% if total > 0 %}
+  <button class="btn btn-danger" id="btn-clear-clusters" onclick="clearClusters()">🗑 Clear all clusters</button>
+  <div id="clear-status" style="font-size:0.85rem; min-height:1.3em;"></div>
+  {% endif %}
 </div>
 
 {% if clusters %}
@@ -444,6 +469,7 @@
       body.threshold = parseInt(document.getElementById('cluster-threshold').value, 10) || 20;
       body.window    = parseInt(document.getElementById('cluster-window').value, 10) || 200;
       body.min_size  = parseInt(document.getElementById('cluster-minsize').value, 10) || 2;
+      body.single_linkage = document.getElementById('cluster-single-linkage').checked;
     } else if (jobType === 'export') {
       var exportScorer = document.getElementById('export-scorer').value;
       if (exportScorer) {
@@ -480,6 +506,31 @@
         setStatus(jobType, '✗ ' + err.message, 'error');
         setProgress(jobType, null);
         setBtn(jobType, false);
+      });
+  };
+
+  window.clearClusters = function() {
+    if (!confirm('Delete all clusters? This cannot be undone.')) return;
+    var btn = document.getElementById('btn-clear-clusters');
+    var statusEl = document.getElementById('clear-status');
+    if (btn) btn.disabled = true;
+    if (statusEl) { statusEl.textContent = 'Clearing…'; statusEl.style.color = '#888'; }
+    fetch('/api/clusters/clear', { method: 'POST' })
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
+        return r.json();
+      })
+      .then(function(data) {
+        if (statusEl) {
+          statusEl.textContent = '✓ Cleared ' + data.deleted + ' cluster(s).';
+          statusEl.style.color = '#1e7e34';
+        }
+        // Reload page after a short delay to reflect the empty state
+        setTimeout(function() { window.location.reload(); }, 800);
+      })
+      .catch(function(err) {
+        if (statusEl) { statusEl.textContent = '✗ ' + err.message; statusEl.style.color = '#c0392b'; }
+        if (btn) btn.disabled = false;
       });
   };
 })();
