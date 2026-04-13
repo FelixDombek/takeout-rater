@@ -10,10 +10,11 @@ automatically via ``~/.cache/pyiqa``.
 
 Two variants are available:
 
-- ``aesthetic`` variant — ``nima-ava``, trained on the AVA aesthetic dataset.
-- ``technical`` variant — ``nima-inception_resnet_v2-koniq``, trained on the
-  KonIQ-10k technical quality dataset; more sensitive to blur, noise, and
-  compression artefacts.
+- ``aesthetic`` variant — ``nima`` (inception_resnet_v2, AVA dataset).
+  Outputs a score in [0, 10]; clamped to [1, 10] for display.
+- ``technical`` variant — ``nima-koniq`` (inception_resnet_v2, KonIQ-10k
+  dataset); more sensitive to blur, noise, and compression artefacts.
+  Outputs a score in [0, 1] which is linearly rescaled to [1, 10].
 """
 
 from __future__ import annotations
@@ -29,8 +30,15 @@ from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, Varia
 
 #: pyiqa metric name for each scorer variant.
 _VARIANT_PYIQA_METRIC: dict[str, str] = {
-    "aesthetic": "nima-ava",
-    "technical": "nima-inception_resnet_v2-koniq",
+    "aesthetic": "nima",           # inception_resnet_v2, AVA dataset, score range 0–10
+    "technical": "nima-koniq",     # inception_resnet_v2, KonIQ-10k dataset, score range ~0–1
+}
+
+#: Native output range (min, max) per variant.  Used to rescale to the
+#: common [1, 10] display range before clamping.
+_VARIANT_NATIVE_RANGE: dict[str, tuple[float, float]] = {
+    "aesthetic": (0.0, 10.0),
+    "technical": (0.0, 1.0),
 }
 
 #: Number of images to forward through the metric in a single call.
@@ -54,11 +62,12 @@ class NIMAScorer(BaseScorer):
 
     Two variants are available:
 
-    - ``aesthetic``: ``nima-ava`` — trained on the AVA aesthetic dataset.
-      Predicts perceived aesthetic quality (composition, colour, subject matter).
-    - ``technical``: ``nima-inception_resnet_v2-koniq`` — trained on the
-      KonIQ-10k technical quality dataset.  More sensitive to blur, noise, and
-      compression artefacts.
+    - ``aesthetic``: ``nima`` (inception_resnet_v2, AVA dataset) — predicts
+      perceived aesthetic quality (composition, colour, subject matter).
+      Raw output is in [0, 10]; clamped to [1, 10].
+    - ``technical``: ``nima-koniq`` (inception_resnet_v2, KonIQ-10k) — more
+      sensitive to blur, noise, and compression artefacts.
+      Raw output is in [0, 1]; rescaled to [1, 10].
 
     Both variants output a single float in [1, 10] stored under the metric
     key ``nima_score``.  A separate scorer run is required for each variant.
@@ -90,8 +99,8 @@ class NIMAScorer(BaseScorer):
             technical_description=(
                 "Neural Image Assessment (NIMA, Google 2018). Predicts the mean "
                 "human rating of image quality on a 1–10 scale. Backed by the "
-                "pyiqa library: aesthetic variant uses nima-ava (AVA dataset), "
-                "technical variant uses nima-inception_resnet_v2-koniq (KonIQ-10k)."
+                "pyiqa library: aesthetic variant uses nima (inception_resnet_v2, AVA dataset), "
+                "technical variant uses nima-koniq (inception_resnet_v2, KonIQ-10k; rescaled to 1–10)."
             ),
             version="2",
             metrics=(
@@ -205,6 +214,18 @@ class NIMAScorer(BaseScorer):
 
         self._ensure_loaded()
 
+        # Some variants (e.g. nima-koniq) output scores in a range other than
+        # [1, 10].  Linearly rescale raw output to [1, 10] before clamping.
+        native_min, native_max = _VARIANT_NATIVE_RANGE.get(self.variant_id, (0.0, 10.0))
+        native_span = native_max - native_min
+        display_span = _MAX_SCORE - _MIN_SCORE
+
+        def _rescale(raw: float) -> float:
+            if native_span == 0:
+                return _MIN_SCORE
+            scaled = (raw - native_min) / native_span * display_span + _MIN_SCORE
+            return max(_MIN_SCORE, min(_MAX_SCORE, scaled))
+
         scores: list[float] = []
 
         for batch_start in range(0, len(image_paths), _SCORE_BATCH_SIZE):
@@ -231,7 +252,7 @@ class NIMAScorer(BaseScorer):
                         raise RuntimeError("scalar output — fall back to per-image")
                     score_values: list[float] = raw_out.view(-1).tolist()
                     for j, idx in enumerate(valid_indices):
-                        sub_scores[idx] = max(_MIN_SCORE, min(_MAX_SCORE, float(score_values[j])))
+                        sub_scores[idx] = _rescale(float(score_values[j]))
                 except RuntimeError:
                     # Fallback: score each valid image individually (e.g. scalar output)
                     for _j, idx in enumerate(valid_indices):
@@ -240,7 +261,7 @@ class NIMAScorer(BaseScorer):
                             img = Image.open(path).convert("RGB")
                             tensor = to_tensor(img).unsqueeze(0)
                             raw = float(self._model(tensor).item())
-                            sub_scores[idx] = max(_MIN_SCORE, min(_MAX_SCORE, raw))
+                            sub_scores[idx] = _rescale(raw)
                         except (OSError, ValueError, RuntimeError):
                             pass
 
