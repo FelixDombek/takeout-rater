@@ -53,7 +53,7 @@ def _make_thumb(thumbs_dir: Path, asset_id: int, size: int = 32) -> Path:
 
     p = thumb_path_for_id(thumbs_dir, asset_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    img = Image.new("RGB", (size, size), color=(asset_id * 17 % 256, 128, 64))
+    img = Image.new("RGB", (size, size), color=(asset_id * 17 % 256, 128, 64))  # vary by id
     img.save(p, "JPEG")
     return p
 

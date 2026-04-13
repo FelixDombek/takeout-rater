@@ -42,6 +42,11 @@ from takeout_rater.scorers.base import BaseScorer
 
 _logger = logging.getLogger(__name__)
 
+# Number of in-flight result batches the queue can hold ahead of the DB writer.
+# Larger values allow workers to proceed further without blocking, at the cost
+# of buffering more (asset_id, metric_key, value) tuples in memory.
+_QUEUE_SIZE_PER_WORKER = 4
+
 
 def _score_batch_with_context(
     scorer: BaseScorer,
@@ -353,7 +358,7 @@ def run_scorers_parallel(
     if not scorers:
         return {}
 
-    n_workers = max(1, max_workers if max_workers is not None else (os.cpu_count() or 1))
+    n_workers = max(1, max_workers or os.cpu_count() or 1)
 
     # ── Phase 1: Planning ────────────────────────────────────────────────────
     # For each scorer, determine which asset IDs need to be scored.
@@ -417,7 +422,7 @@ def run_scorers_parallel(
 
     # ── Phase 2 + 3: Execution and DB writing ────────────────────────────────
     # results_queue carries (run_id, rows) tuples or _STOP.
-    results_queue: queue.Queue[object] = queue.Queue(maxsize=n_workers * 4)
+    results_queue: queue.Queue[object] = queue.Queue(maxsize=n_workers * _QUEUE_SIZE_PER_WORKER)
     db_errors: list[Exception] = []
 
     def _db_writer() -> None:

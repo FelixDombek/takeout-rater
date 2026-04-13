@@ -189,7 +189,7 @@ class BaseScorer(ABC):
         save_image = image.convert("RGB") if image.mode not in ("RGB", "L") else image
         save_image.save(buf, format="JPEG", quality=95)
         buf.seek(0)
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=True) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
             tmp.write(buf.read())
             tmp.flush()
             return self.score_batch([Path(tmp.name)], variant_id=variant_id)[0]
