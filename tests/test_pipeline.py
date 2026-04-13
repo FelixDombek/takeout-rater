@@ -16,7 +16,7 @@ from takeout_rater.db.queries import (
     upsert_asset,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.scorers.heuristics.blur import BlurScorer
+from takeout_rater.scorers.heuristics.simple import SimpleScorer
 from takeout_rater.scoring.pipeline import run_scorer, run_scorer_by_id
 
 FIXTURE_TAKEOUT = Path(__file__).parent / "fixtures" / "takeout_tree" / "Takeout"
@@ -64,7 +64,7 @@ def _make_thumbnail(thumbs_dir: Path, asset_id: int) -> Path:
 def test_run_scorer_returns_int(tmp_path: Path) -> None:
     conn = _open_in_memory()
     _add_asset(conn)
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_id = run_scorer(conn, scorer, tmp_path / "thumbs")
     assert isinstance(run_id, int)
     assert run_id > 0
@@ -73,7 +73,7 @@ def test_run_scorer_returns_int(tmp_path: Path) -> None:
 def test_run_scorer_creates_finished_run(tmp_path: Path) -> None:
     conn = _open_in_memory()
     _add_asset(conn)
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_id = run_scorer(conn, scorer, tmp_path / "thumbs")
     row = conn.execute("SELECT finished_at FROM scorer_runs WHERE id = ?", (run_id,)).fetchone()
     assert row is not None
@@ -86,7 +86,7 @@ def test_run_scorer_writes_scores_when_thumb_present(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir)
 
     scores = get_asset_scores(conn, asset_id)
@@ -100,7 +100,7 @@ def test_run_scorer_skips_missing_thumbnails(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     # No thumbnail created
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, tmp_path / "thumbs")
 
     scores = get_asset_scores(conn, asset_id)
@@ -114,7 +114,7 @@ def test_run_scorer_skip_existing_true(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
     run_id2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
 
@@ -132,7 +132,7 @@ def test_run_scorer_rerun(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir, skip_existing=False)
     run_id2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=False)
 
@@ -150,7 +150,7 @@ def test_run_scorer_progress_callback(tmp_path: Path) -> None:
         _make_thumbnail(thumbs_dir, aid)
 
     calls: list[tuple[int, int]] = []
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(
         conn, scorer, thumbs_dir, batch_size=2, on_progress=lambda d, t: calls.append((d, t))
     )
@@ -167,7 +167,7 @@ def test_run_scorer_explicit_asset_ids(tmp_path: Path) -> None:
     for aid in ids:
         _make_thumbnail(thumbs_dir, aid)
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     # Only score the first asset
     run_scorer(conn, scorer, thumbs_dir, asset_ids=[ids[0]])
 
@@ -205,7 +205,7 @@ def test_run_scorer_by_id_simple_blur_variant(tmp_path: Path) -> None:
 
 
 def test_index_then_score_pipeline(tmp_path: Path) -> None:
-    """E2E: index a real Takeout folder then score all assets with BlurScorer.
+    """E2E: index a real Takeout folder then score all assets with SimpleScorer (blur variant).
 
     This test exercises the full pipeline:
       1. Run the index job to populate the DB and generate thumbnails.
@@ -228,7 +228,7 @@ def test_index_then_score_pipeline(tmp_path: Path) -> None:
     thumbs_dir = tmp_path / "takeout-rater" / "thumbs"
 
     # Step 3: score all assets.
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir)
 
     # Step 4: every asset that has a thumbnail must have a score row.
@@ -251,7 +251,7 @@ def test_run_scorer_error_includes_scorer_id(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = BlurScorer.create(variant_id="blur")
+    scorer = SimpleScorer.create(variant_id="blur")
     with (
         patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
         pytest.raises(RuntimeError, match="simple"),
@@ -266,7 +266,7 @@ def test_run_scorer_error_includes_asset_path(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     thumb = _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     with (
         patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
         pytest.raises(RuntimeError, match=str(thumb)),
@@ -281,7 +281,7 @@ def test_run_scorer_error_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFix
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    scorer = BlurScorer.create()
+    scorer = SimpleScorer.create(variant_id="blur")
     with (
         caplog.at_level(logging.ERROR, logger="takeout_rater.scoring.pipeline"),
         patch.object(scorer, "score_batch", side_effect=RuntimeError("boom")),
