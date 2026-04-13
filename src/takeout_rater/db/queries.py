@@ -772,6 +772,28 @@ def list_available_score_metrics(
     return {(row[0], row[1]) for row in rows}
 
 
+def list_available_score_metrics_with_variants(
+    conn: sqlite3.Connection,
+) -> set[tuple[str, str, str]]:
+    """Return the set of (scorer_id, variant_id, metric_key) triples with scored results.
+
+    Only considers scores from *finished* scorer runs so that partially-complete
+    runs are not surfaced in the UI.  Unlike :func:`list_available_score_metrics`,
+    this function preserves the ``variant_id`` so that callers can generate one
+    sort option per distinct scorer+variant+metric combination.
+
+    Returns:
+        A set of ``(scorer_id, variant_id, metric_key)`` tuples.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT r.scorer_id, r.variant_id, s.metric_key"
+        " FROM asset_scores s"
+        " JOIN scorer_runs r ON r.id = s.scorer_run_id"
+        " WHERE r.finished_at IS NOT NULL"
+    ).fetchall()
+    return {(row[0], row[1], row[2]) for row in rows}
+
+
 def get_latest_scorer_run_id_for_metric(
     conn: sqlite3.Connection,
     scorer_id: str,

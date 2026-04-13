@@ -478,7 +478,7 @@ def test_sort_options_appear_after_scoring(tmp_path: Path) -> None:
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets")
     assert resp.status_code == 200
-    assert "simple:sharpness" in resp.text
+    assert "simple:blur:sharpness" in resp.text
 
 
 def test_sort_by_unscored_metric_shows_helpful_message(tmp_path: Path) -> None:
