@@ -278,6 +278,21 @@ def test_score_batch_technical_spaq_variant_rescales(tmp_path: Path) -> None:
     assert results[0]["nima_score"] == pytest.approx(5.5)
 
 
+def test_score_batch_technical_variant_rescales(tmp_path: Path) -> None:
+    """technical (nima-koniq) native range is [0, 1]; raw 0.5 → display 5.5."""
+    from PIL import Image  # noqa: PLC0415
+
+    img_path = tmp_path / "img.jpg"
+    Image.new("RGB", (64, 64)).save(img_path, "JPEG")
+
+    scorer = _make_mock_scorer(fixed_score=0.5, variant_id="technical")
+    assert scorer.variant_id == "technical"
+    results = scorer.score_batch([img_path])
+    assert "nima_score" in results[0]
+    # Native range [0, 1] → display [1, 10]: 0.5 * 9 + 1 = 5.5
+    assert results[0]["nima_score"] == pytest.approx(5.5)
+
+
 def test_score_batch_technical_spaq_value_in_range(tmp_path: Path) -> None:
     from PIL import Image  # noqa: PLC0415
 
