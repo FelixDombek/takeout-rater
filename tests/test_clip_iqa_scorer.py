@@ -132,7 +132,7 @@ def _make_mock_scorer(good_prob: float = 0.75) -> CLIPIQAScorer:
     scorer._text_features = text_features
     scorer._logit_scale = torch.tensor(
         1.0
-    )  # neutralise scale so text_features encodes desired prob
+    )  # neutralize scale so text_features encodes desired prob
     scorer._device = torch.device("cpu")
 
     return scorer

@@ -87,7 +87,7 @@ _DEFAULT_SCORE = 0.0
 
 def _empty_result() -> dict[str, float]:
     """Return a zeroed-out result dict for all known metrics."""
-    return {metric_key: _DEFAULT_SCORE for metric_key in set(_LABEL_TO_METRIC.values())}
+    return {metric_key: _DEFAULT_SCORE for metric_key in _LABEL_TO_METRIC.values()}
 
 
 # ---------------------------------------------------------------------------
