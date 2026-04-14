@@ -109,9 +109,17 @@ def _load_embeddings(
 
 
 def _cos_sim_to_metric(cos_sim: float, metric: str) -> float:
-    """Convert a cosine similarity value to the requested metric distance."""
+    """Convert a cosine similarity value to a *distance* for the chosen metric.
+
+    The returned value represents a distance (0 = identical, larger = more
+    different), suitable for storage in ``cluster_members.distance``.
+
+    - ``cosine``: returns the cosine *distance* ``1 − cos_sim`` in [0, 2].
+    - ``euclidean``: returns the L2 distance ``√(2 − 2·cos_sim)`` in [0, 2].
+    - ``combined``: returns the angular distance ``arccos(cos_sim)`` in [0, π].
+    """
     if metric == "cosine":
-        return cos_sim  # similarity (higher = closer)
+        return 1.0 - cos_sim
     if metric == "euclidean":
         return math.sqrt(max(0.0, 2.0 - 2.0 * cos_sim))
     # combined = angular distance in radians
@@ -392,9 +400,8 @@ def build_clip_clusters(
         rows_to_insert: list[tuple[int, float | None, int]] = []
         for aid in members:
             cos_sim = float(np.dot(emb_matrix[aid_to_idx[aid]], rep_emb))
+            # _cos_sim_to_metric always returns a distance (0 = identical).
             dist = _cos_sim_to_metric(cos_sim, metric)
-            # For cosine: dist is the cosine similarity itself (not a distance)
-            # Store as-is; the UI will interpret based on the method/metric.
             rows_to_insert.append((aid, dist, 1 if aid == rep_id else 0))
 
         bulk_insert_cluster_members(conn, cluster_id, rows_to_insert)
