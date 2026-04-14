@@ -14,8 +14,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from takeout_rater.db.queries import (
     AssetRow,
+    SortCriterion,
     count_assets,
     count_assets_deduped,
+    count_assets_multi_sort,
     count_assets_newer_than,
     count_assets_with_score,
     get_asset_alias_paths,
@@ -26,6 +28,7 @@ from takeout_rater.db.queries import (
     list_assets,
     list_assets_by_score,
     list_assets_deduped,
+    list_assets_multi_sort,
     list_available_score_metrics_with_variants,
     list_view_presets,
 )
@@ -220,6 +223,15 @@ def browse_assets(
     sort_by: str | None = None,
     min_score: str | None = None,
     max_score: str | None = None,
+    sort_by_2: str | None = None,
+    min_score_2: str | None = None,
+    max_score_2: str | None = None,
+    sort_by_3: str | None = None,
+    min_score_3: str | None = None,
+    max_score_3: str | None = None,
+    sort_by_4: str | None = None,
+    min_score_4: str | None = None,
+    max_score_4: str | None = None,
     dedupe: str = "1",
     partial: str = "0",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
@@ -231,10 +243,13 @@ def browse_assets(
     - ``favorited``: ``"1"`` to show only favorited assets.
     - ``sort_by``: ``"scorer_id:variant_id:metric_key"`` to sort by a score metric
       (e.g. ``"blur:default:sharpness"``).  Only scored assets are shown.
-    - ``min_score``: Inclusive lower bound on the score value (requires
-      ``sort_by``).  Blank or non-numeric values are silently ignored.
-    - ``max_score``: Inclusive upper bound on the score value (requires
-      ``sort_by``).  Blank or non-numeric values are silently ignored.
+    - ``min_score`` / ``max_score``: Inclusive score range for the primary
+      sort metric.  Blank or non-numeric values are silently ignored.
+    - ``sort_by_2`` … ``sort_by_4``: Optional secondary / tertiary / quaternary
+      sort metrics, each in ``"scorer_id:variant_id:metric_key"`` form.  Each can
+      have its own ``min_score_N`` / ``max_score_N`` range filter.
+      Secondary+ criteria use LEFT JOINs: assets without a secondary score still
+      appear, sorted last.
     - ``dedupe``: ``"1"`` (default) to hide exact duplicate files (same SHA-256
       content hash); ``"0"`` to show all physical copies.
     - ``partial``: ``"1"`` to return only a card fragment (for infinite scroll
@@ -256,31 +271,71 @@ def browse_assets(
     eff_min = _parse_score(min_score) if sort_parsed else None
     eff_max = _parse_score(max_score) if sort_parsed else None
 
+    # Build additional sort criteria (levels 2–4).
+    extra_raw = [
+        (sort_by_2, min_score_2, max_score_2),
+        (sort_by_3, min_score_3, max_score_3),
+        (sort_by_4, min_score_4, max_score_4),
+    ]
+    extra_criteria: list[tuple[str, str | None, str | None]] = []
+    # canonical forms for template use
+    canonical_extra: list[tuple[str, float | None, float | None]] = []
+    for sb, mn, mx in extra_raw:
+        parsed = _parse_sort_by(sb)
+        if parsed is None:
+            break  # stop at the first empty/invalid level
+        sid, vid, mkey = parsed
+        eff_mn = _parse_score(mn)
+        eff_mx = _parse_score(mx)
+        extra_criteria.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx))
+        canonical_extra.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx))
+
+    # Determine whether we are in multi-sort mode.
+    use_multi_sort = sort_parsed is not None and len(extra_criteria) > 0
+
     if sort_parsed is not None:
         scorer_id, variant_id, metric_key = sort_parsed
         canonical_sort_by = f"{scorer_id}:{variant_id}:{metric_key}"
-        asset_score_pairs = list_assets_by_score(
-            conn,
-            scorer_id,
-            metric_key,
-            variant_id=variant_id,
-            limit=_PAGE_SIZE,
-            offset=offset,
-            favorited=fav_filter,
-            min_score=eff_min,
-            max_score=eff_max,
-        )
-        assets = [a for a, _ in asset_score_pairs]
-        score_map = {a.id: s for a, s in asset_score_pairs}
-        total = count_assets_with_score(
-            conn,
-            scorer_id,
-            metric_key,
-            variant_id=variant_id,
-            favorited=fav_filter,
-            min_score=eff_min,
-            max_score=eff_max,
-        )
+
+        if use_multi_sort:
+            criteria = [SortCriterion(scorer_id, variant_id, metric_key, eff_min, eff_max)]
+            for sb_canon, eff_mn, eff_mx in extra_criteria:
+                s_id, v_id, m_key = sb_canon.split(":")
+                criteria.append(SortCriterion(s_id, v_id, m_key, eff_mn, eff_mx))
+
+            asset_score_pairs = list_assets_multi_sort(
+                conn,
+                criteria,
+                limit=_PAGE_SIZE,
+                offset=offset,
+                favorited=fav_filter,
+            )
+            assets = [a for a, _ in asset_score_pairs]
+            score_map = {a.id: s for a, s in asset_score_pairs}
+            total = count_assets_multi_sort(conn, criteria, favorited=fav_filter)
+        else:
+            asset_score_pairs = list_assets_by_score(
+                conn,
+                scorer_id,
+                metric_key,
+                variant_id=variant_id,
+                limit=_PAGE_SIZE,
+                offset=offset,
+                favorited=fav_filter,
+                min_score=eff_min,
+                max_score=eff_max,
+            )
+            assets = [a for a, _ in asset_score_pairs]
+            score_map = {a.id: s for a, s in asset_score_pairs}
+            total = count_assets_with_score(
+                conn,
+                scorer_id,
+                metric_key,
+                variant_id=variant_id,
+                favorited=fav_filter,
+                min_score=eff_min,
+                max_score=eff_max,
+            )
     elif dedup_enabled:
         assets = list_assets_deduped(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
         total = count_assets_deduped(conn, favorited=fav_filter)
@@ -354,6 +409,9 @@ def browse_assets(
             "score_map": score_map,
             "min_score": eff_min,
             "max_score": eff_max,
+            # Extra sort criteria passed as a list of (sort_by, min, max) tuples
+            # so the template can render them without index-specific variable names.
+            "extra_sort_criteria": canonical_extra,
             "presets": presets,
             # dedupe is only actively applied when not sorting by score metric
             "dedupe": dedup_enabled and sort_parsed is None,
