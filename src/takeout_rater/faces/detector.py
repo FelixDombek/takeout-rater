@@ -61,8 +61,7 @@ class FaceDetector:
     ) -> None:
         if model_pack not in _SUPPORTED_PACKS:
             raise ValueError(
-                f"Unsupported model pack {model_pack!r}. "
-                f"Supported: {', '.join(_SUPPORTED_PACKS)}"
+                f"Unsupported model pack {model_pack!r}. Supported: {', '.join(_SUPPORTED_PACKS)}"
             )
         self._model_pack = model_pack
         self._det_size = det_size

@@ -1,6 +1,6 @@
 # Design: takeout-rater
 
-*Last updated: 2026-04 (Iteration 12 complete: CLIP semantic search with embed job, search API, and live search UI)*
+*Last updated: 2026-04 (Iteration 14 in progress: facial detection with InsightFace, DBSCAN person clustering, CLIP-based hidden-face similarity)*
 
 ---
 

@@ -2295,7 +2295,5 @@ def delete_face_cluster_run(conn: sqlite3.Connection, run_id: int) -> bool:
 
 def get_face_cluster_label(conn: sqlite3.Connection, cluster_id: int) -> str | None:
     """Return the label for a face cluster, or ``None``."""
-    row = conn.execute(
-        "SELECT label FROM face_clusters WHERE id = ?", (cluster_id,)
-    ).fetchone()
+    row = conn.execute("SELECT label FROM face_clusters WHERE id = ?", (cluster_id,)).fetchone()
     return row["label"] if row else None

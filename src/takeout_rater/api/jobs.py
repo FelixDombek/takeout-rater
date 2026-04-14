@@ -40,7 +40,17 @@ router = APIRouter()
 # Job progress dataclass
 # ---------------------------------------------------------------------------
 
-_JOB_TYPES = ("index", "score", "cluster", "export", "rehash", "rescan", "embed", "detect_faces", "cluster_faces")
+_JOB_TYPES = (
+    "index",
+    "score",
+    "cluster",
+    "export",
+    "rehash",
+    "rescan",
+    "embed",
+    "detect_faces",
+    "cluster_faces",
+)
 
 
 @dataclass
@@ -1369,17 +1379,19 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
 
                     for face in faces:
                         blob = struct.pack(f"{EMBEDDING_DIM}f", *face.embedding)
-                        db_rows.append((
-                            aid,
-                            run_id,
-                            face.face_index,
-                            face.bbox[0],
-                            face.bbox[1],
-                            face.bbox[2],
-                            face.bbox[3],
-                            face.det_score,
-                            blob,
-                        ))
+                        db_rows.append(
+                            (
+                                aid,
+                                run_id,
+                                face.face_index,
+                                face.bbox[0],
+                                face.bbox[1],
+                                face.bbox[2],
+                                face.bbox[3],
+                                face.det_score,
+                                blob,
+                            )
+                        )
                         total_faces += 1
 
                 if db_rows:
@@ -1470,9 +1482,7 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
         try:
             n_emb = count_face_embeddings(worker_conn)
             if n_emb == 0:
-                progress.message = (
-                    "No face embeddings found. Run the Face Detection job first."
-                )
+                progress.message = "No face embeddings found. Run the Face Detection job first."
                 progress.running = False
                 progress.done = True
                 return
@@ -1491,9 +1501,7 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
                 min_samples=min_samples,
                 on_progress=_cb,
             )
-            progress.message = (
-                f"Face clustering complete — {n_clusters} person group(s) found."
-            )
+            progress.message = f"Face clustering complete — {n_clusters} person group(s) found."
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001

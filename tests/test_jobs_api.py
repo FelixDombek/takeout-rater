@@ -47,7 +47,17 @@ def test_jobs_status_returns_list_by_default(client_no_db: TestClient) -> None:
     data = resp.json()
     assert isinstance(data, list)
     job_types = {item["job_type"] for item in data}
-    assert job_types == {"index", "score", "cluster", "export", "rehash", "rescan", "embed"}
+    assert job_types == {
+        "index",
+        "score",
+        "cluster",
+        "export",
+        "rehash",
+        "rescan",
+        "embed",
+        "detect_faces",
+        "cluster_faces",
+    }
 
 
 def test_jobs_status_initial_all_not_running(client_no_db: TestClient) -> None:
