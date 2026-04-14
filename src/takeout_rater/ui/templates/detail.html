@@ -108,6 +108,24 @@
     color: #888;
     word-break: break-all;
   }
+  /* CLIP tag cloud */
+  .clip-tag-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.25rem 0;
+  }
+  .clip-tag {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #1a5cdb;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    transition: background 0.1s;
+  }
+  .clip-tag:hover { background: #dce6ff; }
 </style>
 {% endblock %}
 
@@ -197,6 +215,9 @@
             aria-controls="tab-phash" id="tbtn-phash"
             onclick="switchTab('phash')">pHash</button>
     {% endif %}
+    <button class="info-tab-btn" role="tab" aria-selected="false"
+            aria-controls="tab-clip" id="tbtn-clip"
+            onclick="switchTab('clip')">CLIP</button>
   </div>
 
   {# SCORES tab #}
@@ -250,6 +271,13 @@ Bright pixel = left neighbour was brighter; dark pixel = right neighbour was bri
     </div>
   </div>
   {% endif %}
+
+  {# CLIP tab #}
+  <div id="tab-clip" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-clip"
+       data-asset-id="{{ asset.id }}">
+    <p class="clip-loading" style="display:none; color:#999; font-size:0.85rem; margin:0.5rem 0;">Loading…</p>
+    <p class="clip-empty" style="color:#999; font-size:0.85rem; margin:0.5rem 0;">Run the Embed job to generate CLIP tags.</p>
+  </div>
 </div>{# /info-tabs #}
 
 <script>
@@ -285,6 +313,46 @@ function switchTab(name) {
   document.querySelectorAll(".info-tab-panel").forEach(function (panel) {
     panel.classList.toggle("active", panel.id === "tab-" + name);
   });
+  if (name === "clip") {
+    var panel = document.getElementById("tab-clip");
+    if (panel && !panel.dataset.loaded) {
+      loadClipWords(panel);
+    }
+  }
+}
+
+function loadClipWords(panel) {
+  var assetId = panel.dataset.assetId;
+  panel.querySelector(".clip-loading").style.display = "";
+  panel.querySelector(".clip-empty").style.display = "none";
+  fetch("/api/assets/" + assetId + "/clip-words?top_k=30")
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      panel.querySelector(".clip-loading").style.display = "none";
+      if (!data.words || data.words.length === 0) {
+        panel.querySelector(".clip-empty").style.display = "";
+        return;
+      }
+      panel.dataset.loaded = "1";
+      var maxScore = data.words[0].score || 1;
+      var cloud = document.createElement("div");
+      cloud.className = "clip-tag-cloud";
+      data.words.forEach(function (w) {
+        var tag = document.createElement("span");
+        tag.className = "clip-tag";
+        var rel = w.score / maxScore;
+        tag.style.opacity = (0.45 + 0.55 * rel).toFixed(2);
+        tag.style.fontSize = (0.72 + 0.36 * rel).toFixed(2) + "rem";
+        tag.title = "score: " + w.score.toFixed(4);
+        tag.textContent = w.word;
+        cloud.appendChild(tag);
+      });
+      panel.appendChild(cloud);
+    })
+    .catch(function () {
+      panel.querySelector(".clip-loading").style.display = "none";
+      panel.querySelector(".clip-empty").style.display = "";
+    });
 }
 
 {% if phash_hex %}
