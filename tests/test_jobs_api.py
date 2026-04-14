@@ -353,6 +353,8 @@ def test_jobs_page_contains_job_cards(client_with_db: TestClient) -> None:
     assert "Rescan" in resp.text
     assert "Run Clustering" not in resp.text
     assert "Run Export" not in resp.text
+    assert "Run Detection" not in resp.text
+    assert "Run Face Clustering" not in resp.text
 
 
 def test_clusterings_page_contains_job_cards(client_with_db: TestClient) -> None:

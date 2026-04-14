@@ -529,13 +529,13 @@ class TestFacesUIRoutes:
         assert "Faces" in resp.text
         assert "/faces" in resp.text
 
-    def test_jobs_page_has_face_detection_card(self, face_client: TestClient) -> None:
-        resp = face_client.get("/jobs")
+    def test_faces_page_has_face_detection_card(self, face_client: TestClient) -> None:
+        resp = face_client.get("/faces")
         assert "Detect Faces" in resp.text
         assert "Run Detection" in resp.text
 
-    def test_jobs_page_has_face_clustering_card(self, face_client: TestClient) -> None:
-        resp = face_client.get("/jobs")
+    def test_faces_page_has_face_clustering_card(self, face_client: TestClient) -> None:
+        resp = face_client.get("/faces")
         assert "Cluster Faces" in resp.text
         assert "Run Face Clustering" in resp.text
 

@@ -11,6 +11,94 @@
   .section { margin-bottom: 2rem; }
   .section h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
 
+  /* Job cards */
+  .job-cards { margin-bottom: 1.5rem; }
+  .job-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.1rem 1.4rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .job-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+  }
+  .job-card-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    flex: 1;
+  }
+  .job-card p.desc {
+    color: #555;
+    font-size: 0.875rem;
+    margin-bottom: 0.9rem;
+    line-height: 1.5;
+  }
+  .job-options {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 0.8rem;
+  }
+  .job-options label { font-size: 0.85rem; color: #444; }
+  .job-options select, .job-options input[type=number] {
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    background: #fff;
+  }
+  .job-status {
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    min-height: 1.3em;
+    color: #444;
+  }
+  .job-status.ok    { color: #1e7e34; }
+  .job-status.error { color: #c0392b; }
+  .job-status.info  { color: #1a5cdb; }
+  .progress-bar-wrap {
+    height: 6px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    margin-top: 0.5rem;
+    display: none;
+  }
+  .progress-bar-wrap.visible { display: block; }
+  .progress-bar {
+    height: 100%;
+    background: #1a5cdb;
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+  .job-current-item {
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.2rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    min-height: 1em;
+  }
+  .btn-run { white-space: nowrap; }
+  .badge-running {
+    display: inline-block;
+    background: #dbeafe;
+    color: #1e40af;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+
   /* Person grid */
   .person-grid {
     display: grid;
@@ -131,8 +219,7 @@
   <h1>👤 Faces &amp; People</h1>
   <p class="subtitle">
     Detect faces, group them into identity clusters, and explore your photo library by person.
-    Start by running the <strong>Face Detection</strong> job from the
-    <a href="/jobs">Jobs</a> page, then cluster the detected faces.
+    Use the job cards below to run <strong>Face Detection</strong> and then <strong>Cluster Faces</strong>.
   </p>
 
   <div class="license-notice">
@@ -140,6 +227,55 @@
     licensed under <strong>CC BY-NC 4.0</strong> (non-commercial use only). The lighter
     <code>buffalo_sc</code> uses the same ArcFace recogniser under the same license.
     All inference is performed locally — no images or embeddings leave your machine.
+  </div>
+
+  <!-- ── Face Detection & Clustering jobs ────────────────────────────────── -->
+  <div class="job-cards">
+    <div class="job-card" id="card-detect_faces">
+      <div class="job-card-header">
+        <h2>👤 Detect Faces</h2>
+        <span class="badge-running" id="badge-detect_faces" style="display:none;">Running…</span>
+        <button class="btn btn-primary btn-run" id="btn-detect_faces" onclick="startJob('detect_faces')">Run Detection</button>
+      </div>
+      <p class="desc">
+        Detect faces in all indexed photos using <strong>InsightFace</strong> (SCRFD detector +
+        ArcFace recognition). Produces 512-d identity embeddings for each detected face.
+        Results are stored for subsequent person-grouping via clustering.
+      </p>
+      <div class="job-options">
+        <label for="face-model">Model:</label>
+        <select id="face-model">
+          <option value="buffalo_l">buffalo_l (best accuracy, ~350 MB)</option>
+          <option value="buffalo_sc">buffalo_sc (smaller, faster)</option>
+        </select>
+        <label for="face-det-thresh">Min confidence:</label>
+        <input type="number" id="face-det-thresh" value="0.5" min="0.1" max="1.0" step="0.05" style="width:70px;">
+      </div>
+      <div class="progress-bar-wrap" id="prog-wrap-detect_faces"><div class="progress-bar" id="prog-bar-detect_faces"></div></div>
+      <div class="job-current-item" id="current-item-detect_faces"></div>
+      <div class="job-status" id="status-detect_faces"></div>
+    </div>
+
+    <div class="job-card" id="card-cluster_faces">
+      <div class="job-card-header">
+        <h2>👥 Cluster Faces</h2>
+        <span class="badge-running" id="badge-cluster_faces" style="display:none;">Running…</span>
+        <button class="btn btn-primary btn-run" id="btn-cluster_faces" onclick="startJob('cluster_faces')">Run Face Clustering</button>
+      </div>
+      <p class="desc">
+        Group detected faces into <strong>person groups</strong> using DBSCAN clustering with
+        cosine distance on ArcFace embeddings. Requires a completed Face Detection run.
+      </p>
+      <div class="job-options">
+        <label for="face-eps">DBSCAN eps:</label>
+        <input type="number" id="face-eps" value="0.5" min="0.1" max="1.5" step="0.05" style="width:70px;">
+        <label for="face-min-samples">Min samples:</label>
+        <input type="number" id="face-min-samples" value="2" min="1" max="20" step="1" style="width:60px;">
+      </div>
+      <div class="progress-bar-wrap" id="prog-wrap-cluster_faces"><div class="progress-bar" id="prog-bar-cluster_faces"></div></div>
+      <div class="job-current-item" id="current-item-cluster_faces"></div>
+      <div class="job-status" id="status-cluster_faces"></div>
+    </div>
   </div>
 
   <!-- Run selector -->
@@ -157,8 +293,8 @@
   <!-- Empty state -->
   <div id="empty-state" class="empty-state" style="display:none;">
     <h2>No face clusters yet</h2>
-    <p>Run <strong>Face Detection</strong> and then <strong>Cluster Faces</strong> from the
-      <a href="/jobs">Jobs page</a> to get started.</p>
+    <p>Run <strong>Face Detection</strong> and then <strong>Cluster Faces</strong> using the
+      job cards above to get started.</p>
   </div>
 
   <!-- Detail panel -->
@@ -184,6 +320,187 @@
 </div>
 
 <script>
+// ── Job polling & launching (shared with /jobs and /clusterings pages) ────
+(function () {
+  var _pollers = {};
+  var _jobStats = {};
+  var _wasRunning = {};
+
+  function setStatus(jobType, msg, cls) {
+    var el = document.getElementById('status-' + jobType);
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'job-status' + (cls ? ' ' + cls : '');
+  }
+
+  function setProgress(jobType, pct) {
+    var wrap = document.getElementById('prog-wrap-' + jobType);
+    var bar  = document.getElementById('prog-bar-'  + jobType);
+    if (!wrap || !bar) return;
+    if (pct === null) {
+      wrap.className = 'progress-bar-wrap';
+    } else {
+      wrap.className = 'progress-bar-wrap visible';
+      bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    }
+  }
+
+  function setCurrentItem(jobType, text) {
+    var el = document.getElementById('current-item-' + jobType);
+    if (!el) return;
+    el.textContent = text || '';
+  }
+
+  function setBadge(jobType, show) {
+    var badge = document.getElementById('badge-' + jobType);
+    if (!badge) return;
+    badge.style.display = show ? 'inline-block' : 'none';
+  }
+
+  function setBtn(jobType, disabled) {
+    var btn = document.getElementById('btn-' + jobType);
+    if (!btn) return;
+    btn.disabled = disabled;
+  }
+
+  function _formatEta(seconds) {
+    if (seconds < 60) return seconds + 's';
+    var m = Math.floor(seconds / 60);
+    var s = seconds % 60;
+    return m + 'm\u202f' + (s < 10 ? '0' : '') + s + 's';
+  }
+
+  function applyJobState(data) {
+    var jt = data.job_type;
+    var pct = null;
+    if (data.total > 0) {
+      pct = Math.round((data.processed / data.total) * 100);
+    }
+
+    setBadge(jt, data.running);
+    setBtn(jt, data.running);
+
+    if (data.running) {
+      _wasRunning[jt] = true;
+      if (!_jobStats[jt]) {
+        _jobStats[jt] = { startTime: Date.now(), startProcessed: data.processed };
+      }
+      setCurrentItem(jt, data.current_item || '');
+    } else {
+      delete _jobStats[jt];
+      setCurrentItem(jt, '');
+    }
+
+    if (data.error) {
+      setStatus(jt, '\u2717 ' + data.error, 'error');
+      setProgress(jt, null);
+    } else if (data.done) {
+      setStatus(jt, '\u2713 ' + data.message, 'ok');
+      setProgress(jt, 100);
+      if (jt === 'cluster_faces' && _wasRunning[jt]) {
+        delete _wasRunning[jt];
+        setTimeout(function() { window.location.reload(); }, 1200);
+      } else {
+        setTimeout(function() { setProgress(jt, null); }, 3000);
+      }
+    } else if (data.running) {
+      var statusMsg = data.message || 'Running\u2026';
+      var stats = _jobStats[jt];
+      if (data.total > 0 && stats) {
+        var elapsed = (Date.now() - stats.startTime) / 1000;
+        var doneInSession = data.processed - stats.startProcessed;
+        if (elapsed >= 1 && doneInSession > 0) {
+          var rate = doneInSession / elapsed;
+          var eta = Math.round((data.total - data.processed) / rate);
+          statusMsg += '\u2002\u00b7\u2002' + rate.toFixed(1) + '/s';
+          if (eta > 0) {
+            statusMsg += '\u2002\u00b7\u2002ETA\u202f' + _formatEta(eta);
+          }
+        }
+      }
+      setStatus(jt, statusMsg, 'info');
+      setProgress(jt, pct !== null ? pct : 0);
+    } else if (data.message) {
+      setStatus(jt, data.message, '');
+    }
+
+    if (!data.running) {
+      if (_pollers[jt]) {
+        clearInterval(_pollers[jt]);
+        delete _pollers[jt];
+      }
+    }
+  }
+
+  function pollJob(jobType) {
+    fetch('/api/jobs/status?job_type=' + jobType)
+      .then(function(r) { return r.json(); })
+      .then(function(data) { applyJobState(data); })
+      .catch(function() { /* ignore transient errors */ });
+  }
+
+  function startPolling(jobType) {
+    if (_pollers[jobType]) return;
+    pollJob(jobType);
+    _pollers[jobType] = setInterval(function() { pollJob(jobType); }, 1000);
+  }
+
+  ['detect_faces', 'cluster_faces'].forEach(function(jt) {
+    fetch('/api/jobs/status?job_type=' + jt)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        applyJobState(data);
+        if (data.running) {
+          startPolling(jt);
+        }
+      })
+      .catch(function() { /* ignore */ });
+  });
+
+  window.startJob = function(jobType) {
+    var body = {};
+
+    if (jobType === 'detect_faces') {
+      body.model_pack = document.getElementById('face-model').value;
+      body.det_thresh = parseFloat(document.getElementById('face-det-thresh').value) || 0.5;
+    } else if (jobType === 'cluster_faces') {
+      body.eps = parseFloat(document.getElementById('face-eps').value) || 0.5;
+      body.min_samples = parseInt(document.getElementById('face-min-samples').value) || 2;
+    }
+
+    setBtn(jobType, true);
+    setBadge(jobType, false);
+    setStatus(jobType, 'Starting\u2026', 'info');
+    setProgress(jobType, 0);
+    setCurrentItem(jobType, '');
+    delete _jobStats[jobType];
+
+    fetch('/api/jobs/' + jobType + '/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function(r) {
+        if (!r.ok) {
+          return r.json().then(function(d) {
+            throw new Error(d.detail || r.statusText);
+          });
+        }
+        return r.json();
+      })
+      .then(function() {
+        setBadge(jobType, true);
+        startPolling(jobType);
+      })
+      .catch(function(err) {
+        setStatus(jobType, '\u2717 ' + err.message, 'error');
+        setProgress(jobType, null);
+        setBtn(jobType, false);
+      });
+  };
+})();
+
+// ── Faces page logic ──────────────────────────────────────────────────────
 (function() {
   var _currentClusterId = null;
   var _currentRunId = null;
