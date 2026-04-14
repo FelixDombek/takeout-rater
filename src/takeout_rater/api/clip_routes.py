@@ -43,7 +43,7 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
-class _TagBody(BaseModel):
+class _AddTagRequest(BaseModel):
     term: str
 
 
@@ -61,7 +61,7 @@ def list_tags(
 
 @router.post("/api/clip/tags", status_code=201)
 def add_tag(
-    body: _TagBody,
+    body: _AddTagRequest,
     request: Request,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> JSONResponse:

@@ -639,7 +639,8 @@ def get_clip_words(
     user_tags = list_clip_user_tags(conn)
     user_tag_set = set(user_tags)
     # Filter out user tags that duplicate predefined terms to avoid overlap
-    novel_user_tags = [t for t in user_tags if t not in set(vocab_terms)]
+    vocab_terms_set = set(vocab_terms)
+    novel_user_tags = [t for t in user_tags if t not in vocab_terms_set]
 
     user_matrix_result = _get_user_tags_matrix(request, novel_user_tags)
 
