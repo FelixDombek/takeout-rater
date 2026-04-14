@@ -202,33 +202,84 @@
       <button class="btn btn-primary btn-run" id="btn-cluster" onclick="startJob('cluster')">Run Clustering</button>
     </div>
     <p class="desc">
-      Group near-duplicate photos using perceptual hashing (dhash). Requires scoring to have
-      been run first so that pHashes exist. Each run is saved independently so you can compare
-      results with different settings.
+      Group photos that are visually similar using either <strong>perceptual hashing</strong>
+      (dhash — finds near-duplicate images) or <strong>CLIP semantic embedding</strong>
+      (finds semantically similar images even when they look different, e.g. different crops
+      or angles of the same scene). Each run is saved independently so you can compare results
+      with different settings.
     </p>
+    <!-- Method selector -->
     <div class="job-options">
-      <label for="cluster-threshold"
-             title="Maximum Hamming distance (number of differing bits out of 256) for two images to be grouped together. Lower = only very similar images; higher = more permissive matching.">
-        Threshold (bits):
-      </label>
-      <input type="number" id="cluster-threshold" value="20" min="1" max="128" style="width:4rem;"
-             title="Hamming distance threshold: two images are considered near-duplicates if their 256-bit dhash values differ in at most this many bits. Lower values (e.g. 10) find only very close duplicates; higher values (e.g. 30) group more loosely similar shots.">
-      <label for="cluster-window"
-             title="Number of neighbouring images (sorted by hash value) to compare against. Larger = finds more near-duplicates but takes longer.">
-        Window:
-      </label>
-      <input type="number" id="cluster-window" value="200" min="10" max="1000" style="width:5rem;"
-             title="Sliding-window size over the sorted hash list. Each image is compared to up to this many neighbours. Increase if you have many very similar images spread far apart in hash space.">
-      <label for="cluster-minsize">Min&nbsp;size:</label>
-      <input type="number" id="cluster-minsize" value="2" min="2" max="20" style="width:4rem;">
+      <label for="cluster-method"><strong>Method:</strong></label>
+      <select id="cluster-method" onchange="onClusterMethodChange()" style="min-width:14rem;">
+        <option value="phash">pHash — perceptual hashing (near-duplicates)</option>
+        <option value="clip">CLIP — semantic embedding (cross-modal similarity)</option>
+      </select>
     </div>
-    <div class="job-options" style="margin-top:-0.2rem;">
-      <label for="cluster-single-linkage" style="cursor:pointer;"
-             title="When checked, two photos can end up in the same cluster even if they are far apart, as long as there is a chain of step-by-step similar images connecting them (single-linkage / chain clustering). This lets gradual progressions of similar shots stay together. When unchecked (default), every photo in a cluster must be within the threshold distance of every other photo in that cluster (complete-linkage).">
-        <input type="checkbox" id="cluster-single-linkage">
-        Single-linkage mode (allow chaining — images that gradually become less similar can still share a cluster)
-      </label>
+
+    <!-- pHash-specific options -->
+    <div id="phash-options">
+      <div class="job-options">
+        <label for="cluster-threshold"
+               title="Maximum Hamming distance (number of differing bits out of 256) for two images to be grouped together. Lower = only very similar images; higher = more permissive matching.">
+          Threshold (bits):
+        </label>
+        <input type="number" id="cluster-threshold" value="20" min="1" max="128" style="width:4rem;"
+               title="Hamming distance threshold: two images are considered near-duplicates if their 256-bit dhash values differ in at most this many bits. Lower values (e.g. 10) find only very close duplicates; higher values (e.g. 30) group more loosely similar shots.">
+        <label for="cluster-window"
+               title="Number of neighbouring images (sorted by hash value) to compare against. Larger = finds more near-duplicates but takes longer.">
+          Window:
+        </label>
+        <input type="number" id="cluster-window" value="200" min="10" max="1000" style="width:5rem;"
+               title="Sliding-window size over the sorted hash list. Each image is compared to up to this many neighbours. Increase if you have many very similar images spread far apart in hash space.">
+        <label for="cluster-minsize-phash">Min&nbsp;size:</label>
+        <input type="number" id="cluster-minsize-phash" value="2" min="2" max="20" style="width:4rem;">
+      </div>
+      <div class="job-options" style="margin-top:-0.2rem;">
+        <label for="cluster-single-linkage" style="cursor:pointer;"
+               title="When checked, two photos can end up in the same cluster even if they are far apart, as long as there is a chain of step-by-step similar images connecting them (single-linkage / chain clustering). This lets gradual progressions of similar shots stay together. When unchecked (default), every photo in a cluster must be within the threshold distance of every other photo in that cluster (complete-linkage).">
+          <input type="checkbox" id="cluster-single-linkage">
+          Single-linkage mode (allow chaining — images that gradually become less similar can still share a cluster)
+        </label>
+      </div>
     </div>
+
+    <!-- CLIP-specific options -->
+    <div id="clip-options" style="display:none;">
+      <div class="job-options">
+        <label for="clip-metric"><strong>Distance metric:</strong></label>
+        <select id="clip-metric" onchange="onClipMetricChange()" style="min-width:16rem;">
+          <option value="cosine">Cosine similarity (min similarity threshold)</option>
+          <option value="euclidean">Euclidean distance (max L2 distance in 768D space)</option>
+          <option value="combined">Angular distance (max angle between embeddings, radians)</option>
+        </select>
+      </div>
+      <div class="job-options">
+        <label for="clip-threshold" id="clip-threshold-label"
+               title="Cosine similarity threshold: two images are grouped together when their CLIP embeddings have cosine similarity ≥ this value. Range 0–1; typical values 0.80–0.95.">
+          Min cosine similarity:
+        </label>
+        <input type="number" id="clip-threshold" value="0.90" min="0" max="1" step="0.01" style="width:5rem;"
+               title="Threshold for the selected distance metric.">
+        <span id="clip-threshold-hint" style="font-size:0.8rem; color:#888;">range 0–1, default 0.90</span>
+      </div>
+      <div class="job-options">
+        <label for="cluster-minsize-clip">Min&nbsp;size:</label>
+        <input type="number" id="cluster-minsize-clip" value="2" min="2" max="20" style="width:4rem;">
+      </div>
+      <div class="job-options" style="margin-top:-0.2rem;">
+        <label for="clip-single-linkage" style="cursor:pointer;"
+               title="When checked, two photos can be in the same cluster even if their CLIP embeddings are dissimilar, as long as a chain of pairwise-similar images connects them (single-linkage). This lets gradual progressions of semantically related shots stay together. When unchecked (default), every photo pair in a cluster must satisfy the similarity threshold (complete-linkage).">
+          <input type="checkbox" id="clip-single-linkage">
+          Single-linkage mode (allow chaining — semantically drifting images can still share a cluster)
+        </label>
+      </div>
+      <p style="font-size:0.8rem; color:#888; margin-top:0.3rem;">
+        Requires CLIP embeddings to have been computed first (use the <strong>Embed</strong> job on
+        the <a href="/jobs">Jobs page</a>).
+      </p>
+    </div>
+
     <div class="progress-bar-wrap" id="prog-wrap-cluster"><div class="progress-bar" id="prog-bar-cluster"></div></div>
     <div class="job-current-item" id="current-item-cluster"></div>
     <div class="job-status" id="status-cluster"></div>
@@ -292,6 +343,11 @@
           <span class="run-badge run-badge-clusters">
             {{ run.n_clusters }} cluster{{ 's' if run.n_clusters != 1 else '' }}
           </span>
+          {% if run.method == "clip_embedding" %}
+          <span class="run-badge run-badge-params" title="CLIP semantic embedding clustering">🧠 CLIP</span>
+          {% else %}
+          <span class="run-badge run-badge-params" title="Perceptual hash clustering">🔑 pHash</span>
+          {% endif %}
           {% if run.params %}
             {% for k, v in run.params.items() %}
             <span class="run-badge run-badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
@@ -480,14 +536,48 @@
       .catch(function() { /* ignore */ });
   });
 
+  window.onClusterMethodChange = function() {
+    var method = document.getElementById('cluster-method').value;
+    document.getElementById('phash-options').style.display = method === 'phash' ? '' : 'none';
+    document.getElementById('clip-options').style.display  = method === 'clip'  ? '' : 'none';
+  };
+
+  // CLIP metric → update threshold label + hint
+  var _clipMetricDefaults = {
+    cosine:    { label: 'Min cosine similarity:', hint: 'range 0–1, default 0.90',   val: '0.90', min: '0',    max: '1',  step: '0.01' },
+    euclidean: { label: 'Max L2 distance:',       hint: 'range 0–2, default 0.45',   val: '0.45', min: '0',    max: '2',  step: '0.01' },
+    combined:  { label: 'Max angle (radians):',   hint: 'range 0–π≈3.14, default 0.46', val: '0.46', min: '0', max: '3.15', step: '0.01' }
+  };
+
+  window.onClipMetricChange = function() {
+    var metric = document.getElementById('clip-metric').value;
+    var cfg = _clipMetricDefaults[metric] || _clipMetricDefaults.cosine;
+    document.getElementById('clip-threshold-label').textContent = cfg.label;
+    document.getElementById('clip-threshold-hint').textContent  = cfg.hint;
+    var inp = document.getElementById('clip-threshold');
+    inp.value = cfg.val;
+    inp.min   = cfg.min;
+    inp.max   = cfg.max;
+    inp.step  = cfg.step;
+  };
+
   window.startJob = function(jobType) {
     var body = {};
 
     if (jobType === 'cluster') {
-      body.threshold = parseInt(document.getElementById('cluster-threshold').value, 10) || 20;
-      body.window    = parseInt(document.getElementById('cluster-window').value, 10) || 200;
-      body.min_size  = parseInt(document.getElementById('cluster-minsize').value, 10) || 2;
-      body.single_linkage = document.getElementById('cluster-single-linkage').checked;
+      var method = document.getElementById('cluster-method').value;
+      body.method = method;
+      if (method === 'clip') {
+        body.clip_metric    = document.getElementById('clip-metric').value;
+        body.clip_threshold = parseFloat(document.getElementById('clip-threshold').value) || 0.90;
+        body.min_size       = parseInt(document.getElementById('cluster-minsize-clip').value, 10) || 2;
+        body.single_linkage = document.getElementById('clip-single-linkage').checked;
+      } else {
+        body.threshold      = parseInt(document.getElementById('cluster-threshold').value, 10) || 20;
+        body.window         = parseInt(document.getElementById('cluster-window').value, 10) || 200;
+        body.min_size       = parseInt(document.getElementById('cluster-minsize-phash').value, 10) || 2;
+        body.single_linkage = document.getElementById('cluster-single-linkage').checked;
+      }
     } else if (jobType === 'export') {
       var exportScorer = document.getElementById('export-scorer').value;
       if (exportScorer) {
