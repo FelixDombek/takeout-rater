@@ -235,6 +235,9 @@ def _start_index_job(app: object, library_root: Path) -> None:
                     if p.current_dir and p.current_dir != "."
                     else ""
                 )
+            elif p.phase == "thumbnailing" and p.thumbs_total > 0:
+                done = p.thumbs_ok + p.thumbs_skip
+                msg = f"Thumbnailing\u2026 {done}\u202f/\u202f{p.thumbs_total}"
             else:
                 msg = "Scanning for photos\u2026"
             progress.message = msg

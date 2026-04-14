@@ -14,6 +14,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,11 +50,14 @@ class IndexProgress:
         thumbs_ok: Number of thumbnails successfully generated.
         thumbs_skip: Number of thumbnails skipped (already existed or error).
         phase: Current phase — ``"scanning"`` while :func:`scan_takeout` is
-            running; ``"indexing"`` once the DB-upsert loop has started.
+            running; ``"indexing"`` once the DB-upsert loop has started;
+            ``"thumbnailing"`` during parallel thumbnail generation.
         total_dirs: Total number of directories to scan (known after the fast
             first pass inside :func:`scan_takeout`).
         dirs_scanned: Number of directories fully processed so far.
         current_dir: Name of the directory most recently processed.
+        thumbs_total: Total number of thumbnails to generate in the
+            ``"thumbnailing"`` phase (0 until that phase begins).
     """
 
     running: bool = False
@@ -67,6 +71,7 @@ class IndexProgress:
     total_dirs: int = 0
     dirs_scanned: int = 0
     current_dir: str = ""
+    thumbs_total: int = 0
 
 
 def run_index(
@@ -145,10 +150,18 @@ def run_index(
     if generate_thumbs:
         thumbs_dir = library_state_dir(library_root) / "thumbs"
         thumbs_dir.mkdir(parents=True, exist_ok=True)
+        from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
+            generate_thumbnail,
+            thumb_path_for_id,
+        )
     else:
         thumbs_dir = None
 
     now = int(time.time())
+
+    # Work-list of (source_abspath, dest_thumb_path) for thumbnails that do
+    # not yet exist.  These are generated in parallel after the DB-upsert loop.
+    _thumb_work: list[tuple[Path, Path]] = []
 
     for asset_file in assets:
         progress.current_dir = os.path.dirname(asset_file.relpath)
@@ -205,23 +218,44 @@ def run_index(
         progress.indexed += 1
 
         if generate_thumbs and thumbs_dir is not None:
-            from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
-                generate_thumbnail,
-                thumb_path_for_id,
-            )
-
             thumb = thumb_path_for_id(thumbs_dir, asset_id)
             if not thumb.exists():
-                try:
-                    generate_thumbnail(asset_file.abspath, thumb)
-                    progress.thumbs_ok += 1
-                except (ImportError, OSError):
-                    progress.thumbs_skip += 1
+                _thumb_work.append((asset_file.abspath, thumb))
             else:
                 progress.thumbs_skip += 1
 
         if on_progress:
             on_progress(progress)
+
+    # ── Parallel thumbnail generation ────────────────────────────────────────
+    # Now that every asset has an ID (and therefore a deterministic thumbnail
+    # path), generate missing thumbnails using a thread pool so all available
+    # CPU cores are utilised.
+    if _thumb_work:
+        progress.phase = "thumbnailing"
+        progress.thumbs_total = len(_thumb_work)
+        if on_progress:
+            on_progress(progress)
+
+        num_workers = os.cpu_count() or 1
+
+        def _do_thumb(src_dst: tuple[Path, Path]) -> bool:
+            src, dst = src_dst
+            try:
+                generate_thumbnail(src, dst)
+                return True
+            except (ImportError, OSError):
+                return False
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = [executor.submit(_do_thumb, item) for item in _thumb_work]
+            for future in as_completed(futures):
+                if future.result():
+                    progress.thumbs_ok += 1
+                else:
+                    progress.thumbs_skip += 1
+                if on_progress:
+                    on_progress(progress)
 
     progress.running = False
     progress.done = True
