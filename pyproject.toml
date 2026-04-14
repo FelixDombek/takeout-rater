@@ -30,6 +30,11 @@ dependencies = [
     "pyiqa>=0.1.12",
     # HEIC image support
     "pillow-heif>=0.16",
+    # Facial detection & recognition (InsightFace + ONNX Runtime)
+    "insightface>=0.7",
+    "onnxruntime>=1.17",
+    # Clustering (DBSCAN for face embeddings)
+    "scikit-learn>=1.4",
 ]
 
 [project.optional-dependencies]

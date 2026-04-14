@@ -177,6 +177,56 @@
     <div class="job-current-item" id="current-item-rehash"></div>
     <div class="job-status" id="status-rehash"></div>
   </div>
+
+  <!-- ── Face Detection ─────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-detect_faces">
+    <div class="job-card-header">
+      <h2>👤 Detect Faces</h2>
+      <span class="badge-running" id="badge-detect_faces" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-detect_faces" onclick="startJob('detect_faces')">Run Detection</button>
+    </div>
+    <p class="desc">
+      Detect faces in all indexed photos using <strong>InsightFace</strong> (SCRFD detector +
+      ArcFace recognition). Produces 512-d identity embeddings for each detected face.
+      Results are stored for subsequent person-grouping via clustering.
+      <br><em>⚠ License:</em> The <code>buffalo_l</code> model is CC BY-NC 4.0 (non-commercial).
+    </p>
+    <div class="job-options">
+      <label for="face-model">Model:</label>
+      <select id="face-model">
+        <option value="buffalo_l">buffalo_l (best accuracy, ~350 MB)</option>
+        <option value="buffalo_sc">buffalo_sc (smaller, faster)</option>
+      </select>
+      <label for="face-det-thresh">Min confidence:</label>
+      <input type="number" id="face-det-thresh" value="0.5" min="0.1" max="1.0" step="0.05" style="width:70px;">
+    </div>
+    <div class="progress-bar-wrap" id="prog-wrap-detect_faces"><div class="progress-bar" id="prog-bar-detect_faces"></div></div>
+    <div class="job-current-item" id="current-item-detect_faces"></div>
+    <div class="job-status" id="status-detect_faces"></div>
+  </div>
+
+  <!-- ── Cluster Faces ──────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-cluster_faces">
+    <div class="job-card-header">
+      <h2>👥 Cluster Faces</h2>
+      <span class="badge-running" id="badge-cluster_faces" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-cluster_faces" onclick="startJob('cluster_faces')">Run Clustering</button>
+    </div>
+    <p class="desc">
+      Group detected faces into <strong>person groups</strong> using DBSCAN clustering with
+      cosine distance on ArcFace embeddings. Requires a completed Face Detection run.
+      View results on the <a href="/faces">Faces</a> page.
+    </p>
+    <div class="job-options">
+      <label for="face-eps">DBSCAN eps:</label>
+      <input type="number" id="face-eps" value="0.5" min="0.1" max="1.5" step="0.05" style="width:70px;">
+      <label for="face-min-samples">Min samples:</label>
+      <input type="number" id="face-min-samples" value="2" min="1" max="20" step="1" style="width:60px;">
+    </div>
+    <div class="progress-bar-wrap" id="prog-wrap-cluster_faces"><div class="progress-bar" id="prog-bar-cluster_faces"></div></div>
+    <div class="job-current-item" id="current-item-cluster_faces"></div>
+    <div class="job-status" id="status-cluster_faces"></div>
+  </div>
 </div>
 
 <script>
@@ -327,6 +377,12 @@
       body.rehash_all = document.getElementById('rehash-all').checked;
     } else if (jobType === 'rescan') {
       body.mode = document.getElementById('rescan-mode').value;
+    } else if (jobType === 'detect_faces') {
+      body.model_pack = document.getElementById('face-model').value;
+      body.det_thresh = parseFloat(document.getElementById('face-det-thresh').value) || 0.5;
+    } else if (jobType === 'cluster_faces') {
+      body.eps = parseFloat(document.getElementById('face-eps').value) || 0.5;
+      body.min_samples = parseInt(document.getElementById('face-min-samples').value) || 2;
     }
 
     setBtn(jobType, true);
