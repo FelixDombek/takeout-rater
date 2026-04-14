@@ -24,6 +24,7 @@ from pathlib import Path
 from takeout_rater.db.queries import (
     bulk_insert_asset_scores,
     finish_scorer_run,
+    get_latest_scorer_run_id,
     insert_scorer_run,
     list_asset_ids_without_score,
 )
@@ -150,6 +151,16 @@ def run_scorer(
             # Score all assets by streaming IDs directly from the DB to avoid
             # materializing full AssetRow objects or all IDs in memory.
             stream_all_assets = True
+
+    # When skip_existing=True produced an empty work list it means every asset
+    # already has a score from the current scorer version.  Creating a new
+    # (empty) scorer_run record would make it the "latest finished run", hiding
+    # all existing scores from browse queries.  Return the existing run id
+    # instead so that callers see the already-scored data unchanged.
+    if asset_ids is not None and len(asset_ids) == 0:
+        existing_run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
+        if existing_run_id is not None:
+            return existing_run_id
 
     # Create scorer run record
     run_id = insert_scorer_run(conn, scorer_id, variant_id, scorer_version=spec.version)
