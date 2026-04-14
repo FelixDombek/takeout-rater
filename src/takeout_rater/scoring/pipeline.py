@@ -157,7 +157,7 @@ def run_scorer(
     # (empty) scorer_run record would make it the "latest finished run", hiding
     # all existing scores from browse queries.  Return the existing run id
     # instead so that callers see the already-scored data unchanged.
-    if asset_ids is not None and len(asset_ids) == 0:
+    if asset_ids is not None and not asset_ids:
         existing_run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
         if existing_run_id is not None:
             return existing_run_id

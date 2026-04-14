@@ -149,13 +149,18 @@ def test_skip_existing_does_not_hide_scores_from_browse(tmp_path: Path) -> None:
     _make_thumbnail(thumbs_dir, asset_id)
 
     scorer = SimpleScorer.create(variant_id="blur")
+    spec = scorer.spec()
+    scorer_id = spec.scorer_id
+    metric_key = spec.metrics[0].key
     run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
     # Second run — simulates clicking "Score" again from the UI
     run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
 
-    results = list_assets_by_score(conn, "simple", "sharpness", variant_id="blur")
+    results = list_assets_by_score(conn, scorer_id, metric_key, variant_id="blur")
     assert len(results) == 1, "Scores should still be visible after a second skip_existing=True run"
 
+
+def test_run_scorer_rerun(tmp_path: Path) -> None:
     """skip_existing=False should re-score even existing assets."""
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
