@@ -9,17 +9,15 @@ from pathlib import Path
 import pytest
 
 from takeout_rater.db.queries import (
-    bulk_insert_asset_scores,
     count_assets_with_score,
-    finish_scorer_run,
     get_asset_scores,
-    get_latest_scorer_run_id,
     get_phash,
-    insert_scorer_run,
+    has_scores_for,
     list_asset_ids_without_phash,
     list_asset_ids_without_score,
     list_assets_by_score,
     upsert_asset,
+    upsert_asset_scores,
     upsert_phash,
 )
 from takeout_rater.db.schema import migrate
@@ -49,123 +47,88 @@ def _add_asset(conn: sqlite3.Connection, relpath: str = "Photos/img.jpg") -> int
     )
 
 
-# ── insert_scorer_run ─────────────────────────────────────────────────────────
+def _insert_scores(
+    conn: sqlite3.Connection,
+    scorer_id: str,
+    variant_id: str,
+    scores: list[tuple[int, str, float]],
+    *,
+    scorer_version: str | None = None,
+) -> None:
+    """Helper: insert scores using the new upsert function."""
+    upsert_asset_scores(conn, scorer_id, variant_id, scores, scorer_version=scorer_version)
 
 
-def test_insert_scorer_run_returns_int() -> None:
-    conn = _open_in_memory()
-    run_id = insert_scorer_run(conn, "blur", "default")
-    assert isinstance(run_id, int)
-    assert run_id > 0
+# ── upsert_asset_scores ──────────────────────────────────────────────────────
 
 
-def test_insert_scorer_run_sets_started_at() -> None:
-    conn = _open_in_memory()
-    before = int(time.time())
-    run_id = insert_scorer_run(conn, "blur", "default")
-    after = int(time.time())
-    row = conn.execute(
-        "SELECT started_at, finished_at FROM scorer_runs WHERE id = ?", (run_id,)
-    ).fetchone()
-    assert row is not None
-    assert before <= row["started_at"] <= after
-    assert row["finished_at"] is None
-
-
-def test_insert_scorer_run_with_version() -> None:
-    conn = _open_in_memory()
-    run_id = insert_scorer_run(conn, "blur", "default", scorer_version="1.0.0")
-    row = conn.execute("SELECT scorer_version FROM scorer_runs WHERE id = ?", (run_id,)).fetchone()
-    assert row["scorer_version"] == "1.0.0"
-
-
-# ── finish_scorer_run ─────────────────────────────────────────────────────────
-
-
-def test_finish_scorer_run_sets_finished_at() -> None:
-    conn = _open_in_memory()
-    run_id = insert_scorer_run(conn, "blur", "default")
-    before = int(time.time())
-    finish_scorer_run(conn, run_id)
-    after = int(time.time())
-    row = conn.execute("SELECT finished_at FROM scorer_runs WHERE id = ?", (run_id,)).fetchone()
-    assert row is not None
-    assert before <= row["finished_at"] <= after
-
-
-# ── bulk_insert_asset_scores ──────────────────────────────────────────────────
-
-
-def test_bulk_insert_asset_scores_writes_rows() -> None:
+def test_upsert_asset_scores_writes_rows() -> None:
     conn = _open_in_memory()
     asset_id = _add_asset(conn)
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run_id, [(asset_id, "sharpness", 42.5)])
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 42.5)])
     row = conn.execute(
-        "SELECT value FROM asset_scores WHERE asset_id = ? AND scorer_run_id = ?",
-        (asset_id, run_id),
+        "SELECT value FROM asset_scores WHERE asset_id = ? AND scorer_id = ? AND metric_key = ?",
+        (asset_id, "blur", "sharpness"),
     ).fetchone()
     assert row is not None
     assert row["value"] == pytest.approx(42.5)
 
 
-def test_bulk_insert_asset_scores_ignores_duplicates() -> None:
+def test_upsert_asset_scores_overwrites_on_repeat() -> None:
     conn = _open_in_memory()
     asset_id = _add_asset(conn)
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run_id, [(asset_id, "sharpness", 10.0)])
-    # Inserting the same row again must not raise
-    bulk_insert_asset_scores(conn, run_id, [(asset_id, "sharpness", 20.0)])
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 10.0)])
+    # Inserting the same key again must overwrite (INSERT OR REPLACE)
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 20.0)])
     count = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
-    assert count == 1  # first value preserved
+    assert count == 1
+    row = conn.execute("SELECT value FROM asset_scores WHERE asset_id = ?", (asset_id,)).fetchone()
+    assert row["value"] == pytest.approx(20.0)
 
 
-def test_bulk_insert_asset_scores_new_run_overwrites_old() -> None:
-    """Scores from a new run replace those from a previous run of the same scorer."""
+def test_upsert_asset_scores_rescoring_overwrites() -> None:
+    """Re-scoring the same asset should overwrite the previous value."""
     conn = _open_in_memory()
     asset_id = _add_asset(conn)
-    run1 = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run1, [(asset_id, "sharpness", 10.0)])
-    finish_scorer_run(conn, run1)
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 10.0)])
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 99.0)])
 
-    run2 = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run2, [(asset_id, "sharpness", 99.0)])
-    finish_scorer_run(conn, run2)
-
-    # Only the run2 score should survive in asset_scores
     total = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
     assert total == 1
-    row = conn.execute("SELECT value FROM asset_scores WHERE scorer_run_id = ?", (run2,)).fetchone()
+    row = conn.execute("SELECT value FROM asset_scores WHERE asset_id = ?", (asset_id,)).fetchone()
     assert row is not None
     assert row["value"] == pytest.approx(99.0)
 
 
-def test_get_asset_scores_no_duplicates_across_runs() -> None:
-    """get_asset_scores returns one score per metric even across multiple runs."""
-    conn = _open_in_memory()
-    asset_id = _add_asset(conn)
-
-    run1 = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run1, [(asset_id, "sharpness", 10.0)])
-    finish_scorer_run(conn, run1)
-
-    run2 = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run2, [(asset_id, "sharpness", 99.0)])
-    finish_scorer_run(conn, run2)
-
-    scores = get_asset_scores(conn, asset_id)
-    assert len(scores) == 1
-    assert scores[0]["value"] == pytest.approx(99.0)
-
-
-def test_bulk_insert_asset_scores_multiple() -> None:
+def test_upsert_asset_scores_multiple() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
-    run_id = insert_scorer_run(conn, "blur", "default")
     scores = [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
-    bulk_insert_asset_scores(conn, run_id, scores)
+    _insert_scores(conn, "blur", "default", scores)
     count = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
     assert count == 3
+
+
+def test_upsert_asset_scores_stores_version() -> None:
+    conn = _open_in_memory()
+    asset_id = _add_asset(conn)
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 1.0)], scorer_version="2.0")
+    row = conn.execute(
+        "SELECT scorer_version FROM asset_scores WHERE asset_id = ?", (asset_id,)
+    ).fetchone()
+    assert row["scorer_version"] == "2.0"
+
+
+def test_upsert_asset_scores_stores_scored_at() -> None:
+    conn = _open_in_memory()
+    asset_id = _add_asset(conn)
+    before = int(time.time())
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 1.0)])
+    after = int(time.time())
+    row = conn.execute(
+        "SELECT scored_at FROM asset_scores WHERE asset_id = ?", (asset_id,)
+    ).fetchone()
+    assert before <= row["scored_at"] <= after
 
 
 # ── get_asset_scores ──────────────────────────────────────────────────────────
@@ -177,16 +140,10 @@ def test_get_asset_scores_empty() -> None:
     assert get_asset_scores(conn, asset_id) == []
 
 
-def test_get_asset_scores_returns_finished_runs_only() -> None:
+def test_get_asset_scores_returns_all_scores() -> None:
     conn = _open_in_memory()
     asset_id = _add_asset(conn)
-    # Unfinished run — should NOT appear
-    run_open = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run_open, [(asset_id, "sharpness", 1.0)])
-    # Finished run — SHOULD appear
-    run_done = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run_done, [(asset_id, "sharpness", 55.0)])
-    finish_scorer_run(conn, run_done)
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 55.0)])
 
     scores = get_asset_scores(conn, asset_id)
     assert len(scores) == 1
@@ -198,41 +155,31 @@ def test_get_asset_scores_returns_finished_runs_only() -> None:
 def test_get_asset_scores_multiple_metrics() -> None:
     conn = _open_in_memory()
     asset_id = _add_asset(conn)
-    run_id = insert_scorer_run(conn, "multi", "default")
-    bulk_insert_asset_scores(conn, run_id, [(asset_id, "alpha", 1.0), (asset_id, "beta", 2.0)])
-    finish_scorer_run(conn, run_id)
+    _insert_scores(conn, "multi", "default", [(asset_id, "alpha", 1.0), (asset_id, "beta", 2.0)])
     scores = get_asset_scores(conn, asset_id)
     keys = {s["metric_key"] for s in scores}
     assert keys == {"alpha", "beta"}
 
 
-# ── get_latest_scorer_run_id ──────────────────────────────────────────────────
+# ── has_scores_for ────────────────────────────────────────────────────────────
 
 
-def test_get_latest_scorer_run_id_none_when_no_runs() -> None:
+def test_has_scores_for_false_when_no_scores() -> None:
     conn = _open_in_memory()
-    assert get_latest_scorer_run_id(conn, "blur", "default") is None
+    assert has_scores_for(conn, "blur", "default") is False
 
 
-def test_get_latest_scorer_run_id_none_when_not_finished() -> None:
+def test_has_scores_for_true_after_scoring() -> None:
     conn = _open_in_memory()
-    insert_scorer_run(conn, "blur", "default")
-    assert get_latest_scorer_run_id(conn, "blur", "default") is None
-
-
-def test_get_latest_scorer_run_id_returns_most_recent() -> None:
-    conn = _open_in_memory()
-    run1 = insert_scorer_run(conn, "blur", "default")
-    finish_scorer_run(conn, run1)
-    run2 = insert_scorer_run(conn, "blur", "default")
-    finish_scorer_run(conn, run2)
-    assert get_latest_scorer_run_id(conn, "blur", "default") == run2
+    asset_id = _add_asset(conn)
+    _insert_scores(conn, "blur", "default", [(asset_id, "sharpness", 1.0)])
+    assert has_scores_for(conn, "blur", "default") is True
 
 
 # ── list_assets_by_score ──────────────────────────────────────────────────────
 
 
-def test_list_assets_by_score_empty_when_no_runs() -> None:
+def test_list_assets_by_score_empty_when_no_scores() -> None:
     conn = _open_in_memory()
     _add_asset(conn)
     result = list_assets_by_score(conn, "blur", "sharpness", "default")
@@ -242,13 +189,12 @@ def test_list_assets_by_score_empty_when_no_runs() -> None:
 def test_list_assets_by_score_ordered_descending() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
+    _insert_scores(
         conn,
-        run_id,
+        "blur",
+        "default",
         [(ids[0], "sharpness", 10.0), (ids[1], "sharpness", 80.0), (ids[2], "sharpness", 50.0)],
     )
-    finish_scorer_run(conn, run_id)
 
     pairs = list_assets_by_score(conn, "blur", "sharpness", "default")
     scores = [s for _, s in pairs]
@@ -258,13 +204,12 @@ def test_list_assets_by_score_ordered_descending() -> None:
 def test_list_assets_by_score_ordered_ascending() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
+    _insert_scores(
         conn,
-        run_id,
+        "blur",
+        "default",
         [(ids[0], "sharpness", 10.0), (ids[1], "sharpness", 80.0), (ids[2], "sharpness", 50.0)],
     )
-    finish_scorer_run(conn, run_id)
 
     pairs = list_assets_by_score(conn, "blur", "sharpness", "default", descending=False)
     scores = [s for _, s in pairs]
@@ -274,11 +219,9 @@ def test_list_assets_by_score_ordered_ascending() -> None:
 def test_list_assets_by_score_pagination() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
 
     page1 = list_assets_by_score(conn, "blur", "sharpness", "default", limit=3, offset=0)
     page2 = list_assets_by_score(conn, "blur", "sharpness", "default", limit=3, offset=3)
@@ -289,7 +232,7 @@ def test_list_assets_by_score_pagination() -> None:
 # ── count_assets_with_score ───────────────────────────────────────────────────
 
 
-def test_count_assets_with_score_zero_no_runs() -> None:
+def test_count_assets_with_score_zero_no_scores() -> None:
     conn = _open_in_memory()
     _add_asset(conn)
     assert count_assets_with_score(conn, "blur", "sharpness", "default") == 0
@@ -298,22 +241,18 @@ def test_count_assets_with_score_zero_no_runs() -> None:
 def test_count_assets_with_score_correct() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(4)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     assert count_assets_with_score(conn, "blur", "sharpness", "default") == 4
 
 
 def test_count_assets_with_score_min_filter() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     # scores: 0, 10, 20, 30, 40 — only those >= 20 pass
     assert count_assets_with_score(conn, "blur", "sharpness", "default", min_score=20.0) == 3
 
@@ -321,11 +260,9 @@ def test_count_assets_with_score_min_filter() -> None:
 def test_count_assets_with_score_max_filter() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     # scores: 0, 10, 20, 30, 40 — only those <= 20 pass
     assert count_assets_with_score(conn, "blur", "sharpness", "default", max_score=20.0) == 3
 
@@ -333,11 +270,9 @@ def test_count_assets_with_score_max_filter() -> None:
 def test_count_assets_with_score_min_max_range() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     # scores: 0, 10, 20, 30, 40 — only 10, 20, 30 fall in [10, 30]
     assert (
         count_assets_with_score(
@@ -353,11 +288,9 @@ def test_count_assets_with_score_min_max_range() -> None:
 def test_list_assets_by_score_min_filter() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(4)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     # scores: 0, 20, 40, 60 — min_score=40 keeps 40 and 60
     pairs = list_assets_by_score(conn, "blur", "sharpness", "default", min_score=40.0)
     scores = [s for _, s in pairs]
@@ -368,11 +301,9 @@ def test_list_assets_by_score_min_filter() -> None:
 def test_list_assets_by_score_max_filter() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(4)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     # scores: 0, 20, 40, 60 — max_score=20 keeps 0 and 20
     pairs = list_assets_by_score(conn, "blur", "sharpness", "default", max_score=20.0)
     scores = [s for _, s in pairs]
@@ -383,11 +314,9 @@ def test_list_assets_by_score_max_filter() -> None:
 def test_list_assets_by_score_range_filter() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(5)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "blur", "default", [(aid, "sharpness", float(i * 10)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     # scores: 0, 10, 20, 30, 40 — range [10, 30] keeps 10, 20, 30
     pairs = list_assets_by_score(
         conn, "blur", "sharpness", "default", min_score=10.0, max_score=30.0
@@ -398,17 +327,15 @@ def test_list_assets_by_score_range_filter() -> None:
 
 
 def test_list_assets_by_score_non_default_variant() -> None:
-    """Run with a non-'default' variant_id should be found by passing it explicitly."""
+    """Scores with a non-'default' variant_id should be found by passing it explicitly."""
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
-    # Use a non-default variant_id (like the real SimpleScorer "blur" variant)
-    run_id = insert_scorer_run(conn, "simple", "blur")
-    bulk_insert_asset_scores(
+    _insert_scores(
         conn,
-        run_id,
+        "simple",
+        "blur",
         [(ids[0], "sharpness", 10.0), (ids[1], "sharpness", 80.0), (ids[2], "sharpness", 50.0)],
     )
-    finish_scorer_run(conn, run_id)
 
     pairs = list_assets_by_score(conn, "simple", "sharpness", "blur")
     assert len(pairs) == 3
@@ -420,11 +347,9 @@ def test_count_assets_with_score_non_default_variant() -> None:
     """Count should work for non-'default' variant_id when passed explicitly."""
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(4)]
-    run_id = insert_scorer_run(conn, "simple", "blur")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i)) for i, aid in enumerate(ids)]
+    _insert_scores(
+        conn, "simple", "blur", [(aid, "sharpness", float(i)) for i, aid in enumerate(ids)]
     )
-    finish_scorer_run(conn, run_id)
     assert count_assets_with_score(conn, "simple", "sharpness", "blur") == 4
 
 
@@ -489,9 +414,7 @@ def test_list_asset_ids_without_score_all_missing() -> None:
 def test_list_asset_ids_without_score_after_scoring() -> None:
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(3)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(conn, run_id, [(ids[0], "sharpness", 1.0)])
-    finish_scorer_run(conn, run_id)
+    _insert_scores(conn, "blur", "default", [(ids[0], "sharpness", 1.0)])
     missing = list_asset_ids_without_score(conn, "blur", "default", "sharpness")
     assert ids[0] not in missing
     assert ids[1] in missing
@@ -502,9 +425,7 @@ def test_list_asset_ids_without_score_version_match_excludes_scored() -> None:
     """Assets scored with the current version are not re-queued."""
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(2)]
-    run_id = insert_scorer_run(conn, "blur", "default", scorer_version="2")
-    bulk_insert_asset_scores(conn, run_id, [(ids[0], "sharpness", 5.0)])
-    finish_scorer_run(conn, run_id)
+    _insert_scores(conn, "blur", "default", [(ids[0], "sharpness", 5.0)], scorer_version="2")
     missing = list_asset_ids_without_score(conn, "blur", "default", "sharpness", scorer_version="2")
     assert ids[0] not in missing
     assert ids[1] in missing
@@ -514,10 +435,13 @@ def test_list_asset_ids_without_score_stale_version_requeued() -> None:
     """Assets scored with an old version are treated as needing a rescore."""
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(2)]
-    # Score both assets under the old version "1"
-    run_id = insert_scorer_run(conn, "blur", "default", scorer_version="1")
-    bulk_insert_asset_scores(conn, run_id, [(ids[0], "sharpness", 3.0), (ids[1], "sharpness", 7.0)])
-    finish_scorer_run(conn, run_id)
+    _insert_scores(
+        conn,
+        "blur",
+        "default",
+        [(ids[0], "sharpness", 3.0), (ids[1], "sharpness", 7.0)],
+        scorer_version="1",
+    )
     # Both assets should be re-queued when the current version is "2"
     missing = list_asset_ids_without_score(conn, "blur", "default", "sharpness", scorer_version="2")
     assert ids[0] in missing
@@ -525,12 +449,10 @@ def test_list_asset_ids_without_score_stale_version_requeued() -> None:
 
 
 def test_list_asset_ids_without_score_no_version_ignores_scorer_version() -> None:
-    """When scorer_version=None, any finished run counts (backward-compat)."""
+    """When scorer_version=None, any existing score counts (backward-compat)."""
     conn = _open_in_memory()
     ids = [_add_asset(conn, f"p/{i}.jpg") for i in range(2)]
-    run_id = insert_scorer_run(conn, "blur", "default", scorer_version="1")
-    bulk_insert_asset_scores(conn, run_id, [(ids[0], "sharpness", 3.0)])
-    finish_scorer_run(conn, run_id)
+    _insert_scores(conn, "blur", "default", [(ids[0], "sharpness", 3.0)], scorer_version="1")
     # No version filter: ids[0] is already scored, regardless of version
     missing = list_asset_ids_without_score(conn, "blur", "default", "sharpness")
     assert ids[0] not in missing

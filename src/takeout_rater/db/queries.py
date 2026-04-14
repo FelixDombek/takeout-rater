@@ -669,8 +669,7 @@ def has_scores_for(
         ``True`` if at least one score row exists.
     """
     row = conn.execute(
-        "SELECT 1 FROM asset_scores"
-        " WHERE scorer_id = ? AND variant_id = ? LIMIT 1",
+        "SELECT 1 FROM asset_scores WHERE scorer_id = ? AND variant_id = ? LIMIT 1",
         (scorer_id, variant_id),
     ).fetchone()
     return row is not None

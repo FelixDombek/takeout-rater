@@ -12,7 +12,6 @@ import pytest
 
 from takeout_rater.db.queries import (
     get_asset_scores,
-    get_latest_scorer_run_id,
     list_assets_by_score,
     upsert_asset,
 )
@@ -66,19 +65,9 @@ def test_run_scorer_returns_int(tmp_path: Path) -> None:
     conn = _open_in_memory()
     _add_asset(conn)
     scorer = SimpleScorer.create(variant_id="blur")
-    run_id = run_scorer(conn, scorer, tmp_path / "thumbs")
-    assert isinstance(run_id, int)
-    assert run_id > 0
-
-
-def test_run_scorer_creates_finished_run(tmp_path: Path) -> None:
-    conn = _open_in_memory()
-    _add_asset(conn)
-    scorer = SimpleScorer.create(variant_id="blur")
-    run_id = run_scorer(conn, scorer, tmp_path / "thumbs")
-    row = conn.execute("SELECT finished_at FROM scorer_runs WHERE id = ?", (run_id,)).fetchone()
-    assert row is not None
-    assert row["finished_at"] is not None
+    num_scored = run_scorer(conn, scorer, tmp_path / "thumbs")
+    assert isinstance(num_scored, int)
+    assert num_scored >= 0
 
 
 def test_run_scorer_writes_scores_when_thumb_present(tmp_path: Path) -> None:
@@ -109,39 +98,31 @@ def test_run_scorer_skips_missing_thumbnails(tmp_path: Path) -> None:
 
 
 def test_run_scorer_skip_existing_true(tmp_path: Path) -> None:
-    """Second run with skip_existing=True should reuse the existing run id.
-
-    When all assets are already scored, creating a fresh empty scorer_run and
-    making it the "latest finished run" would shadow the real scores in browse
-    queries.  The pipeline should detect the empty work list and return the
-    existing run id instead.
-    """
+    """Second run with skip_existing=True should not re-score already-scored assets."""
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
     scorer = SimpleScorer.create(variant_id="blur")
-    run_id1 = run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
-    run_id2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
+    num1 = run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
+    num2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
 
-    # Second run should reuse the first run id (no new empty run created).
-    assert run_id2 == run_id1
+    # Second run should score 0 new assets (all already scored)
+    assert num1 == 1
+    assert num2 == 0
 
-    # The latest run should still have the original scores.
-    count = conn.execute(
-        "SELECT COUNT(*) FROM asset_scores WHERE scorer_run_id = ?", (run_id1,)
-    ).fetchone()[0]
+    # Only one score row should exist
+    count = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
     assert count == 1
 
 
 def test_skip_existing_does_not_hide_scores_from_browse(tmp_path: Path) -> None:
     """Regression: re-running with skip_existing=True must not hide existing scores.
 
-    Before the fix, the second run created an empty scorer_run record and
-    finished it, making it the "latest finished run".  list_assets_by_score
-    then joined against that empty run and returned no results, even though
-    scores existed in the DB.
+    This was the original bug: the old scorer_runs model created an empty
+    "latest finished run" that shadowed real scores.  With the new flat model,
+    scores are always directly visible.
     """
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"
@@ -169,12 +150,12 @@ def test_run_scorer_rerun(tmp_path: Path) -> None:
 
     scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir, skip_existing=False)
-    run_id2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=False)
+    num2 = run_scorer(conn, scorer, thumbs_dir, skip_existing=False)
 
-    count = conn.execute(
-        "SELECT COUNT(*) FROM asset_scores WHERE scorer_run_id = ?", (run_id2,)
-    ).fetchone()[0]
-    assert count == 1
+    # Second run should have re-scored the asset
+    assert num2 == 1
+    count = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
+    assert count == 1  # overwritten, not duplicated
 
 
 def test_run_scorer_progress_callback(tmp_path: Path) -> None:
@@ -206,10 +187,7 @@ def test_run_scorer_explicit_asset_ids(tmp_path: Path) -> None:
     # Only score the first asset
     run_scorer(conn, scorer, thumbs_dir, asset_ids=[ids[0]])
 
-    run_id = get_latest_scorer_run_id(conn, "simple", "blur")
-    count = conn.execute(
-        "SELECT COUNT(*) FROM asset_scores WHERE scorer_run_id = ?", (run_id,)
-    ).fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
     assert count == 1
 
 
@@ -228,8 +206,8 @@ def test_run_scorer_by_id_simple_blur_variant(tmp_path: Path) -> None:
     asset_id = _add_asset(conn)
     _make_thumbnail(thumbs_dir, asset_id)
 
-    run_id = run_scorer_by_id(conn, "simple", thumbs_dir, variant_id="blur")
-    assert isinstance(run_id, int)
+    num_scored = run_scorer_by_id(conn, "simple", thumbs_dir, variant_id="blur")
+    assert isinstance(num_scored, int)
 
     scores = get_asset_scores(conn, asset_id)
     assert len(scores) == 1

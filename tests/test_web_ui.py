@@ -368,19 +368,16 @@ def test_browse_page_has_clusters_nav_link(client: TestClient) -> None:
 
 @pytest.fixture()
 def client_with_scores(tmp_path: Path) -> TestClient:
-    from takeout_rater.db.queries import (  # noqa: PLC0415
-        bulk_insert_asset_scores,
-        finish_scorer_run,
-        insert_scorer_run,
-    )
+    from takeout_rater.db.queries import upsert_asset_scores  # noqa: PLC0415
 
     conn = _make_db()
     ids = [_add_asset(conn, f"Photos/img{i}.jpg") for i in range(5)]
-    run_id = insert_scorer_run(conn, "blur", "default")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    upsert_asset_scores(
+        conn,
+        "blur",
+        "default",
+        [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)],
     )
-    finish_scorer_run(conn, run_id)
     app = create_app(tmp_path, conn)
     return TestClient(app, follow_redirects=True)
 
@@ -445,11 +442,11 @@ def test_browse_invalid_score_returns_200(client_with_scores: TestClient) -> Non
 
 
 def test_sort_options_only_include_scored_metrics(tmp_path: Path) -> None:
-    """Sort dropdown should only list metrics that have completed scorer runs."""
+    """Sort dropdown should only list metrics that have scores."""
     conn = _make_db()
     for i in range(3):
         _add_asset(conn, f"Photos/img{i}.jpg")
-    # No scorer runs have been finished — dropdown should have no scorer options
+    # No scores at all — dropdown should have no scorer options
     app = create_app(tmp_path, conn)
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets")
@@ -459,21 +456,17 @@ def test_sort_options_only_include_scored_metrics(tmp_path: Path) -> None:
 
 
 def test_sort_options_appear_after_scoring(tmp_path: Path) -> None:
-    """Sort dropdown should include metrics once a scorer run has completed."""
-    from takeout_rater.db.queries import (  # noqa: PLC0415
-        bulk_insert_asset_scores,
-        finish_scorer_run,
-        insert_scorer_run,
-    )
+    """Sort dropdown should include metrics once scores exist."""
+    from takeout_rater.db.queries import upsert_asset_scores  # noqa: PLC0415
 
     conn = _make_db()
     ids = [_add_asset(conn, f"Photos/img{i}.jpg") for i in range(3)]
-    # Use scorer_id "simple" matching the real BlurScorer spec
-    run_id = insert_scorer_run(conn, "simple", "blur")
-    bulk_insert_asset_scores(
-        conn, run_id, [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)]
+    upsert_asset_scores(
+        conn,
+        "simple",
+        "blur",
+        [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)],
     )
-    finish_scorer_run(conn, run_id)
     app = create_app(tmp_path, conn)
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets")

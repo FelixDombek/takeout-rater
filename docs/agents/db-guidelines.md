@@ -13,8 +13,8 @@
 
 | Object | Convention | Example |
 |---|---|---|
-| Table | `snake_case`, plural | `assets`, `scorer_runs`, `asset_scores` |
-| Column | `snake_case` | `taken_at`, `scorer_run_id` |
+| Table | `snake_case`, plural | `assets`, `asset_scores` |
+| Column | `snake_case` | `taken_at`, `scorer_id` |
 | Index | `idx_<table>_<column(s)>` | `idx_asset_scores_asset_id` |
 | Foreign key | `fk_<table>_<ref_table>` | `fk_asset_scores_assets` |
 
@@ -37,7 +37,7 @@
 
 ### Score storage
 
-- Scores are stored as normalised rows in `asset_scores`: `(asset_id, scorer_run_id, metric_key, value)`.
+- Scores are stored as normalised rows in `asset_scores`: `(asset_id, scorer_id, variant_id, metric_key, value)`.
 - Never store scores in columns on the `assets` table.
 - This allows adding new scorers without schema migrations.
 
@@ -117,23 +117,15 @@ CREATE TABLE assets (
     indexer_version         INTEGER                -- NULL = pre-versioning; set by rescan job
 );
 
-CREATE TABLE scorer_runs (
-    id              INTEGER PRIMARY KEY,
-    scorer_id       TEXT NOT NULL,
-    variant_id      TEXT NOT NULL,
-    scorer_version  TEXT,
-    params_json     TEXT,
-    params_hash     TEXT,
-    started_at      INTEGER,
-    finished_at     INTEGER
-);
-
 CREATE TABLE asset_scores (
     asset_id        INTEGER NOT NULL REFERENCES assets(id),
-    scorer_run_id   INTEGER NOT NULL REFERENCES scorer_runs(id),
+    scorer_id       TEXT NOT NULL,
+    variant_id      TEXT NOT NULL,
     metric_key      TEXT NOT NULL,
     value           REAL NOT NULL,
-    PRIMARY KEY (asset_id, scorer_run_id, metric_key)
+    scorer_version  TEXT,
+    scored_at       INTEGER,
+    PRIMARY KEY (asset_id, scorer_id, variant_id, metric_key)
 );
 
 CREATE TABLE phash (
@@ -169,9 +161,8 @@ CREATE TABLE cluster_members (
 SELECT a.id, a.relpath, s.value AS aesthetic
 FROM assets a
 JOIN asset_scores s ON s.asset_id = a.id
-JOIN scorer_runs r ON r.id = s.scorer_run_id
-WHERE r.scorer_id = 'aesthetic'
-  AND r.variant_id = 'laion_v2'
+WHERE s.scorer_id = 'aesthetic'
+  AND s.variant_id = 'laion_v2'
   AND s.metric_key = 'aesthetic'
 ORDER BY s.value DESC
 LIMIT 100;
@@ -184,8 +175,7 @@ SELECT a.id, a.relpath, s.value AS aesthetic
 FROM assets a
 JOIN cluster_members cm ON cm.asset_id = a.id AND cm.is_representative = 1
 JOIN asset_scores s ON s.asset_id = a.id
-JOIN scorer_runs r ON r.id = s.scorer_run_id
-WHERE r.scorer_id = 'aesthetic' AND s.metric_key = 'aesthetic'
+WHERE s.scorer_id = 'aesthetic' AND s.variant_id = 'laion_v2' AND s.metric_key = 'aesthetic'
 ORDER BY s.value DESC;
 ```
 

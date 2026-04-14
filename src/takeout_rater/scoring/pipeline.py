@@ -179,7 +179,10 @@ def run_scorer(
 
                 if rows:
                     upsert_asset_scores(
-                        conn, scorer_id, variant_id, rows,
+                        conn,
+                        scorer_id,
+                        variant_id,
+                        rows,
                         scorer_version=scorer_version,
                     )
 
@@ -214,7 +217,10 @@ def run_scorer(
 
                 if rows:
                     upsert_asset_scores(
-                        conn, scorer_id, variant_id, rows,
+                        conn,
+                        scorer_id,
+                        variant_id,
+                        rows,
                         scorer_version=scorer_version,
                     )
 

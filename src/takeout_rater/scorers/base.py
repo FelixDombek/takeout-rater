@@ -40,7 +40,7 @@ class VariantSpec:
     each other, so each is stored under its own ``variant_id``.
 
     Attributes:
-        variant_id: Stable identifier stored in ``scorer_runs`` (e.g. ``"laion_v2"``).
+        variant_id: Stable identifier stored in ``asset_scores`` (e.g. ``"laion_v2"``).
         display_name: Human-readable label for the UI.
         description: Short explanation of what distinguishes this variant.
         primary_metric_key: The metric key used to determine whether an asset
