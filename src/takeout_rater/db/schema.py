@@ -9,30 +9,22 @@ from pathlib import Path
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 # The single schema version this codebase targets.
-CURRENT_SCHEMA_VERSION: int = 12
+CURRENT_SCHEMA_VERSION: int = 13
 
 # Earliest schema version from which incremental migrations are supported.
 # Databases older than this must be fully rebuilt (full re-scan).
-_INCREMENTAL_MIGRATION_BASE: int = 6
+_INCREMENTAL_MIGRATION_BASE: int = 13
 
 # Map target_version → SQL file that upgrades from (target_version - 1) to target_version.
-_INCREMENTAL_MIGRATIONS: dict[int, Path] = {
-    7: _MIGRATIONS_DIR / "0002_cluster_diameter.sql",
-    8: _MIGRATIONS_DIR / "0003_simple_scorer_rename.sql",
-    9: _MIGRATIONS_DIR / "0004_clustering_runs.sql",
-    10: _MIGRATIONS_DIR / "0005_clip_embeddings.sql",
-    11: _MIGRATIONS_DIR / "0006_clip_user_tags.sql",
-    12: _MIGRATIONS_DIR / "0007_face_detection.sql",
-}
+_INCREMENTAL_MIGRATIONS: dict[int, Path] = {}
 
 
 class SchemaMismatchError(RuntimeError):
     """Raised when the on-disk database was created by an incompatible schema version.
 
-    Databases at schema versions 1–5 cannot be migrated automatically.  The
-    library must be rebuilt from scratch with a complete re-scan of the Takeout
-    folder.  Databases at version 6 are automatically migrated to the current
-    version.
+    Databases at schema versions before :data:`_INCREMENTAL_MIGRATION_BASE` cannot
+    be migrated automatically.  The library must be rebuilt from scratch with a
+    complete re-scan of the Takeout folder.
     """
 
     def __init__(self, found_version: int) -> None:

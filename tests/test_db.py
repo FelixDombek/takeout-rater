@@ -70,15 +70,6 @@ def test_schema_creates_albums_table() -> None:
     assert "albums" in tables
 
 
-def test_schema_creates_scorer_runs_table() -> None:
-    conn = _open_in_memory()
-    tables = {
-        row[0]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    }
-    assert "scorer_runs" in tables
-
-
 def test_schema_creates_asset_scores_table() -> None:
     conn = _open_in_memory()
     tables = {
@@ -102,126 +93,9 @@ def test_migrate_is_idempotent() -> None:
     assert version == CURRENT_SCHEMA_VERSION
 
 
-def test_migrate_incremental_v6_to_v10() -> None:
-    """A v6 database must be automatically upgraded to the current schema version."""
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-
-    # Bootstrap a v6 schema by applying the full initial schema but then manually
-    # rolling back the user_version to 6 (simulates an existing pre-v7 database).
-    from takeout_rater.db.schema import _MIGRATIONS_DIR  # noqa: PLC0415
-
-    sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
-    conn.executescript(sql)
-
-    # Reconstruct a v6-like state.  FK enforcement must be off during the table
-    # reconstruction because SQLite 3.26+ updates FK references when renaming, so
-    # after "RENAME clusters → clusters_old", cluster_members will reference
-    # clusters_old; dropping clusters_old then requires fixing cluster_members too.
-    conn.executescript("""
-        PRAGMA foreign_keys = OFF;
-        PRAGMA user_version = 6;
-        DROP INDEX IF EXISTS idx_clusters_run_id;
-        ALTER TABLE clusters RENAME TO clusters_old;
-        CREATE TABLE clusters (
-            id          INTEGER PRIMARY KEY,
-            method      TEXT NOT NULL,
-            params_json TEXT,
-            created_at  INTEGER NOT NULL
-        );
-        INSERT INTO clusters SELECT id, method, params_json, created_at FROM clusters_old;
-        DROP TABLE clusters_old;
-        DROP TABLE IF EXISTS clustering_runs;
-        ALTER TABLE cluster_members RENAME TO cluster_members_old;
-        CREATE TABLE cluster_members (
-            cluster_id        INTEGER NOT NULL REFERENCES clusters(id),
-            asset_id          INTEGER NOT NULL REFERENCES assets(id),
-            distance          REAL,
-            is_representative INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (cluster_id, asset_id)
-        );
-        INSERT INTO cluster_members SELECT * FROM cluster_members_old;
-        DROP TABLE cluster_members_old;
-        PRAGMA foreign_keys = ON;
-    """)
-
-    # Now run migrate – it should apply v7 (diameter), v8 (scorer rename), v9 (clustering_runs)
-    migrate(conn)
-
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == CURRENT_SCHEMA_VERSION
-    # Verify the diameter column exists (v7 migration)
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(clusters)").fetchall()}
-    assert "diameter" in cols
-    # Verify run_id column exists (v9 migration)
-    assert "run_id" in cols
-
-
-def test_migrate_incremental_v7_to_v9() -> None:
-    """A v7 database must be automatically upgraded to the current schema version."""
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-
-    from takeout_rater.db.schema import _MIGRATIONS_DIR  # noqa: PLC0415
-
-    sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
-    conn.executescript(sql)
-
-    # Reconstruct a v7-like state (has diameter, no run_id, no clustering_runs).
-    conn.executescript("""
-        PRAGMA foreign_keys = OFF;
-        PRAGMA user_version = 7;
-        DROP INDEX IF EXISTS idx_clusters_run_id;
-        ALTER TABLE clusters RENAME TO clusters_old;
-        CREATE TABLE clusters (
-            id          INTEGER PRIMARY KEY,
-            method      TEXT NOT NULL,
-            params_json TEXT,
-            created_at  INTEGER NOT NULL,
-            diameter    REAL
-        );
-        INSERT INTO clusters SELECT id, method, params_json, created_at, diameter
-            FROM clusters_old;
-        DROP TABLE clusters_old;
-        DROP TABLE IF EXISTS clustering_runs;
-        ALTER TABLE cluster_members RENAME TO cluster_members_old;
-        CREATE TABLE cluster_members (
-            cluster_id        INTEGER NOT NULL REFERENCES clusters(id),
-            asset_id          INTEGER NOT NULL REFERENCES assets(id),
-            distance          REAL,
-            is_representative INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (cluster_id, asset_id)
-        );
-        INSERT INTO cluster_members SELECT * FROM cluster_members_old;
-        DROP TABLE cluster_members_old;
-        PRAGMA foreign_keys = ON;
-    """)
-    # Insert old-style scorer_runs rows for the three merged scorers
-    for sid in ("blur", "luminosity", "noise"):
-        conn.execute(
-            "INSERT INTO scorer_runs (scorer_id, variant_id, scorer_version) VALUES (?, ?, ?)",
-            (sid, "default", "1"),
-        )
-    conn.commit()
-
-    migrate(conn)
-
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == CURRENT_SCHEMA_VERSION
-    # All three old rows should have been renamed to scorer_id='simple'
-    rows = conn.execute("SELECT scorer_id, variant_id FROM scorer_runs").fetchall()
-    assert len(rows) == 3
-    for row in rows:
-        assert row["scorer_id"] == "simple"
-    variant_ids = {row["variant_id"] for row in rows}
-    assert variant_ids == {"blur", "luminosity", "noise"}
-
-
 def test_migrate_raises_on_stale_schema() -> None:
-    """migrate() must raise SchemaMismatchError for pre-version-6 databases."""
-    for stale_version in range(1, 6):
+    """migrate() must raise SchemaMismatchError for pre-version-13 databases."""
+    for stale_version in range(1, 13):
         conn = sqlite3.connect(":memory:", check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA user_version = {stale_version}")

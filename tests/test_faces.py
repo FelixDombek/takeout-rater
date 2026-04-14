@@ -560,18 +560,14 @@ class TestFaceSchema:
         assert "face_clusters" in tables
         assert "face_cluster_members" in tables
 
-    def test_schema_version_is_12(self) -> None:
+    def test_schema_version_is_13(self) -> None:
         conn = _make_db()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 12
+        assert version == 13
 
-    def test_incremental_migration(self) -> None:
-        """Simulate a v11 database and migrate to v12."""
-        conn = sqlite3.connect(":memory:", check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        # Create a v11 database by running the base schema then resetting to v11
-        migrate(conn)  # This creates at v12
+    def test_face_tables_in_baseline(self) -> None:
+        """Face detection tables should be created in the baseline schema."""
+        conn = _make_db()
 
         # Verify tables exist after migration
         tables = [

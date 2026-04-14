@@ -38,12 +38,12 @@ Use an **adapter / spec pattern** with an **explicit import registry**:
 
 ### Variants
 - Each `ScorerSpec` declares available `VariantSpec` objects.
-- `variant_id` is stored per `scorer_run` row in the DB.
+- `variant_id` is stored per `asset_scores` row in the DB.
 - Scores from different variants are **not** directly comparable.
 
 ### Multi-metric output
 - `score_batch()` returns `list[dict[str, float]]` — multiple keys per image.
-- Stored as separate `asset_scores` rows: one per `(asset, scorer_run, metric_key)`.
+- Stored as separate `asset_scores` rows: one per `(asset, scorer_id, variant_id, metric_key)`.
 
 ### Optional dependencies
 - ~~Heavyweight deps were originally declared as optional extras in `pyproject.toml`.~~

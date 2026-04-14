@@ -278,7 +278,7 @@ See `docs/agents/definition-of-done.md` before opening a PR.
 ## Notes
 
 - `scorer_id` must be **stable** — it is stored in the DB.  Changing it will orphan existing scores.
-- `variant_id` is also stored per `scorer_run`.  Add a new variant rather than renaming an existing one when upgrading a model.
+- `variant_id` is also stored per `asset_scores` row.  Add a new variant rather than renaming an existing one when upgrading a model.
 - `higher_is_better=False` for metrics where a *lower* value is better (e.g. NSFW probability, noise level).
 - Multi-metric scorers should document what each metric measures in the `MetricSpec.description`.
 - `score_batch` must **always** return a list of the same length as `image_paths`, even when individual images fail.  Use a safe default (typically `0.0`) and catch `(OSError, ValueError, RuntimeError)`.

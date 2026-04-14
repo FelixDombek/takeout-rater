@@ -335,40 +335,20 @@ class TestClipEmbeddingsMigration:
         }
         assert "clip_user_tags" in tables
 
-    def test_incremental_migration_from_v9(self, tmp_path: Path) -> None:
-        """Migrating from v9 should create clip_embeddings and clip_user_tags."""
+    def test_stale_schema_raises_on_migrate(self, tmp_path: Path) -> None:
+        """Migrating from any pre-v12 DB should raise SchemaMismatchError."""
         import sqlite3
 
-        from takeout_rater.db.schema import _MIGRATIONS_DIR, CURRENT_SCHEMA_VERSION, migrate
+        from takeout_rater.db.schema import SchemaMismatchError, migrate
 
-        # Create a v9 DB by applying baseline then rolling back to v9
         db_path = tmp_path / "lib.sqlite"
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-
-        # Apply baseline
-        sql = (_MIGRATIONS_DIR / "0001_initial_schema.sql").read_text(encoding="utf-8")
-        conn.executescript(sql)
-
-        # Roll back to v9
         conn.execute("PRAGMA user_version = 9")
-        conn.execute("DROP TABLE IF EXISTS clip_embeddings")
-        conn.execute("DROP TABLE IF EXISTS clip_user_tags")
         conn.commit()
 
-        # Now migrate
-        migrate(conn)
-
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == CURRENT_SCHEMA_VERSION
-
-        tables = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        }
-        assert "clip_embeddings" in tables
-        assert "clip_user_tags" in tables
+        with pytest.raises(SchemaMismatchError):
+            migrate(conn)
         conn.close()
 
 
