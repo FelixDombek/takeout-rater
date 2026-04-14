@@ -1945,3 +1945,21 @@ def load_all_clip_embeddings(conn: sqlite3.Connection) -> list[tuple[int, bytes]
         "SELECT asset_id, embedding FROM clip_embeddings ORDER BY asset_id"
     ).fetchall()
     return [(row[0], row[1]) for row in rows]
+
+
+def get_clip_embedding_for_asset(conn: sqlite3.Connection, asset_id: int) -> bytes | None:
+    """Return the stored CLIP embedding blob for a single asset, or ``None``.
+
+    Args:
+        conn: Open database connection.
+        asset_id: The asset to look up.
+
+    Returns:
+        Raw bytes of the float32 embedding vector (3072 bytes for ViT-L/14),
+        or ``None`` if no embedding has been computed for this asset yet.
+    """
+    row = conn.execute(
+        "SELECT embedding FROM clip_embeddings WHERE asset_id = ?",
+        (asset_id,),
+    ).fetchone()
+    return row[0] if row else None

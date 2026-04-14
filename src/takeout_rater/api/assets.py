@@ -23,6 +23,7 @@ from takeout_rater.db.queries import (
     get_asset_alias_paths,
     get_asset_by_id,
     get_asset_scores,
+    get_clip_embedding_for_asset,
     get_phash,
     get_taken_at_range,
     list_assets,
@@ -449,8 +450,8 @@ def asset_detail(
     # Load EXIF data from the original image file.
     exif_data = _read_exif_data(takeout_root, asset)
 
-    # Load pHash for the asset (only needed for the full detail view).
-    phash_row = get_phash(conn, asset_id) if partial != "1" else None
+    # Load pHash for the asset (used in both partial and full views).
+    phash_row = get_phash(conn, asset_id)
     phash_hex: str | None = phash_row["phash_hex"] if phash_row else None
 
     templates = request.app.state.templates
@@ -466,6 +467,118 @@ def asset_detail(
     if partial == "1":
         return templates.TemplateResponse("detail_partial.html", ctx)
     return templates.TemplateResponse("detail.html", ctx)
+
+
+# ---------------------------------------------------------------------------
+# CLIP vocabulary matrix cache
+# ---------------------------------------------------------------------------
+
+_VOCAB_MATRIX_LOCK = __import__("threading").Lock()
+
+
+def _get_clip_vocab_matrix(
+    request: Request,
+) -> tuple[__import__("numpy").ndarray, list[str]] | None:  # type: ignore[name-defined]
+    """Return the cached ``(vocab_matrix, vocab_terms)`` pair.
+
+    The matrix is built lazily on the first call and stored in
+    ``app.state.clip_vocab_matrix``.  Each row is the L2-normalised CLIP text
+    embedding for one vocabulary term (shape ``(V, 768)``, float32).
+
+    Returns ``None`` if the CLIP backbone dependencies are not installed.
+    """
+    cached = getattr(request.app.state, "clip_vocab_matrix", None)
+    if cached is not None:
+        return cached
+
+    with _VOCAB_MATRIX_LOCK:
+        cached = getattr(request.app.state, "clip_vocab_matrix", None)
+        if cached is not None:
+            return cached
+
+        try:
+            import numpy as np  # noqa: PLC0415
+            import torch  # noqa: PLC0415
+
+            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+                get_clip_model,
+            )
+            from takeout_rater.scorers.adapters.clip_vocab import (  # noqa: PLC0415
+                CLIP_VOCAB_TERMS,
+            )
+        except ImportError:
+            return None
+
+        model, _preprocess, tokenizer, device = get_clip_model()
+        terms = list(CLIP_VOCAB_TERMS)
+
+        # Encode in small batches to avoid OOM on large vocabularies
+        batch_size = 64
+        vecs: list[np.ndarray] = []
+        with torch.no_grad():
+            for start in range(0, len(terms), batch_size):
+                batch = terms[start : start + batch_size]
+                tokens = tokenizer(batch).to(device)
+                features = model.encode_text(tokens)
+                features = features / features.norm(dim=-1, keepdim=True)
+                vecs.append(features.cpu().float().numpy())
+
+        matrix = np.vstack(vecs).astype(np.float32)  # shape (V, 768)
+        result = (matrix, terms)
+        request.app.state.clip_vocab_matrix = result
+        return result
+
+
+@router.get("/api/assets/{asset_id}/clip-words")
+def get_clip_words(
+    asset_id: int,
+    request: Request,
+    top_k: int = 20,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return the top-K visual concepts matching this asset's CLIP embedding.
+
+    Compares the stored image embedding against a curated vocabulary of visual
+    concept phrases using cosine similarity and returns the best matches.
+
+    Query parameters:
+    - ``top_k``: Number of top matches to return (default 20, max 100).
+
+    Returns JSON ``{"words": [{"word": str, "score": float}, ...]}`` or
+    ``{"words": [], "error": "no_embedding"}`` when no embedding is stored.
+    """
+    import struct  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    top_k = max(1, min(top_k, 100))
+
+    blob = get_clip_embedding_for_asset(conn, asset_id)
+    if blob is None:
+        return JSONResponse({"words": [], "error": "no_embedding"})
+
+    vocab = _get_clip_vocab_matrix(request)
+    if vocab is None:
+        return JSONResponse({"words": [], "error": "clip_unavailable"})
+
+    vocab_matrix, vocab_terms = vocab
+
+    dim = 768
+    expected_bytes = dim * 4  # float32 = 4 bytes each
+    if len(blob) != expected_bytes:
+        return JSONResponse({"words": [], "error": "embedding_corrupt"})
+
+    image_vec = np.array(struct.unpack(f"{dim}f", blob), dtype=np.float32)
+    norm = np.linalg.norm(image_vec)
+    if norm > 0:
+        image_vec = image_vec / norm
+
+    scores = vocab_matrix @ image_vec  # shape (V,)
+    top_k = min(top_k, len(vocab_terms))
+    ranked = np.argsort(-scores)[:top_k]
+
+    words = [{"word": vocab_terms[int(i)], "score": round(float(scores[i]), 4)} for i in ranked]
+    return JSONResponse({"words": words})
 
 
 @router.get("/thumbs/{asset_id}")

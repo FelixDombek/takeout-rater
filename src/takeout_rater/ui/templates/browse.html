@@ -466,6 +466,41 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* pHash canvas in lightbox */
+  .lb-phash-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+  .lb-phash-canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 3px;
+  }
+  .lb-phash-hex {
+    font-family: monospace;
+    font-size: 0.65rem;
+    color: #666;
+    word-break: break-all;
+  }
+  /* CLIP tag cloud in lightbox */
+  .lb-clip-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0.2rem 0;
+  }
+  .lb-clip-tag {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(126,200,227,0.15);
+    color: #7ec8e3;
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
   @media (max-width: 700px) {
     .lb-container { flex-direction: column; }
     .lb-details-col {
@@ -1271,6 +1306,23 @@ function savePreset() {
       .then(function (html) {
         lbDetails.innerHTML = html;
         lbDetails.querySelectorAll('.json-highlight').forEach(highlightJson);
+
+        // Draw pHash canvas if present (inline scripts don't run in innerHTML).
+        lbDetails.querySelectorAll('.lb-phash-canvas[data-phash]').forEach(function (canvas) {
+          var hex = canvas.dataset.phash;
+          if (!hex) return;
+          var ctx = canvas.getContext('2d');
+          var BITS = 256, SIDE = 16, BLOCK = 4;
+          var bigInt = BigInt('0x' + hex);
+          for (var idx = 0; idx < BITS; idx++) {
+            var bit = Number((bigInt >> BigInt(idx)) & 1n);
+            var row = Math.floor(idx / SIDE);
+            var col = idx % SIDE;
+            ctx.fillStyle = bit ? '#ffffff' : '#1a1a2e';
+            ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
+          }
+        });
+
         // Inline scripts injected via innerHTML don't execute; wire tabs here.
         lbDetails.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
           btn.addEventListener('click', function () {
@@ -1283,6 +1335,13 @@ function savePreset() {
             lbDetails.querySelectorAll('.lb-tab-panel').forEach(function (p) {
               p.classList.toggle('active', p.dataset.panel === tabName);
             });
+            // Lazily load CLIP words on first tab activation.
+            if (tabName === 'clip') {
+              var panel = lbDetails.querySelector('[data-panel="clip"]');
+              if (panel && !panel.dataset.loaded) {
+                lbLoadClipWords(panel);
+              }
+            }
           });
         });
       })
@@ -1290,6 +1349,42 @@ function savePreset() {
         if (err.name !== 'AbortError') {
           lbDetails.innerHTML = '<div class="lb-details-loading">Could not load details.</div>';
         }
+      });
+  }
+
+  function lbLoadClipWords(panel) {
+    var assetId = panel.dataset.assetId;
+    var loadingEl = panel.querySelector('.lb-clip-loading');
+    var emptyEl = panel.querySelector('.lb-clip-empty');
+    if (loadingEl) loadingEl.style.display = '';
+    if (emptyEl) emptyEl.style.display = 'none';
+    fetch('/api/assets/' + assetId + '/clip-words?top_k=30')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (!data.words || data.words.length === 0) {
+          if (emptyEl) emptyEl.style.display = '';
+          return;
+        }
+        panel.dataset.loaded = '1';
+        var maxScore = data.words[0].score || 1;
+        var cloud = document.createElement('div');
+        cloud.className = 'lb-clip-cloud';
+        data.words.forEach(function (w) {
+          var tag = document.createElement('span');
+          tag.className = 'lb-clip-tag';
+          var rel = w.score / maxScore;
+          tag.style.opacity = (0.4 + 0.6 * rel).toFixed(2);
+          tag.style.fontSize = (0.65 + 0.3 * rel).toFixed(2) + 'rem';
+          tag.title = 'score: ' + w.score.toFixed(4);
+          tag.textContent = w.word;
+          cloud.appendChild(tag);
+        });
+        panel.appendChild(cloud);
+      })
+      .catch(function () {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = '';
       });
   }
 
