@@ -468,20 +468,42 @@ def cancel_score_job(request: Request) -> JSONResponse:
 
 
 class _ClusterStartBody(BaseModel):
+    method: str = "phash"  # "phash" | "clip"
+    # pHash-specific params
     threshold: int = 10
     window: int = 200
     min_size: int = 2
     single_linkage: bool = False
+    # CLIP-specific params
+    clip_metric: str = "cosine"  # "cosine" | "euclidean" | "combined"
+    clip_threshold: float = 0.90  # depends on clip_metric
 
 
 @router.post("/api/jobs/cluster/start")
 def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse:
     """Start a background clustering run.
 
+    Supports two methods selected via the ``method`` field:
+
+    * ``"phash"`` (default) — perceptual-hash Hamming-distance clustering.
+      Uses ``threshold``, ``window``, ``min_size``, and ``single_linkage``.
+    * ``"clip"`` — CLIP-embedding cosine/euclidean/angular clustering.
+      Requires pre-computed CLIP embeddings (run the embed job first).
+      Uses ``clip_metric``, ``clip_threshold``, ``min_size``, and
+      ``single_linkage``.
+
     Returns ``409`` if a cluster job is already running.
     """
     _require_library_root(request)
     jobs = _get_jobs(request.app)
+
+    if body.method not in ("phash", "clip"):
+        raise HTTPException(status_code=400, detail="method must be 'phash' or 'clip'.")
+    if body.method == "clip" and body.clip_metric not in ("cosine", "euclidean", "combined"):
+        raise HTTPException(
+            status_code=400,
+            detail="clip_metric must be 'cosine', 'euclidean', or 'combined'.",
+        )
 
     existing = jobs.get("cluster")
     if existing is not None and existing.running:
@@ -491,73 +513,119 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
     progress = JobProgress(job_type="cluster", running=True, message="Starting…")
     jobs["cluster"] = progress
 
+    method = body.method
     threshold = body.threshold
     window = body.window
     min_size = body.min_size
     single_linkage = body.single_linkage
+    clip_metric = body.clip_metric
+    clip_threshold = body.clip_threshold
 
     def _worker() -> None:
-        from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
         from takeout_rater.db.connection import (
             library_state_dir,  # noqa: PLC0415
             open_library_db,  # noqa: PLC0415
         )
-        from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
         thumbs_dir = library_state_dir(library_root) / "thumbs"
         try:
-            # ── Phase 1: Ensure all assets have a current dhash16 hash ──────
-            progress.message = "Computing perceptual hashes…"
-            progress.processed = 0
-            progress.total = 0
-            progress.current_item = ""
+            if method == "clip":
+                # ── CLIP embedding clustering ────────────────────────────────
+                from takeout_rater.clustering.clip_builder import (  # noqa: PLC0415
+                    build_clip_clusters,
+                )
+                from takeout_rater.db.queries import (  # noqa: PLC0415
+                    count_clip_embeddings,
+                )
 
-            _id_to_relpath: dict[int, str] = {
-                row[0]: row[1]
-                for row in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
-            }
+                n_emb = count_clip_embeddings(worker_conn)
+                if n_emb == 0:
+                    progress.message = "No CLIP embeddings found. Run the Embed job first."
+                    progress.running = False
+                    progress.done = True
+                    return
 
-            def _phash_progress(done: int, total: int) -> None:
-                progress.processed = done
-                progress.total = total
-                progress.message = f"Computing perceptual hashes… {done}\u202f/\u202f{total}"
+                progress.message = f"Building CLIP clusters from {n_emb} embedding(s)…"
+                progress.total = n_emb
 
-            def _phash_item(asset_id: int, done: int, total: int) -> None:
-                progress.current_item = _id_to_relpath.get(asset_id, "")
+                def _clip_cb(processed: int, total: int) -> None:
+                    progress.processed = processed
+                    progress.total = total
+                    if total > 0:
+                        progress.message = (
+                            f"CLIP clustering… {processed}\u202f/\u202f{total} embeddings"
+                        )
 
-            compute_phash_all(
-                worker_conn,
-                thumbs_dir,
-                on_progress=_phash_progress,
-                on_item=_phash_item,
-                cancel_check=progress.cancel_event.is_set,
-            )
+                n_clusters = build_clip_clusters(
+                    worker_conn,
+                    metric=clip_metric,
+                    threshold=clip_threshold,
+                    min_cluster_size=min_size,
+                    single_linkage=single_linkage,
+                    on_progress=_clip_cb,
+                )
+                progress.message = f"CLIP clustering complete — {n_clusters} cluster(s) found."
+                progress.running = False
+                progress.done = True
 
-            progress.current_item = ""
-            progress.processed = 0
-            progress.total = 0
+            else:
+                # ── pHash clustering ─────────────────────────────────────────
+                from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
+                from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
 
-            # ── Phase 2: Build clusters ──────────────────────────────────────
-            progress.message = "Building clusters…"
+                # Phase 1: Ensure all assets have a current dhash16 hash
+                progress.message = "Computing perceptual hashes…"
+                progress.processed = 0
+                progress.total = 0
+                progress.current_item = ""
 
-            def _cb(processed: int, total: int) -> None:
-                progress.processed = processed
-                progress.total = total
-                if total > 0:
-                    progress.message = f"Clustering… {processed}/{total} hashes"
+                _id_to_relpath: dict[int, str] = {
+                    row[0]: row[1]
+                    for row in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
+                }
 
-            n_clusters = build_clusters(
-                worker_conn,
-                threshold=threshold,
-                window=window,
-                min_cluster_size=min_size,
-                single_linkage=single_linkage,
-                on_progress=_cb,
-            )
-            progress.message = f"Clustering complete — {n_clusters} cluster(s) found."
-            progress.running = False
-            progress.done = True
+                def _phash_progress(done: int, total: int) -> None:
+                    progress.processed = done
+                    progress.total = total
+                    progress.message = f"Computing perceptual hashes… {done}\u202f/\u202f{total}"
+
+                def _phash_item(asset_id: int, done: int, total: int) -> None:
+                    progress.current_item = _id_to_relpath.get(asset_id, "")
+
+                compute_phash_all(
+                    worker_conn,
+                    thumbs_dir,
+                    on_progress=_phash_progress,
+                    on_item=_phash_item,
+                    cancel_check=progress.cancel_event.is_set,
+                )
+
+                progress.current_item = ""
+                progress.processed = 0
+                progress.total = 0
+
+                # Phase 2: Build clusters
+                progress.message = "Building clusters…"
+
+                def _cb(processed: int, total: int) -> None:
+                    progress.processed = processed
+                    progress.total = total
+                    if total > 0:
+                        progress.message = f"Clustering… {processed}/{total} hashes"
+
+                n_clusters = build_clusters(
+                    worker_conn,
+                    threshold=threshold,
+                    window=window,
+                    min_cluster_size=min_size,
+                    single_linkage=single_linkage,
+                    on_progress=_cb,
+                )
+                progress.message = f"Clustering complete — {n_clusters} cluster(s) found."
+                progress.running = False
+                progress.done = True
+
         except Exception as exc:  # noqa: BLE001
             progress.error = str(exc)
             progress.message = f"Error: {exc}"

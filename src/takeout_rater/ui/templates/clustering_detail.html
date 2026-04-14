@@ -93,6 +93,11 @@
   <span class="badge badge-clusters">
     {{ clusters | length }} cluster{{ 's' if clusters | length != 1 else '' }}
   </span>
+  {% if run.method == "clip_embedding" %}
+  <span class="badge badge-params" title="CLIP semantic embedding clustering">🧠 CLIP</span>
+  {% else %}
+  <span class="badge badge-params" title="Perceptual hash clustering">🔑 pHash</span>
+  {% endif %}
   {% if run.params %}
     {% for k, v in run.params.items() %}
     <span class="badge badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
@@ -117,7 +122,18 @@
         <div class="cluster-body">
           <span class="cluster-size">{{ cluster.member_count }} photos</span>
           {% if cluster.diameter is not none %}
-          <span class="cluster-diameter" title="Max pairwise Hamming distance">⌀ {{ cluster.diameter | int }}b</span>
+            {% if run.method == "clip_embedding" %}
+              {% set clip_metric = run.params.get("metric", "cosine") %}
+              {% if clip_metric == "cosine" %}
+              <span class="cluster-diameter" title="Max pairwise cosine distance">⌀ {{ "%.3f" | format(cluster.diameter) }}</span>
+              {% elif clip_metric == "euclidean" %}
+              <span class="cluster-diameter" title="Max pairwise L2 distance">⌀ {{ "%.3f" | format(cluster.diameter) }} L2</span>
+              {% else %}
+              <span class="cluster-diameter" title="Max pairwise angular distance (rad)">⌀ {{ "%.3f" | format(cluster.diameter) }} rad</span>
+              {% endif %}
+            {% else %}
+            <span class="cluster-diameter" title="Max pairwise Hamming distance">⌀ {{ cluster.diameter | int }}b</span>
+            {% endif %}
           {% endif %}
           {{ cluster.rep_filename }}
         </div>

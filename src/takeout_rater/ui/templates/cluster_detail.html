@@ -105,7 +105,18 @@
   <h1>Cluster {{ cluster_id }}</h1>
   <span class="member-count">{{ members | length }} photo{{ 's' if members | length != 1 else '' }}</span>
   {% if cluster_diameter is not none %}
-  <span class="cluster-diameter" title="Intra-cluster diameter: max pairwise Hamming distance">⌀ {{ cluster_diameter | int }} bits</span>
+    {% if cluster_method == "clip_embedding" %}
+      {% set clip_metric = cluster_params.get("metric", "cosine") %}
+      {% if clip_metric == "cosine" %}
+        <span class="cluster-diameter" title="Intra-cluster diameter: max pairwise cosine distance (1 − min cosine similarity)">⌀ {{ "%.4f" | format(cluster_diameter) }} cos-dist</span>
+      {% elif clip_metric == "euclidean" %}
+        <span class="cluster-diameter" title="Intra-cluster diameter: max pairwise L2 distance">⌀ {{ "%.4f" | format(cluster_diameter) }} L2</span>
+      {% else %}
+        <span class="cluster-diameter" title="Intra-cluster diameter: max pairwise angular distance in radians">⌀ {{ "%.4f" | format(cluster_diameter) }} rad</span>
+      {% endif %}
+    {% else %}
+      <span class="cluster-diameter" title="Intra-cluster diameter: max pairwise Hamming distance">⌀ {{ cluster_diameter | int }} bits</span>
+    {% endif %}
   {% endif %}
 </div>
 
@@ -124,9 +135,22 @@
       <div class="member-body">
         {% if is_rep %}<span class="rep-badge">REP</span>{% endif %}
         {{ asset.filename }}
-        {% set phash_hex = phash_by_id.get(asset.id) %}
-        {% if phash_hex %}
-        <span class="member-phash" title="pHash: {{ phash_hex }}">{{ phash_hex }}</span>
+        {% if cluster_method == "clip_embedding" %}
+          {% set clip_metric = cluster_params.get("metric", "cosine") %}
+          {% if distance is not none %}
+            {% if clip_metric == "cosine" %}
+              <span class="member-phash" title="Cosine similarity to representative">sim={{ "%.4f" | format(1.0 - distance) }}</span>
+            {% elif clip_metric == "euclidean" %}
+              <span class="member-phash" title="L2 distance to representative">dist={{ "%.4f" | format(distance) }}</span>
+            {% else %}
+              <span class="member-phash" title="Angular distance to representative (radians)">{{ "%.4f" | format(distance) }} rad</span>
+            {% endif %}
+          {% endif %}
+        {% else %}
+          {% set phash_hex = phash_by_id.get(asset.id) %}
+          {% if phash_hex %}
+          <span class="member-phash" title="pHash: {{ phash_hex }}">{{ phash_hex }}</span>
+          {% endif %}
         {% endif %}
       </div>
     </a>

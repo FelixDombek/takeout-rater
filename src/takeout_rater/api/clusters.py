@@ -141,6 +141,9 @@ def cluster_detail(
     cluster_info = get_cluster_info(conn, cluster_id)
     phash_by_id = get_cluster_member_hashes(conn, cluster_id)
 
+    cluster_method = cluster_info["method"] if cluster_info else None
+    cluster_params = _parse_params(cluster_info["params_json"] if cluster_info else None)
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "cluster_detail.html",
@@ -150,6 +153,8 @@ def cluster_detail(
             "run_id": cluster_info["run_id"] if cluster_info else None,
             "members": members,
             "cluster_diameter": cluster_info["diameter"] if cluster_info else None,
+            "cluster_method": cluster_method,
+            "cluster_params": cluster_params,
             "phash_by_id": phash_by_id,
         },
     )
