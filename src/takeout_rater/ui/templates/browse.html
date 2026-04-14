@@ -4,6 +4,9 @@
 
 {% block head %}
 <style>
+  /* ── Remove the global max-width cap so the grid expands on wide screens */
+  main { max-width: none; }
+
   /* ── Browse layout: sidebar + main ───────────────────────────────────── */
   .browse-layout {
     display: flex;
