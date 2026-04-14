@@ -8,7 +8,6 @@ Sub-commands:
 - ``score``   – run scorer(s) over indexed assets
 - ``browse``  – launch the local web UI
 - ``export``  – copy selected assets to an export folder  *(Iteration 3)*
-- ``rehash``  – compute SHA-256 hashes for already-indexed assets
 """
 
 from __future__ import annotations
@@ -53,12 +52,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Directory that *contains* the Takeout/ folder. "
             "All library state is written to a sibling takeout-rater/ directory."
         ),
-    )
-    index_parser.add_argument(
-        "--no-thumbs",
-        action="store_true",
-        default=False,
-        help="Skip thumbnail generation (useful when Pillow is not installed).",
     )
 
     # browse
@@ -187,7 +180,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # serve – launcher-friendly variant of browse that reads config for the path
-    serve_parser = sub.add_parser(
         "serve",
         help=(
             "Launch the web UI (reads Takeout path from config; "
