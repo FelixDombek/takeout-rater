@@ -386,13 +386,13 @@ def client_with_scores(tmp_path: Path) -> TestClient:
 
 
 def test_browse_with_sort_by_score_returns_200(client_with_scores: TestClient) -> None:
-    resp = client_with_scores.get("/assets?sort_by=blur:sharpness")
+    resp = client_with_scores.get("/assets?sort_by=blur:default:sharpness")
     assert resp.status_code == 200
 
 
 def test_browse_min_score_filter_reduces_count(client_with_scores: TestClient) -> None:
-    client_with_scores.get("/assets?sort_by=blur:sharpness")
-    resp_filtered = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=40")
+    client_with_scores.get("/assets?sort_by=blur:default:sharpness")
+    resp_filtered = client_with_scores.get("/assets?sort_by=blur:default:sharpness&min_score=40")
     # Page with min_score should mention fewer photos
     assert resp_filtered.status_code == 200
     # Check that the filtered page doesn't have the full count
@@ -400,38 +400,38 @@ def test_browse_min_score_filter_reduces_count(client_with_scores: TestClient) -
 
 
 def test_browse_max_score_filter_reduces_count(client_with_scores: TestClient) -> None:
-    resp_filtered = client_with_scores.get("/assets?sort_by=blur:sharpness&max_score=20")
+    resp_filtered = client_with_scores.get("/assets?sort_by=blur:default:sharpness&max_score=20")
     assert resp_filtered.status_code == 200
     assert "5 photos" not in resp_filtered.text
 
 
 def test_browse_score_range_shows_filter_indicator(client_with_scores: TestClient) -> None:
-    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=40")
+    resp = client_with_scores.get("/assets?sort_by=blur:default:sharpness&min_score=40")
     assert "filtered by range" in resp.text
 
 
 def test_browse_blank_min_score_returns_200(client_with_scores: TestClient) -> None:
     """Blank min_score= should not cause a 422 validation error."""
-    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=")
+    resp = client_with_scores.get("/assets?sort_by=blur:default:sharpness&min_score=")
     assert resp.status_code == 200
 
 
 def test_browse_blank_max_score_returns_200(client_with_scores: TestClient) -> None:
     """Blank max_score= should not cause a 422 validation error."""
-    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&max_score=")
+    resp = client_with_scores.get("/assets?sort_by=blur:default:sharpness&max_score=")
     assert resp.status_code == 200
 
 
 def test_browse_both_blank_scores_returns_200(client_with_scores: TestClient) -> None:
     """Both blank score params together should not cause a 422 validation error."""
-    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=&max_score=")
+    resp = client_with_scores.get("/assets?sort_by=blur:default:sharpness&min_score=&max_score=")
     assert resp.status_code == 200
 
 
 def test_browse_blank_score_treats_as_unfiltered(client_with_scores: TestClient) -> None:
     """Blank min_score should produce the same result as omitting the parameter."""
-    resp_no_filter = client_with_scores.get("/assets?sort_by=blur:sharpness")
-    resp_blank = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=")
+    resp_no_filter = client_with_scores.get("/assets?sort_by=blur:default:sharpness")
+    resp_blank = client_with_scores.get("/assets?sort_by=blur:default:sharpness&min_score=")
     assert resp_no_filter.status_code == 200
     assert resp_blank.status_code == 200
     # Both should show the same total count (blank is same as absent)
@@ -440,7 +440,7 @@ def test_browse_blank_score_treats_as_unfiltered(client_with_scores: TestClient)
 
 def test_browse_invalid_score_returns_200(client_with_scores: TestClient) -> None:
     """Non-numeric min_score should be silently ignored, not produce a 422."""
-    resp = client_with_scores.get("/assets?sort_by=blur:sharpness&min_score=abc")
+    resp = client_with_scores.get("/assets?sort_by=blur:default:sharpness&min_score=abc")
     assert resp.status_code == 200
 
 
@@ -489,7 +489,7 @@ def test_sort_by_unscored_metric_shows_helpful_message(tmp_path: Path) -> None:
     app = create_app(tmp_path, conn)
     client = TestClient(app, follow_redirects=True)
     # Force sort_by via URL for a metric with no scores
-    resp = client.get("/assets?sort_by=blur:sharpness")
+    resp = client.get("/assets?sort_by=blur:default:sharpness")
     assert resp.status_code == 200
     assert "No photos indexed yet" not in resp.text
     assert "No scored photos for this metric" in resp.text
@@ -507,12 +507,16 @@ def test_api_presets_list_empty(client: TestClient) -> None:
 def test_api_presets_create(client: TestClient) -> None:
     resp = client.post(
         "/api/presets",
-        json={"name": "High Aesthetic", "sort_by": "aesthetic:aesthetic", "min_score": 7.0},
+        json={
+            "name": "High Aesthetic",
+            "sort_by": "aesthetic:default:aesthetic_quality",
+            "min_score": 7.0,
+        },
     )
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "High Aesthetic"
-    assert data["sort_by"] == "aesthetic:aesthetic"
+    assert data["sort_by"] == "aesthetic:default:aesthetic_quality"
     assert data["min_score"] == pytest.approx(7.0)
     assert "id" in data
 
@@ -527,10 +531,12 @@ def test_api_presets_list_after_create(client: TestClient) -> None:
 
 
 def test_api_presets_upsert_updates_existing(client: TestClient) -> None:
-    r1 = client.post("/api/presets", json={"name": "X", "sort_by": "blur:sharpness"})
-    r2 = client.post("/api/presets", json={"name": "X", "sort_by": "aesthetic:aesthetic"})
+    r1 = client.post("/api/presets", json={"name": "X", "sort_by": "blur:default:sharpness"})
+    r2 = client.post(
+        "/api/presets", json={"name": "X", "sort_by": "aesthetic:default:aesthetic_quality"}
+    )
     assert r1.json()["id"] == r2.json()["id"]
-    assert r2.json()["sort_by"] == "aesthetic:aesthetic"
+    assert r2.json()["sort_by"] == "aesthetic:default:aesthetic_quality"
 
 
 def test_api_presets_delete(client: TestClient) -> None:
@@ -553,7 +559,7 @@ def test_api_presets_blank_name_rejected(client: TestClient) -> None:
 
 
 def test_browse_shows_preset_dropdown_when_presets_exist(client: TestClient) -> None:
-    client.post("/api/presets", json={"name": "My Preset", "sort_by": "blur:sharpness"})
+    client.post("/api/presets", json={"name": "My Preset", "sort_by": "blur:default:sharpness"})
     resp = client.get("/assets")
     assert "My Preset" in resp.text
 
@@ -561,7 +567,7 @@ def test_browse_shows_preset_dropdown_when_presets_exist(client: TestClient) -> 
 def test_browse_shows_save_preset_button_when_sort_active(
     client_with_scores: TestClient,
 ) -> None:
-    resp = client_with_scores.get("/assets?sort_by=blur:sharpness")
+    resp = client_with_scores.get("/assets?sort_by=blur:default:sharpness")
     assert "Save as" in resp.text
 
 

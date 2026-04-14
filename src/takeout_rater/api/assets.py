@@ -229,8 +229,8 @@ def browse_assets(
     Query parameters:
     - ``page``: 1-based page number (default 1).
     - ``favorited``: ``"1"`` to show only favorited assets.
-    - ``sort_by``: ``"scorer_id:metric_key"`` to sort by a score metric
-      (e.g. ``"blur:sharpness"``).  Only scored assets are shown.
+    - ``sort_by``: ``"scorer_id:variant_id:metric_key"`` to sort by a score metric
+      (e.g. ``"blur:default:sharpness"``).  Only scored assets are shown.
     - ``min_score``: Inclusive lower bound on the score value (requires
       ``sort_by``).  Blank or non-numeric values are silently ignored.
     - ``max_score``: Inclusive upper bound on the score value (requires
@@ -257,11 +257,8 @@ def browse_assets(
     eff_max = _parse_score(max_score) if sort_parsed else None
 
     if sort_parsed is not None:
-        scorer_id, metric_key, variant_id = sort_parsed
-        if variant_id:
-            canonical_sort_by = f"{scorer_id}:{variant_id}:{metric_key}"
-        else:
-            canonical_sort_by = f"{scorer_id}:{metric_key}"
+        scorer_id, variant_id, metric_key = sort_parsed
+        canonical_sort_by = f"{scorer_id}:{variant_id}:{metric_key}"
         asset_score_pairs = list_assets_by_score(
             conn,
             scorer_id,
