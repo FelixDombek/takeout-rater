@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import sqlite3
+from collections import defaultdict
 from collections.abc import Generator
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from takeout_rater.db.queries import (
     list_assets_by_score,
     list_assets_deduped,
     list_assets_multi_sort,
-    list_available_score_metrics,
+    list_available_score_metrics_with_variants,
     list_view_presets,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
@@ -197,21 +198,21 @@ def _parse_score(raw: str | None) -> float | None:
         return None
 
 
-def _parse_sort_by(sort_by: str | None) -> tuple[str, str] | None:
-    """Parse a ``sort_by`` query parameter of the form ``scorer_id:metric_key``.
+def _parse_sort_by(sort_by: str | None) -> tuple[str, str, str] | None:
+    """Parse a ``sort_by`` query parameter of the form ``scorer_id:variant_id:metric_key``.
 
-    Returns a ``(scorer_id, metric_key)`` tuple or ``None`` if *sort_by* is
-    absent or malformed.
+    Returns a ``(scorer_id, variant_id, metric_key)`` triple, or ``None`` if
+    *sort_by* is absent or malformed.
     """
     if not sort_by:
         return None
-    parts = sort_by.split(":", 1)
-    if len(parts) != 2:
+    parts = sort_by.split(":")
+    if len(parts) != 3:
         return None
-    scorer_id, metric_key = parts
-    if not scorer_id or not metric_key:
+    scorer_id, variant_id, metric_key = parts
+    if not scorer_id or not variant_id or not metric_key:
         return None
-    return scorer_id, metric_key
+    return scorer_id, variant_id, metric_key
 
 
 @router.get("/assets", response_class=HTMLResponse)
@@ -240,14 +241,15 @@ def browse_assets(
     Query parameters:
     - ``page``: 1-based page number (default 1).
     - ``favorited``: ``"1"`` to show only favorited assets.
-    - ``sort_by``: ``"scorer_id:metric_key"`` to sort by a score metric
-      (e.g. ``"blur:sharpness"``).  Only scored assets are shown.
+    - ``sort_by``: ``"scorer_id:variant_id:metric_key"`` to sort by a score metric
+      (e.g. ``"blur:default:sharpness"``).  Only scored assets are shown.
     - ``min_score`` / ``max_score``: Inclusive score range for the primary
       sort metric.  Blank or non-numeric values are silently ignored.
     - ``sort_by_2`` … ``sort_by_4``: Optional secondary / tertiary / quaternary
-      sort metrics.  Each can have its own ``min_score_N`` / ``max_score_N``
-      range filter.  Secondary+ criteria use LEFT JOINs: assets without a
-      secondary score still appear, sorted last.
+      sort metrics, each in ``"scorer_id:variant_id:metric_key"`` form.  Each can
+      have its own ``min_score_N`` / ``max_score_N`` range filter.
+      Secondary+ criteria use LEFT JOINs: assets without a secondary score still
+      appear, sorted last.
     - ``dedupe``: ``"1"`` (default) to hide exact duplicate files (same SHA-256
       content hash); ``"0"`` to show all physical copies.
     - ``partial``: ``"1"`` to return only a card fragment (for infinite scroll
@@ -282,24 +284,24 @@ def browse_assets(
         parsed = _parse_sort_by(sb)
         if parsed is None:
             break  # stop at the first empty/invalid level
-        sid, mkey = parsed
+        sid, vid, mkey = parsed
         eff_mn = _parse_score(mn)
         eff_mx = _parse_score(mx)
-        extra_criteria.append((f"{sid}:{mkey}", eff_mn, eff_mx))
-        canonical_extra.append((f"{sid}:{mkey}", eff_mn, eff_mx))
+        extra_criteria.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx))
+        canonical_extra.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx))
 
     # Determine whether we are in multi-sort mode.
     use_multi_sort = sort_parsed is not None and len(extra_criteria) > 0
 
     if sort_parsed is not None:
-        scorer_id, metric_key = sort_parsed
-        canonical_sort_by = f"{scorer_id}:{metric_key}"
+        scorer_id, variant_id, metric_key = sort_parsed
+        canonical_sort_by = f"{scorer_id}:{variant_id}:{metric_key}"
 
         if use_multi_sort:
-            criteria = [SortCriterion(scorer_id, metric_key, eff_min, eff_max)]
+            criteria = [SortCriterion(scorer_id, variant_id, metric_key, eff_min, eff_max)]
             for sb_canon, eff_mn, eff_mx in extra_criteria:
-                s_id, m_key = sb_canon.split(":", 1)
-                criteria.append(SortCriterion(s_id, m_key, eff_mn, eff_mx))
+                s_id, v_id, m_key = sb_canon.split(":")
+                criteria.append(SortCriterion(s_id, v_id, m_key, eff_mn, eff_mx))
 
             asset_score_pairs = list_assets_multi_sort(
                 conn,
@@ -316,6 +318,7 @@ def browse_assets(
                 conn,
                 scorer_id,
                 metric_key,
+                variant_id=variant_id,
                 limit=_PAGE_SIZE,
                 offset=offset,
                 favorited=fav_filter,
@@ -328,6 +331,7 @@ def browse_assets(
                 conn,
                 scorer_id,
                 metric_key,
+                variant_id=variant_id,
                 favorited=fav_filter,
                 min_score=eff_min,
                 max_score=eff_max,
@@ -343,13 +347,33 @@ def browse_assets(
 
     # Build sort options from registered scorer specs, but only include
     # metrics that actually have scored results from a completed run.
-    available_metrics = list_available_score_metrics(conn)
-    sort_options = [
-        (f"{spec.scorer_id}:{m.key}", f"{spec.display_name} – {m.display_name}")
-        for spec in list_specs()
-        for m in spec.metrics
-        if (spec.scorer_id, m.key) in available_metrics
-    ]
+    available_triples = list_available_score_metrics_with_variants(conn)
+    # Determine which (scorer_id, metric_key) combos have multiple variants scored —
+    # those need the variant display name in the label to disambiguate.
+    variants_per_scorer_metric: dict[tuple[str, str], int] = defaultdict(int)
+    for sid, _vid, mk in available_triples:
+        variants_per_scorer_metric[(sid, mk)] += 1
+
+    spec_by_id = {spec.scorer_id: spec for spec in list_specs()}
+    variant_by_key = {
+        (spec.scorer_id, v.variant_id): v for spec in list_specs() for v in spec.variants
+    }
+    sort_options = []
+    for scorer_id, variant_id, metric_key in sorted(available_triples):
+        spec = spec_by_id.get(scorer_id)
+        if spec is None:
+            continue
+        metric = next((m for m in spec.metrics if m.key == metric_key), None)
+        if metric is None:
+            continue
+        value = f"{scorer_id}:{variant_id}:{metric_key}"
+        if variants_per_scorer_metric.get((scorer_id, metric_key), 0) > 1:
+            v_spec = variant_by_key.get((scorer_id, variant_id))
+            v_name = v_spec.display_name if v_spec else variant_id
+            label = f"{spec.display_name} – {v_name} – {metric.display_name}"
+        else:
+            label = f"{spec.display_name} – {metric.display_name}"
+        sort_options.append((value, label))
 
     # Load saved presets for the toolbar
     presets = list_view_presets(conn)
