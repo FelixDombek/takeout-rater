@@ -14,7 +14,7 @@ from takeout_rater.db.queries import (
     list_view_presets,
     upsert_view_preset,
 )
-from takeout_rater.db.schema import migrate
+from takeout_rater.db.schema import CURRENT_SCHEMA_VERSION, migrate
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -152,4 +152,4 @@ def test_view_presets_table_exists_after_migration() -> None:
 def test_schema_version_is_10() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 10
+    assert version == CURRENT_SCHEMA_VERSION

@@ -9,7 +9,7 @@ from pathlib import Path
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 # The single schema version this codebase targets.
-CURRENT_SCHEMA_VERSION: int = 10
+CURRENT_SCHEMA_VERSION: int = 11
 
 # Earliest schema version from which incremental migrations are supported.
 # Databases older than this must be fully rebuilt (full re-scan).
@@ -21,6 +21,7 @@ _INCREMENTAL_MIGRATIONS: dict[int, Path] = {
     8: _MIGRATIONS_DIR / "0003_simple_scorer_rename.sql",
     9: _MIGRATIONS_DIR / "0004_clustering_runs.sql",
     10: _MIGRATIONS_DIR / "0005_clip_embeddings.sql",
+    11: _MIGRATIONS_DIR / "0006_clip_user_tags.sql",
 }
 
 

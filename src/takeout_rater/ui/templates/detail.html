@@ -126,6 +126,12 @@
     transition: background 0.1s;
   }
   .clip-tag:hover { background: #dce6ff; }
+  .clip-tag.user-tag {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
+  .clip-tag.user-tag:hover { background: #dcfce7; }
 </style>
 {% endblock %}
 
@@ -276,7 +282,7 @@ Bright pixel = left neighbour was brighter; dark pixel = right neighbour was bri
   <div id="tab-clip" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-clip"
        data-asset-id="{{ asset.id }}">
     <p class="clip-loading" style="display:none; color:#999; font-size:0.85rem; margin:0.5rem 0;">Loading…</p>
-    <p class="clip-empty" style="color:#999; font-size:0.85rem; margin:0.5rem 0;">Run the Embed job to generate CLIP tags.</p>
+    <p class="clip-empty" style="color:#999; font-size:0.85rem; margin:0.5rem 0;">Run the Embed job on the <a href="/clip">CLIP page</a> to generate CLIP tags.</p>
   </div>
 </div>{# /info-tabs #}
 
@@ -339,11 +345,11 @@ function loadClipWords(panel) {
       cloud.className = "clip-tag-cloud";
       data.words.forEach(function (w) {
         var tag = document.createElement("span");
-        tag.className = "clip-tag";
+        tag.className = w.user_tag ? "clip-tag user-tag" : "clip-tag";
         var rel = w.score / maxScore;
         tag.style.opacity = (0.45 + 0.55 * rel).toFixed(2);
         tag.style.fontSize = (0.72 + 0.36 * rel).toFixed(2) + "rem";
-        tag.title = "score: " + w.score.toFixed(4);
+        tag.title = (w.user_tag ? "custom tag — " : "") + "score: " + w.score.toFixed(4);
         tag.textContent = w.word;
         cloud.appendChild(tag);
       });

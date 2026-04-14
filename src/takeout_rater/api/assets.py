@@ -31,6 +31,7 @@ from takeout_rater.db.queries import (
     list_assets_deduped,
     list_assets_multi_sort,
     list_available_score_metrics_with_variants,
+    list_clip_user_tags,
     list_view_presets,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
@@ -474,6 +475,7 @@ def asset_detail(
 # ---------------------------------------------------------------------------
 
 _VOCAB_MATRIX_LOCK = __import__("threading").Lock()
+_USER_TAGS_MATRIX_LOCK = __import__("threading").Lock()
 
 
 def _get_clip_vocab_matrix(
@@ -529,6 +531,65 @@ def _get_clip_vocab_matrix(
         return result
 
 
+def _get_user_tags_matrix(
+    request: Request,
+    user_tags: list[str],
+) -> tuple[__import__("numpy").ndarray, list[str]] | None:  # type: ignore[name-defined]
+    """Return the cached ``(matrix, terms)`` pair for user-defined CLIP tags.
+
+    The matrix is built lazily and stored in ``app.state.clip_user_tags_matrix``
+    as a ``(frozenset_of_terms, matrix, terms_list)`` tuple.  The cache is
+    invalidated (set to ``None``) by the CLIP tag management API whenever tags
+    are added or removed.
+
+    Returns ``None`` when *user_tags* is empty or CLIP is not available.
+    """
+    if not user_tags:
+        return None
+
+    tags_key = frozenset(user_tags)
+
+    cached = getattr(request.app.state, "clip_user_tags_matrix", None)
+    if cached is not None:
+        cached_key, cached_matrix, cached_terms = cached
+        if cached_key == tags_key:
+            return (cached_matrix, cached_terms)
+
+    with _USER_TAGS_MATRIX_LOCK:
+        cached = getattr(request.app.state, "clip_user_tags_matrix", None)
+        if cached is not None:
+            cached_key, cached_matrix, cached_terms = cached
+            if cached_key == tags_key:
+                return (cached_matrix, cached_terms)
+
+        try:
+            import numpy as np  # noqa: PLC0415
+            import torch  # noqa: PLC0415
+
+            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+                get_clip_model,
+            )
+        except ImportError:
+            return None
+
+        model, _preprocess, tokenizer, device = get_clip_model()
+        terms = list(user_tags)
+
+        batch_size = 64
+        vecs: list[np.ndarray] = []
+        with torch.no_grad():
+            for start in range(0, len(terms), batch_size):
+                batch = terms[start : start + batch_size]
+                tokens = tokenizer(batch).to(device)
+                features = model.encode_text(tokens)
+                features = features / features.norm(dim=-1, keepdim=True)
+                vecs.append(features.cpu().float().numpy())
+
+        matrix = np.vstack(vecs).astype(np.float32)
+        request.app.state.clip_user_tags_matrix = (tags_key, matrix, terms)
+        return (matrix, terms)
+
+
 @router.get("/api/assets/{asset_id}/clip-words")
 def get_clip_words(
     asset_id: int,
@@ -539,13 +600,14 @@ def get_clip_words(
     """Return the top-K visual concepts matching this asset's CLIP embedding.
 
     Compares the stored image embedding against a curated vocabulary of visual
-    concept phrases using cosine similarity and returns the best matches.
+    concept phrases (predefined terms plus any user-defined tags) using cosine
+    similarity and returns the best matches.
 
     Query parameters:
     - ``top_k``: Number of top matches to return (default 20, max 100).
 
-    Returns JSON ``{"words": [{"word": str, "score": float}, ...]}`` or
-    ``{"words": [], "error": "no_embedding"}`` when no embedding is stored.
+    Returns JSON ``{"words": [{"word": str, "score": float, "user_tag": bool}, ...]}``
+    or ``{"words": [], "error": "no_embedding"}`` when no embedding is stored.
     """
     import struct  # noqa: PLC0415
 
@@ -573,11 +635,34 @@ def get_clip_words(
     if norm > 0:
         image_vec = image_vec / norm
 
-    scores = vocab_matrix @ image_vec  # shape (V,)
-    top_k = min(top_k, len(vocab_terms))
+    # Build combined matrix: predefined vocab + user-defined tags
+    user_tags = list_clip_user_tags(conn)
+    user_tag_set = set(user_tags)
+    # Filter out user tags that duplicate predefined terms to avoid overlap
+    novel_user_tags = [t for t in user_tags if t not in set(vocab_terms)]
+
+    user_matrix_result = _get_user_tags_matrix(request, novel_user_tags)
+
+    if user_matrix_result is not None:
+        user_matrix, user_terms = user_matrix_result
+        combined_matrix = np.vstack([vocab_matrix, user_matrix])
+        combined_terms = vocab_terms + user_terms
+    else:
+        combined_matrix = vocab_matrix
+        combined_terms = vocab_terms
+
+    scores = combined_matrix @ image_vec  # shape (V,)
+    top_k = min(top_k, len(combined_terms))
     ranked = np.argsort(-scores)[:top_k]
 
-    words = [{"word": vocab_terms[int(i)], "score": round(float(scores[i]), 4)} for i in ranked]
+    words = [
+        {
+            "word": combined_terms[int(i)],
+            "score": round(float(scores[i]), 4),
+            "user_tag": combined_terms[int(i)] in user_tag_set,
+        }
+        for i in ranked
+    ]
     return JSONResponse({"words": words})
 
 

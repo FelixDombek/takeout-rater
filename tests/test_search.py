@@ -20,7 +20,10 @@ from fastapi.testclient import TestClient
 from takeout_rater.db.queries import (
     bulk_upsert_clip_embeddings,
     count_clip_embeddings,
+    delete_clip_user_tag,
+    insert_clip_user_tag,
     list_asset_ids_without_embedding,
+    list_clip_user_tags,
     load_all_clip_embeddings,
     upsert_clip_embedding,
 )
@@ -147,6 +150,34 @@ class TestClipEmbeddingQueries:
         assert loaded[1][0] == a2
         assert loaded[0][1] == blob1
         assert loaded[1][1] == blob2
+
+
+# ---------------------------------------------------------------------------
+# CLIP user tags DB query tests
+# ---------------------------------------------------------------------------
+
+
+class TestClipUserTagQueries:
+    def test_list_empty(self, db_conn) -> None:
+        assert list_clip_user_tags(db_conn) == []
+
+    def test_insert_and_list(self, db_conn) -> None:
+        assert insert_clip_user_tag(db_conn, "beach sunset")
+        tags = list_clip_user_tags(db_conn)
+        assert "beach sunset" in tags
+
+    def test_insert_duplicate_returns_false(self, db_conn) -> None:
+        insert_clip_user_tag(db_conn, "mountain")
+        assert not insert_clip_user_tag(db_conn, "mountain")
+        assert list_clip_user_tags(db_conn).count("mountain") == 1
+
+    def test_delete_existing(self, db_conn) -> None:
+        insert_clip_user_tag(db_conn, "forest")
+        assert delete_clip_user_tag(db_conn, "forest")
+        assert "forest" not in list_clip_user_tags(db_conn)
+
+    def test_delete_nonexistent_returns_false(self, db_conn) -> None:
+        assert not delete_clip_user_tag(db_conn, "doesnotexist")
 
 
 # ---------------------------------------------------------------------------
@@ -294,11 +325,21 @@ class TestClipEmbeddingsMigration:
         }
         assert "clip_embeddings" in tables
 
+    def test_migration_creates_user_tags_table(self, db_conn) -> None:
+        """The clip_user_tags table should exist after migration."""
+        tables = {
+            row[0]
+            for row in db_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "clip_user_tags" in tables
+
     def test_incremental_migration_from_v9(self, tmp_path: Path) -> None:
-        """Migrating from v9 to v10 should create clip_embeddings."""
+        """Migrating from v9 should create clip_embeddings and clip_user_tags."""
         import sqlite3
 
-        from takeout_rater.db.schema import _MIGRATIONS_DIR, migrate
+        from takeout_rater.db.schema import _MIGRATIONS_DIR, CURRENT_SCHEMA_VERSION, migrate
 
         # Create a v9 DB by applying baseline then rolling back to v9
         db_path = tmp_path / "lib.sqlite"
@@ -313,19 +354,21 @@ class TestClipEmbeddingsMigration:
         # Roll back to v9
         conn.execute("PRAGMA user_version = 9")
         conn.execute("DROP TABLE IF EXISTS clip_embeddings")
+        conn.execute("DROP TABLE IF EXISTS clip_user_tags")
         conn.commit()
 
         # Now migrate
         migrate(conn)
 
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 10
+        assert version == CURRENT_SCHEMA_VERSION
 
         tables = {
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "clip_embeddings" in tables
+        assert "clip_user_tags" in tables
         conn.close()
 
 
@@ -335,14 +378,82 @@ class TestClipEmbeddingsMigration:
 
 
 class TestJobsPageEmbedCard:
-    def test_jobs_page_contains_embed_card(self, client_with_db: TestClient) -> None:
-        resp = client_with_db.get("/jobs")
+    def test_clip_page_contains_embed_card(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.get("/clip")
         assert resp.status_code == 200
         assert b"CLIP Embeddings" in resp.content
         assert b"btn-embed" in resp.content
 
-    def test_nav_bar_contains_search_link(self, client_with_db: TestClient) -> None:
+    def test_jobs_page_does_not_contain_embed_card(self, client_with_db: TestClient) -> None:
         resp = client_with_db.get("/jobs")
+        assert resp.status_code == 200
+        assert b"btn-embed" not in resp.content
+
+    def test_nav_bar_contains_search_link(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.get("/clip")
         assert resp.status_code == 200
         assert b"/search" in resp.content
         assert b"Search" in resp.content
+
+    def test_nav_bar_contains_clip_link(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.get("/jobs")
+        assert resp.status_code == 200
+        assert b"/clip" in resp.content
+        assert b"CLIP" in resp.content
+
+
+# ---------------------------------------------------------------------------
+# CLIP user tags API
+# ---------------------------------------------------------------------------
+
+
+class TestClipUserTagsApi:
+    def test_list_tags_empty(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.get("/api/clip/tags")
+        assert resp.status_code == 200
+        assert resp.json() == {"tags": []}
+
+    def test_add_tag(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.post("/api/clip/tags", json={"term": "golden retriever"})
+        assert resp.status_code == 201
+        data = resp.json()
+        assert "golden retriever" in data["tags"]
+
+    def test_add_duplicate_tag_returns_409(self, client_with_db: TestClient) -> None:
+        client_with_db.post("/api/clip/tags", json={"term": "puppy"})
+        resp = client_with_db.post("/api/clip/tags", json={"term": "puppy"})
+        assert resp.status_code == 409
+
+    def test_add_empty_tag_returns_400(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.post("/api/clip/tags", json={"term": "  "})
+        assert resp.status_code == 400
+
+    def test_delete_tag(self, client_with_db: TestClient) -> None:
+        client_with_db.post("/api/clip/tags", json={"term": "mountain lake"})
+        resp = client_with_db.delete("/api/clip/tags/mountain lake")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "mountain lake" not in data["tags"]
+
+    def test_delete_nonexistent_tag_returns_404(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.delete("/api/clip/tags/doesnotexist")
+        assert resp.status_code == 404
+
+    def test_list_tags_after_add(self, client_with_db: TestClient) -> None:
+        client_with_db.post("/api/clip/tags", json={"term": "autumn forest"})
+        client_with_db.post("/api/clip/tags", json={"term": "misty morning"})
+        resp = client_with_db.get("/api/clip/tags")
+        assert resp.status_code == 200
+        tags = resp.json()["tags"]
+        assert "autumn forest" in tags
+        assert "misty morning" in tags
+
+    def test_clip_page_loads(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.get("/clip")
+        assert resp.status_code == 200
+        assert b"CLIP" in resp.content
+        assert b"Custom Tag Terms" in resp.content
+
+    def test_clip_page_redirects_without_db(self, client_no_db: TestClient) -> None:
+        resp = client_no_db.get("/clip")
+        assert resp.status_code in (302, 307)
