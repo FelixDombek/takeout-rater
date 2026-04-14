@@ -1,0 +1,478 @@
+{% extends "base.html" %}
+
+{% block title %}CLIP – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .clip-page { max-width: 780px; margin: 0 auto; }
+  .clip-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .clip-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+  .clip-page h2.section-heading {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 2rem 0 0.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e0e0e0;
+  }
+
+  /* ── Job card ─────────────────────────────────────────────────────────── */
+  .job-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .job-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+  }
+  .job-card-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    flex: 1;
+  }
+  .job-card p.desc {
+    color: #555;
+    font-size: 0.875rem;
+    margin-bottom: 0.9rem;
+    line-height: 1.5;
+  }
+  .job-status {
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    min-height: 1.3em;
+    color: #444;
+  }
+  .job-status.ok    { color: #1e7e34; }
+  .job-status.error { color: #c0392b; }
+  .job-status.info  { color: #1a5cdb; }
+  .progress-bar-wrap {
+    height: 6px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    margin-top: 0.5rem;
+    display: none;
+  }
+  .progress-bar-wrap.visible { display: block; }
+  .progress-bar {
+    height: 100%;
+    background: #1a5cdb;
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+  .job-current-item {
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.2rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+    min-height: 1em;
+  }
+  .btn-run { white-space: nowrap; }
+  .badge-running {
+    display: inline-block;
+    background: #dbeafe;
+    color: #1e40af;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+
+  /* ── User tag management ─────────────────────────────────────────────── */
+  .tag-section {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .tag-section p.desc {
+    color: #555;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    line-height: 1.5;
+  }
+  .tag-add-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+  .tag-add-row input[type=text] {
+    flex: 1;
+    min-width: 180px;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+  .tag-add-row input[type=text]:focus {
+    outline: none;
+    border-color: #1a5cdb;
+  }
+  .tag-feedback {
+    font-size: 0.85rem;
+    min-height: 1.3em;
+    color: #444;
+    margin-bottom: 0.75rem;
+  }
+  .tag-feedback.ok    { color: #1e7e34; }
+  .tag-feedback.error { color: #c0392b; }
+
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .tag-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: #f0f4ff;
+    border: 1px solid #c7d7fc;
+    border-radius: 999px;
+    padding: 0.2rem 0.5rem 0.2rem 0.75rem;
+    font-size: 0.85rem;
+    color: #1a3a7a;
+  }
+  .tag-delete-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #888;
+    font-size: 0.9rem;
+    line-height: 1;
+    padding: 0 0.1rem;
+    border-radius: 999px;
+    transition: color 0.1s;
+  }
+  .tag-delete-btn:hover { color: #c0392b; }
+  .tag-empty {
+    color: #999;
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="clip-page">
+  <h1>✂ CLIP</h1>
+  <p class="subtitle">
+    CLIP (Contrastive Language–Image Pretraining) features: embedding generation for
+    <a href="/search">semantic search</a> and per-photo visual concept tagging.
+  </p>
+
+  <!-- ── Embed job ──────────────────────────────────────────────────────── -->
+  <div class="job-card" id="card-embed">
+    <div class="job-card-header">
+      <h2>🔍 Compute CLIP Embeddings</h2>
+      <span class="badge-running" id="badge-embed" style="display:none;">Running…</span>
+      <button class="btn btn-primary btn-run" id="btn-embed" onclick="startEmbedJob()">Run Embed</button>
+    </div>
+    <p class="desc">
+      Compute CLIP ViT-L/14 image embeddings for all assets. These embeddings enable
+      <a href="/search">semantic search</a> — finding photos by describing their content
+      in natural language (e.g. "sunset over the ocean", "birthday cake") — and power
+      the CLIP tag cloud shown on each photo's detail page. Requires the same ~900 MB
+      CLIP model used by the aesthetic and CLIP-IQA scorers.
+    </p>
+    <div class="progress-bar-wrap" id="prog-wrap-embed"><div class="progress-bar" id="prog-bar-embed"></div></div>
+    <div class="job-current-item" id="current-item-embed"></div>
+    <div class="job-status" id="status-embed"></div>
+  </div>
+
+  <!-- ── User tagging terms ─────────────────────────────────────────────── -->
+  <h2 class="section-heading">Custom Tag Terms</h2>
+  <div class="tag-section">
+    <p class="desc">
+      Add your own tagging terms to the CLIP vocabulary. These terms are matched against
+      each photo's CLIP embedding and displayed alongside the predefined words in the
+      <strong>CLIP</strong> tab of the photo detail view — but only when the photo has
+      a computed CLIP embedding. Terms are case-sensitive and must be unique.
+    </p>
+    <div class="tag-add-row">
+      <input type="text" id="tag-input" placeholder="e.g. golden retriever, ski resort…"
+             onkeydown="if(event.key==='Enter') addTag()">
+      <button class="btn btn-primary" id="btn-add-tag" onclick="addTag()">Add Term</button>
+    </div>
+    <div class="tag-feedback" id="tag-feedback"></div>
+    <div class="tag-list" id="tag-list">
+      <span class="tag-empty" id="tag-empty">No custom terms yet.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── Embed job polling ────────────────────────────────────────────────────
+  var _poller = null;
+  var _jobStats = null;
+
+  function setStatus(msg, cls) {
+    var el = document.getElementById('status-embed');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'job-status' + (cls ? ' ' + cls : '');
+  }
+
+  function setProgress(pct) {
+    var wrap = document.getElementById('prog-wrap-embed');
+    var bar  = document.getElementById('prog-bar-embed');
+    if (!wrap || !bar) return;
+    if (pct === null) {
+      wrap.className = 'progress-bar-wrap';
+    } else {
+      wrap.className = 'progress-bar-wrap visible';
+      bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    }
+  }
+
+  function setCurrentItem(text) {
+    var el = document.getElementById('current-item-embed');
+    if (!el) return;
+    el.textContent = text || '';
+  }
+
+  function setBadge(show) {
+    var badge = document.getElementById('badge-embed');
+    if (!badge) return;
+    badge.style.display = show ? 'inline-block' : 'none';
+  }
+
+  function setBtn(disabled) {
+    var btn = document.getElementById('btn-embed');
+    if (!btn) return;
+    btn.disabled = disabled;
+  }
+
+  function _formatEta(seconds) {
+    if (seconds < 60) return seconds + 's';
+    var m = Math.floor(seconds / 60);
+    var s = seconds % 60;
+    return m + 'm\u202f' + (s < 10 ? '0' : '') + s + 's';
+  }
+
+  function applyJobState(data) {
+    if (!data || data.job_type !== 'embed') return;
+    var pct = null;
+    if (data.total > 0) {
+      pct = Math.round((data.processed / data.total) * 100);
+    }
+
+    setBadge(data.running);
+    setBtn(data.running);
+
+    if (data.running) {
+      if (!_jobStats || data.processed <= _jobStats.startProcessed) {
+        _jobStats = { startTime: Date.now(), startProcessed: data.processed };
+      }
+      setCurrentItem(data.current_item || '');
+    } else {
+      _jobStats = null;
+      setCurrentItem('');
+    }
+
+    if (data.error) {
+      setStatus('\u2717 ' + data.error, 'error');
+      setProgress(null);
+    } else if (data.done) {
+      setStatus('\u2713 ' + data.message, 'ok');
+      setProgress(100);
+      setTimeout(function() { setProgress(null); }, 3000);
+    } else if (data.running) {
+      var statusMsg = data.message || 'Running\u2026';
+      if (data.total > 0 && _jobStats) {
+        var elapsed = (Date.now() - _jobStats.startTime) / 1000;
+        var doneInSession = data.processed - _jobStats.startProcessed;
+        if (elapsed >= 1 && doneInSession > 0) {
+          var rate = doneInSession / elapsed;
+          var eta = Math.round((data.total - data.processed) / rate);
+          statusMsg += '\u2002\u00b7\u2002' + rate.toFixed(1) + '/s';
+          if (eta > 0) statusMsg += '\u2002\u00b7\u2002ETA\u202f' + _formatEta(eta);
+        }
+      }
+      setStatus(statusMsg, 'info');
+      setProgress(pct !== null ? pct : 0);
+    } else if (data.message) {
+      setStatus(data.message, '');
+    }
+
+    if (!data.running && _poller) {
+      clearInterval(_poller);
+      _poller = null;
+    }
+  }
+
+  function pollEmbed() {
+    fetch('/api/jobs/status?job_type=embed')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { applyJobState(data); })
+      .catch(function() {});
+  }
+
+  function startPolling() {
+    if (_poller) return;
+    pollEmbed();
+    _poller = setInterval(pollEmbed, 1000);
+  }
+
+  // Initial state
+  fetch('/api/jobs/status?job_type=embed')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      applyJobState(data);
+      if (data.running) startPolling();
+    })
+    .catch(function() {});
+
+  window.startEmbedJob = function() {
+    setBtn(true);
+    setBadge(false);
+    setStatus('Starting\u2026', 'info');
+    setProgress(0);
+    setCurrentItem('');
+    _jobStats = null;
+
+    fetch('/api/jobs/embed/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    })
+      .then(function(r) {
+        if (!r.ok) {
+          return r.json().then(function(d) {
+            throw new Error(d.detail || r.statusText);
+          });
+        }
+        return r.json();
+      })
+      .then(function() {
+        setBadge(true);
+        startPolling();
+      })
+      .catch(function(err) {
+        setStatus('\u2717 ' + err.message, 'error');
+        setProgress(null);
+        setBtn(false);
+      });
+  };
+
+  // ── User tag management ──────────────────────────────────────────────────
+
+  function setTagFeedback(msg, cls) {
+    var el = document.getElementById('tag-feedback');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'tag-feedback' + (cls ? ' ' + cls : '');
+  }
+
+  function renderTags(tags) {
+    var list = document.getElementById('tag-list');
+    var empty = document.getElementById('tag-empty');
+    if (!list) return;
+
+    // Remove existing tag items (keep the empty placeholder in DOM)
+    list.querySelectorAll('.tag-item').forEach(function(el) { el.remove(); });
+
+    if (!tags || tags.length === 0) {
+      if (empty) empty.style.display = '';
+    } else {
+      if (empty) empty.style.display = 'none';
+      tags.forEach(function(term) {
+        var item = document.createElement('span');
+        item.className = 'tag-item';
+        item.dataset.term = term;
+
+        var label = document.createElement('span');
+        label.textContent = term;
+
+        var btn = document.createElement('button');
+        btn.className = 'tag-delete-btn';
+        btn.title = 'Remove "' + term + '"';
+        btn.textContent = '\u00d7';
+        btn.onclick = function() { deleteTag(term); };
+
+        item.appendChild(label);
+        item.appendChild(btn);
+        list.appendChild(item);
+      });
+    }
+  }
+
+  function loadTags() {
+    fetch('/api/clip/tags')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { renderTags(data.tags); })
+      .catch(function() {});
+  }
+
+  window.addTag = function() {
+    var input = document.getElementById('tag-input');
+    var term = (input ? input.value.trim() : '');
+    if (!term) {
+      setTagFeedback('Please enter a term.', 'error');
+      return;
+    }
+
+    var btn = document.getElementById('btn-add-tag');
+    if (btn) btn.disabled = true;
+    setTagFeedback('Adding\u2026', '');
+
+    fetch('/api/clip/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ term: term })
+    })
+      .then(function(r) {
+        return r.json().then(function(d) { return { ok: r.ok, data: d }; });
+      })
+      .then(function(result) {
+        if (!result.ok) {
+          throw new Error(result.data.detail || 'Unknown error');
+        }
+        if (input) input.value = '';
+        renderTags(result.data.tags);
+        setTagFeedback('\u2713 Added "' + term + '"', 'ok');
+        setTimeout(function() { setTagFeedback(''); }, 3000);
+      })
+      .catch(function(err) {
+        setTagFeedback('\u2717 ' + err.message, 'error');
+      })
+      .finally(function() {
+        if (btn) btn.disabled = false;
+      });
+  };
+
+  function deleteTag(term) {
+    fetch('/api/clip/tags/' + encodeURIComponent(term), { method: 'DELETE' })
+      .then(function(r) {
+        return r.json().then(function(d) { return { ok: r.ok, data: d }; });
+      })
+      .then(function(result) {
+        if (!result.ok) {
+          throw new Error(result.data.detail || 'Unknown error');
+        }
+        renderTags(result.data.tags);
+        setTagFeedback('\u2713 Removed "' + term + '"', 'ok');
+        setTimeout(function() { setTagFeedback(''); }, 3000);
+      })
+      .catch(function(err) {
+        setTagFeedback('\u2717 ' + err.message, 'error');
+      });
+  }
+
+  // Load tags on page load
+  loadTags();
+})();
+</script>
+{% endblock %}

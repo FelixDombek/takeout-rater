@@ -134,6 +134,12 @@ CREATE TABLE IF NOT EXISTS clip_embeddings (
     computed_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS clip_user_tags (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    term       TEXT    UNIQUE NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_assets_taken_at         ON assets (taken_at);
 CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
@@ -144,4 +150,4 @@ CREATE INDEX IF NOT EXISTS idx_asset_scores_run_metric ON asset_scores (scorer_r
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_id         ON clusters (run_id);
 
-PRAGMA user_version = 10;
+PRAGMA user_version = 11;

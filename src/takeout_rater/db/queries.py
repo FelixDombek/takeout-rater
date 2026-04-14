@@ -1963,3 +1963,57 @@ def get_clip_embedding_for_asset(conn: sqlite3.Connection, asset_id: int) -> byt
         (asset_id,),
     ).fetchone()
     return row[0] if row else None
+
+
+# ---------------------------------------------------------------------------
+# CLIP user tags
+# ---------------------------------------------------------------------------
+
+
+def list_clip_user_tags(conn: sqlite3.Connection) -> list[str]:
+    """Return all user-defined CLIP tagging terms, ordered by creation time.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of term strings.
+    """
+    rows = conn.execute("SELECT term FROM clip_user_tags ORDER BY created_at, id").fetchall()
+    return [row[0] for row in rows]
+
+
+def insert_clip_user_tag(conn: sqlite3.Connection, term: str) -> bool:
+    """Insert a new user-defined CLIP tagging term.
+
+    Args:
+        conn: Open database connection.
+        term: The tagging term to insert (must be non-empty).
+
+    Returns:
+        ``True`` if the term was inserted, ``False`` if it already exists.
+    """
+    try:
+        conn.execute(
+            "INSERT INTO clip_user_tags (term, created_at) VALUES (?, ?)",
+            (term, int(time.time())),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def delete_clip_user_tag(conn: sqlite3.Connection, term: str) -> bool:
+    """Delete a user-defined CLIP tagging term.
+
+    Args:
+        conn: Open database connection.
+        term: The tagging term to delete.
+
+    Returns:
+        ``True`` if the term was deleted, ``False`` if it did not exist.
+    """
+    cur = conn.execute("DELETE FROM clip_user_tags WHERE term = ?", (term,))
+    conn.commit()
+    return cur.rowcount > 0

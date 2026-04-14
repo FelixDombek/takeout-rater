@@ -23,7 +23,7 @@ from takeout_rater.db.queries import (
     update_asset_sha256,
     upsert_asset,
 )
-from takeout_rater.db.schema import SchemaMismatchError, migrate
+from takeout_rater.db.schema import CURRENT_SCHEMA_VERSION, SchemaMismatchError, migrate
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ def test_schema_creates_asset_scores_table() -> None:
 def test_schema_user_version_is_10() -> None:
     conn = _open_in_memory()
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 10
+    assert version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_is_idempotent() -> None:
@@ -99,11 +99,11 @@ def test_migrate_is_idempotent() -> None:
     conn = _open_in_memory()
     migrate(conn)  # second run
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 10
+    assert version == CURRENT_SCHEMA_VERSION
 
 
 def test_migrate_incremental_v6_to_v10() -> None:
-    """A v6 database must be automatically upgraded to v10."""
+    """A v6 database must be automatically upgraded to the current schema version."""
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -150,7 +150,7 @@ def test_migrate_incremental_v6_to_v10() -> None:
     migrate(conn)
 
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 10
+    assert version == CURRENT_SCHEMA_VERSION
     # Verify the diameter column exists (v7 migration)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(clusters)").fetchall()}
     assert "diameter" in cols
@@ -159,7 +159,7 @@ def test_migrate_incremental_v6_to_v10() -> None:
 
 
 def test_migrate_incremental_v7_to_v9() -> None:
-    """A v7 database must be automatically upgraded to v9 (renames Pillow scorer IDs)."""
+    """A v7 database must be automatically upgraded to the current schema version."""
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -209,7 +209,7 @@ def test_migrate_incremental_v7_to_v9() -> None:
     migrate(conn)
 
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 10
+    assert version == CURRENT_SCHEMA_VERSION
     # All three old rows should have been renamed to scorer_id='simple'
     rows = conn.execute("SELECT scorer_id, variant_id FROM scorer_runs").fetchall()
     assert len(rows) == 3
