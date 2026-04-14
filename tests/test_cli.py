@@ -86,12 +86,6 @@ def test_browse_default_port() -> None:
     assert args.port == 8765
 
 
-def test_index_no_thumbs_flag() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["index", "--no-thumbs", "/tmp/fake"])
-    assert args.no_thumbs is True
-
-
 # ---------------------------------------------------------------------------
 # serve sub-command: schema mismatch handling
 # ---------------------------------------------------------------------------

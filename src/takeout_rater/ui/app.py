@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -108,6 +109,9 @@ def create_app(
         app.state.takeout_root = None
     app.state.thumbs_dir = library_root / "takeout-rater" / "thumbs" if library_root else None
     app.state.templates = _make_templates(_TEMPLATES_DIR)
+    # Mount static assets (CSS, JS shared across pages)
+    _STATIC_DIR = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     # Background indexing state (set/updated by the config route)
     app.state.index_progress = None
     # Background job state (set/updated by the jobs router)

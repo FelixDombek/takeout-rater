@@ -1,18 +1,32 @@
 """Reusable indexing function callable from both the CLI and the web API.
 
-This module provides :func:`run_index` which scans a Google Photos Takeout
-directory and processes it in two phases:
+This module provides :func:`run_index` which processes a Google Photos
+Takeout directory in two distinct phases:
 
-1. **Index phase** – fast scan of filesystem metadata; upserts each asset into
-   the library database with only the basic file properties (relpath, filename,
-   extension, size, MIME type, etc.).  No image file is opened and no sidecar
-   JSON is read in this phase.
+1. **Scan phase** – pure filesystem walk; collects file-stat metadata into an
+   in-memory list without opening any image file or reading any sidecar JSON.
+   This is extremely fast and produces no database I/O.
 
-2. **Thumbnail phase** – parallel workers process each asset: they compute the
-   SHA-256 content hash, parse the sidecar JSON (if present), and generate a
-   JPEG thumbnail.  Results are written back to the database sequentially from
-   the main thread.  A deduplication pass then merges byte-identical files
-   (same SHA-256) into the ``asset_paths`` table.
+2. **Thumbnailing phase** – does all the file-reading work in two parallel
+   passes followed by a serialised database step:
+
+   * **Pass A** (parallel) – each worker computes the SHA-256 content hash and
+     parses the sidecar JSON for its assigned asset.  No database access.
+   * **DB step** (main thread, serialised) – results from completed Pass A
+     futures are applied to the database one-by-one as they arrive.
+     :func:`~takeout_rater.db.queries.upsert_asset` is called with the full
+     row (including ``sha256``), so its built-in content-deduplication logic
+     handles exact duplicates by recording alias paths in ``asset_paths``
+     instead of creating a second ``assets`` row.  After the upsert, the
+     canonical thumbnail path is looked up; if it does not yet exist the
+     asset is added to the work-list for Pass B.
+   * **Pass B** (parallel) – each worker generates the JPEG thumbnail for one
+     canonical asset.  Assets that were merged as aliases, or whose thumbnail
+     was already on disk, are automatically skipped.
+
+Progress is reported via the :class:`IndexProgress` dataclass.  The
+:attr:`IndexProgress.pct` property exposes a unified 0–100 % figure that
+spans all phases and never resets at phase transitions.
 """
 
 from __future__ import annotations
@@ -23,7 +37,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,7 +62,7 @@ def _bool_to_int(v: bool | None) -> int | None:
 
 @dataclass
 class IndexProgress:
-    """Tracks the progress of an indexing run.
+    """Tracks the progress of an indexing run across all phases.
 
     Attributes:
         running: ``True`` while the indexer is still working.
@@ -56,17 +70,16 @@ class IndexProgress:
         error: Human-readable error message, or *None* on success.
         found: Total number of image files discovered during scanning.
         indexed: Number of assets upserted into the database so far.
-        thumbs_ok: Number of thumbnails successfully generated.
-        thumbs_skip: Number of thumbnails skipped (already existed or error).
+        thumbs_ok: Number of thumbnails successfully generated (Pass B).
+        thumbs_skip: Number of thumbnails skipped (already existed, error, or
+            the asset was a duplicate alias).
         phase: Current phase — ``"scanning"`` while :func:`scan_takeout` is
-            running; ``"indexing"`` once the DB-upsert loop has started;
-            ``"thumbnailing"`` during parallel thumbnail/sha256/sidecar work.
-        total_dirs: Total number of directories to scan (known after the fast
-            first pass inside :func:`scan_takeout`).
+            running; ``"thumbnailing"`` for Pass A + DB step + Pass B.
+        total_dirs: Total number of directories to scan (filled during scan).
         dirs_scanned: Number of directories fully processed so far.
         current_dir: Name of the directory most recently processed.
-        thumbs_total: Total number of assets to process in the
-            ``"thumbnailing"`` phase (0 until that phase begins).
+        thumbs_total: Total number of assets to process in the thumbnailing
+            phase (set to ``found`` as soon as the phase begins).
     """
 
     running: bool = False
@@ -82,6 +95,32 @@ class IndexProgress:
     current_dir: str = ""
     thumbs_total: int = 0
 
+    @property
+    def pct(self) -> float:
+        """Unified progress percentage (0–100) across all phases.
+
+        The bar is partitioned as follows, so it never resets at phase
+        transitions:
+
+        * **0 – 5 %** – scanning phase (proportional to dirs scanned).
+        * **5 – 52.5 %** – Pass A of thumbnailing (sha256 + sidecar,
+          proportional to assets processed through ``indexed``).
+        * **52.5 – 100 %** – Pass B of thumbnailing (thumbnail generation,
+          proportional to ``thumbs_ok + thumbs_skip``).
+        """
+        if self.phase == "scanning":
+            if self.total_dirs > 0:
+                return (self.dirs_scanned / self.total_dirs) * 5.0
+            return 0.0
+        # thumbnailing phase: both passes combined fill the remaining 95 %.
+        # Each asset contributes two "units" (one for sha256+sidecar, one for
+        # the thumbnail decision), so total_units = 2 * found.
+        if self.found > 0:
+            a_done = self.indexed  # completed Pass A units
+            b_done = self.thumbs_ok + self.thumbs_skip  # completed Pass B units
+            return 5.0 + ((a_done + b_done) / (2 * self.found)) * 95.0
+        return 5.0
+
 
 def run_index(
     library_root: Path,
@@ -90,33 +129,22 @@ def run_index(
 ) -> IndexProgress:
     """Scan *library_root* and upsert discovered assets into *conn*.
 
-    Processing happens in two phases for maximum throughput:
-
-    * **Index phase** – inserts basic file metadata into the database without
-      reading image files or sidecar JSONs.
-    * **Thumbnail phase** – a thread pool processes each asset in parallel:
-      SHA-256 computation, sidecar parsing, and JPEG thumbnail generation all
-      happen concurrently.  DB updates are applied from the main thread as
-      results arrive.  A final deduplication pass merges byte-identical files.
-
-    This function is safe to call from a background thread because the
-    database connection is opened with ``check_same_thread=False``.
+    Processing happens in two phases (scan → thumbnailing) for maximum
+    throughput.  See the module docstring for a detailed description of each
+    sub-step.
 
     Args:
         library_root: Directory that *contains* the ``Takeout/`` folder.
         conn: Open :class:`sqlite3.Connection` for the library database.
         on_progress: Optional callback invoked after each asset is processed.
-            Receives the current :class:`IndexProgress` instance.
+            Receives the current :class:`IndexProgress` instance.  Will be
+            called from the main thread; implementations must not block.
 
     Returns:
         The final :class:`IndexProgress` describing what was indexed.
     """
     from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
-    from takeout_rater.db.queries import (  # noqa: PLC0415
-        dedup_assets_by_sha256,
-        update_asset_metadata,
-        upsert_asset,
-    )
+    from takeout_rater.db.queries import upsert_asset  # noqa: PLC0415
     from takeout_rater.indexing.scanner import (  # noqa: PLC0415
         GOOGLE_PHOTOS_DIR_NAMES,
         find_google_photos_root,
@@ -130,6 +158,7 @@ def run_index(
 
     progress = IndexProgress(running=True)
 
+    # ── Resolve the photos root ───────────────────────────────────────────────
     takeout_dir = library_root / "Takeout"
     if not takeout_dir.exists():
         # Accept the user passing the Takeout/ dir directly (old-format exports).
@@ -148,8 +177,10 @@ def run_index(
 
     photos_root = find_google_photos_root(takeout_dir)
 
-    # Wire the scanning-phase progress: on_dir_scanned is called by
-    # scan_takeout after each directory's files are stat'd.
+    # ── Phase 1: Scan ─────────────────────────────────────────────────────────
+    # Pure filesystem walk — no file reads, no DB access.
+    # scan_takeout calls _on_dir_scanned after completing each album directory.
+
     def _on_dir_scanned(dirs_done: int, total_dirs: int, dir_name: str) -> None:
         progress.total_dirs = total_dirs
         progress.dirs_scanned = dirs_done
@@ -159,89 +190,36 @@ def run_index(
 
     assets = scan_takeout(photos_root, on_dir_scanned=_on_dir_scanned)
     progress.found = len(assets)
-    progress.phase = "indexing"
-
-    if on_progress:
-        on_progress(progress)
 
     if not assets:
         progress.running = False
         progress.done = True
         return progress
 
-    thumbs_dir = library_state_dir(library_root) / "thumbs"
-    thumbs_dir.mkdir(parents=True, exist_ok=True)
-
-    now = int(time.time())
-
-    # ── Phase 1: Fast index ───────────────────────────────────────────────────
-    # Insert only the basic filesystem metadata for each asset.  No image file
-    # is opened and no sidecar is read.  This loop is intentionally lightweight
-    # so the database is populated quickly even for very large libraries.
-    #
-    # We also build the work-list for Phase 2 (thumbnail + sidecar + sha256).
-    _thumb_work: list[tuple[int, Path, Path | None, Path]] = []
-
-    for asset_file in assets:
-        progress.current_dir = os.path.dirname(asset_file.relpath)
-        row: dict = {
-            "relpath": asset_file.relpath,
-            "filename": Path(asset_file.relpath).name,
-            "ext": Path(asset_file.relpath).suffix.lower(),
-            "size_bytes": asset_file.size_bytes,
-            "mime": asset_file.mime,
-            "sidecar_relpath": (
-                str(asset_file.sidecar_path.relative_to(photos_root))
-                if asset_file.sidecar_path
-                else None
-            ),
-            "indexed_at": now,
-            "indexer_version": _CURRENT_INDEXER_VERSION,
-        }
-
-        asset_id = upsert_asset(conn, row)
-        progress.indexed += 1
-
-        thumb = thumb_path_for_id(thumbs_dir, asset_id)
-        _thumb_work.append((asset_id, asset_file.abspath, asset_file.sidecar_path, thumb))
-
-        if on_progress:
-            on_progress(progress)
-
-    # ── Phase 2: Parallel thumbnail + sidecar + SHA-256 ──────────────────────
-    # Each worker computes the sha256, parses the sidecar, and generates the
-    # thumbnail.  Workers are I/O-bound so the GIL is released for most of the
-    # time, providing genuine parallelism across CPU cores.  Database updates
-    # are applied from the *main thread* as futures complete to keep SQLite
-    # writes serial and consistent.
-
+    # ── Phase 2: Thumbnailing ─────────────────────────────────────────────────
     progress.phase = "thumbnailing"
-    progress.thumbs_total = len(_thumb_work)
-
+    progress.thumbs_total = len(assets)
     if on_progress:
         on_progress(progress)
 
-    def _do_thumb(
-        item: tuple[int, Path, Path | None, Path],
-    ) -> tuple[int, str | None, dict, bool | None]:
-        """Worker: compute sha256, parse sidecar, generate thumbnail.
+    thumbs_dir = library_state_dir(library_root) / "thumbs"
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
+    now = int(time.time())
+    num_workers = os.cpu_count() or 1
 
-        Returns ``(asset_id, sha256, sidecar_updates, thumb_ok)`` where
-        ``thumb_ok`` is ``True`` on success, ``False`` on error, and ``None``
-        when the thumbnail already existed and was skipped.
-        """
-        asset_id, abspath, sidecar_path, thumb = item
+    # ── Pass A: parallel sha256 + sidecar ─────────────────────────────────────
+    # Workers read each file and its sidecar but do NOT touch the DB.
 
-        # Compute SHA-256
+    def _do_sha_sidecar(asset_file: object) -> tuple:
+        """Compute sha256 and parse sidecar; return a row-ready dict."""
         sha256: str | None = None
         with contextlib.suppress(OSError):
-            sha256 = _compute_sha256(abspath)
+            sha256 = _compute_sha256(asset_file.abspath)  # type: ignore[union-attr]
 
-        # Parse sidecar
         sidecar_updates: dict = {}
-        if sidecar_path is not None:
+        if asset_file.sidecar_path is not None:  # type: ignore[union-attr]
             with contextlib.suppress(ValueError):
-                sidecar = parse_sidecar(sidecar_path)
+                sidecar = parse_sidecar(asset_file.sidecar_path)  # type: ignore[union-attr]
                 sidecar_updates = {
                     "title": sidecar.title,
                     "description": sidecar.description,
@@ -264,48 +242,83 @@ def run_index(
                     "app_source_package": sidecar.app_source_package,
                 }
 
-        # Generate thumbnail
-        if thumb.exists():
-            thumb_ok: bool | None = None  # skip — already present
-        else:
-            try:
-                generate_thumbnail(abspath, thumb)
-                thumb_ok = True
-            except (ImportError, OSError):
-                thumb_ok = False
+        return (asset_file, sha256, sidecar_updates)
 
-        return asset_id, sha256, sidecar_updates, thumb_ok
-
-    num_workers = os.cpu_count() or 1
+    # Work-list for Pass B: (asset_id, abspath, thumb_path).
+    # A set of already-queued asset_ids prevents duplicate thumbnail work when
+    # the same sha256 appears more than once in the same indexing run.
+    _needs_thumb: list[tuple[int, Path, Path]] = []
+    _thumb_queued: set[int] = set()
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(_do_thumb, item) for item in _thumb_work]
+        # Submit all Pass A workers up-front so they run in parallel.
+        futures: list[Future] = [executor.submit(_do_sha_sidecar, af) for af in assets]
+
+        # Process results as they complete.  DB access is serialised here in
+        # the main thread; workers only do pure I/O.
         for future in as_completed(futures):
-            asset_id, sha256, sidecar_updates, thumb_ok = future.result()
+            asset_file, sha256, sidecar_updates = future.result()
 
-            # Apply metadata back to the DB from the main thread.
-            updates: dict = {}
+            row: dict = {
+                "relpath": asset_file.relpath,
+                "filename": Path(asset_file.relpath).name,
+                "ext": Path(asset_file.relpath).suffix.lower(),
+                "size_bytes": asset_file.size_bytes,
+                "mime": asset_file.mime,
+                "sidecar_relpath": (
+                    str(asset_file.sidecar_path.relative_to(photos_root))
+                    if asset_file.sidecar_path
+                    else None
+                ),
+                "indexed_at": now,
+                "indexer_version": _CURRENT_INDEXER_VERSION,
+            }
             if sha256 is not None:
-                updates["sha256"] = sha256
-            updates.update(sidecar_updates)
-            if updates:
-                update_asset_metadata(conn, asset_id, updates)
+                row["sha256"] = sha256
+            row.update(sidecar_updates)
 
-            if thumb_ok is True:
-                progress.thumbs_ok += 1
+            # upsert_asset handles sha256-based deduplication: if another
+            # asset row already carries the same hash the new relpath is
+            # recorded as an alias in asset_paths and the canonical id is
+            # returned.
+            asset_id = upsert_asset(conn, row)
+            progress.indexed += 1
+
+            # Check whether a thumbnail already exists for this canonical
+            # asset.  This covers both re-indexing runs (thumb was generated
+            # on the previous run) and the case where an alias was merged into
+            # an existing canonical whose thumb is already present.
+            thumb = thumb_path_for_id(thumbs_dir, asset_id)
+            if not thumb.exists() and asset_id not in _thumb_queued:
+                _needs_thumb.append((asset_id, asset_file.abspath, thumb))
+                _thumb_queued.add(asset_id)
             else:
                 progress.thumbs_skip += 1
 
             if on_progress:
                 on_progress(progress)
 
-    # Commit all metadata updates before the dedup pass.
-    conn.commit()
+    # ── Pass B: parallel thumbnail generation ─────────────────────────────────
+    # Only runs for canonical assets whose thumbnail does not yet exist.
 
-    # ── Phase 3: Deduplication ────────────────────────────────────────────────
-    # Merge byte-identical files (same SHA-256) so each unique image has
-    # exactly one ``assets`` row; duplicate paths become ``asset_paths`` aliases.
-    dedup_assets_by_sha256(conn)
+    def _gen_thumb(item: tuple[int, Path, Path]) -> tuple[int, bool]:
+        asset_id, abspath, thumb = item
+        try:
+            generate_thumbnail(abspath, thumb)
+            return asset_id, True
+        except (ImportError, OSError):
+            return asset_id, False
+
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures_b: list[Future] = [executor.submit(_gen_thumb, item) for item in _needs_thumb]
+        for future in as_completed(futures_b):
+            _asset_id, ok = future.result()
+            if ok:
+                progress.thumbs_ok += 1
+            else:
+                progress.thumbs_skip += 1
+            if on_progress:
+                on_progress(progress)
 
     progress.running = False
     progress.done = True

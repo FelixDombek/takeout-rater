@@ -52,7 +52,6 @@ def test_jobs_status_returns_list_by_default(client_no_db: TestClient) -> None:
         "score",
         "cluster",
         "export",
-        "rehash",
         "rescan",
         "embed",
         "detect_faces",
@@ -106,7 +105,7 @@ def test_list_scorers_returns_200(client_no_db: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "job_type", ["index", "score", "cluster", "export", "rehash", "rescan", "embed"]
+    "job_type", ["index", "score", "cluster", "export", "rescan", "embed"]
 )
 def test_start_job_without_db_returns_503(client_no_db: TestClient, job_type: str) -> None:
     resp = client_no_db.post(f"/api/jobs/{job_type}/start", json={})
@@ -297,42 +296,6 @@ def test_start_export_job_conflicts_when_running(
     )
 
     resp = client_with_db.post("/api/jobs/export/start", json={})
-    assert resp.status_code == 409
-
-
-# ---------------------------------------------------------------------------
-# POST /api/jobs/rehash/start
-# ---------------------------------------------------------------------------
-
-
-def test_start_rehash_job_returns_started(
-    client_with_db: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import threading  # noqa: E402
-
-    original_thread = threading.Thread
-
-    class _NoOpThread(original_thread):
-        def start(self) -> None:
-            pass
-
-    monkeypatch.setattr("takeout_rater.api.jobs.threading.Thread", _NoOpThread)
-
-    resp = client_with_db.post("/api/jobs/rehash/start", json={})
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "started"
-
-
-def test_start_rehash_job_conflicts_when_running(
-    client_with_db: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from takeout_rater.api.jobs import JobProgress  # noqa: E402
-
-    client_with_db.app.state.jobs["rehash"] = JobProgress(  # type: ignore[union-attr]
-        job_type="rehash", running=True
-    )
-
-    resp = client_with_db.post("/api/jobs/rehash/start", json={})
     assert resp.status_code == 409
 
 

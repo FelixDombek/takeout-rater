@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
 # Exit code returned by `serve` when the on-disk database was built by an
@@ -180,6 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # serve – launcher-friendly variant of browse that reads config for the path
+    serve_parser = sub.add_parser(
         "serve",
         help=(
             "Launch the web UI (reads Takeout path from config; "
@@ -198,242 +198,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="Host/IP to bind to (default: 127.0.0.1).",
     )
 
-    # rehash – compute SHA-256 for already-indexed assets without a hash
-    rehash_parser = sub.add_parser(
-        "rehash",
-        help="Compute SHA-256 content hashes for already-indexed assets",
-    )
-    rehash_parser.add_argument(
-        "library_root",
-        metavar="LIBRARY_ROOT",
-        help="Directory that *contains* the Takeout/ folder (same as used with 'index').",
-    )
-    rehash_parser.add_argument(
-        "--all",
-        action="store_true",
-        default=False,
-        dest="rehash_all",
-        help="Recompute hashes even for assets that already have one (useful after migration).",
-    )
-
     return parser
-
-
-def _bool_to_int(v: bool | None) -> int | None:
-    """Convert an optional bool to the 0/1 integer stored in SQLite."""
-    if v is None:
-        return None
-    return 1 if v else 0
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
     """Execute the ``index`` sub-command."""
-    import hashlib  # noqa: PLC0415
-
-    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
-    from takeout_rater.indexing.scanner import (  # noqa: PLC0415
-        GOOGLE_PHOTOS_DIR_NAMES,
-        find_google_photos_root,
-        scan_takeout,
-    )
-    from takeout_rater.indexing.sidecar import parse_sidecar  # noqa: PLC0415
-    from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
-        generate_thumbnail,
-        thumb_path_for_id,
-    )
+    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+    from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
 
     library_root = Path(args.library_root).resolve()
-    takeout_dir = library_root / "Takeout"
-
     if not library_root.exists():
         print(f"error: library root does not exist: {library_root}", file=sys.stderr)
         return 1
-    if not takeout_dir.exists():
-        # Accept the user passing the Takeout/ dir directly.
-        # Recognise the old format (Photos from YYYY/ dirs) and the newer format
-        # where albums are nested under a localized "Google Photos" subdirectory.
-        if list(library_root.glob("Photos from *")) or any(
-            (library_root / name).is_dir() for name in GOOGLE_PHOTOS_DIR_NAMES
-        ):
-            takeout_dir = library_root
-            library_root = library_root.parent
-        else:
+
+    last_phase: list[str] = ["scanning"]
+
+    def _on_progress(p: IndexProgress) -> None:
+        if p.phase != last_phase[0]:
+            last_phase[0] = p.phase
+            print()  # newline before each new phase
+        if p.phase == "scanning" and p.total_dirs > 0:
             print(
-                f"error: no Takeout/ directory found inside {library_root}\n"
-                "       Pass the directory that *contains* your Takeout/ folder.",
-                file=sys.stderr,
+                f"\rScanning… {p.dirs_scanned}/{p.total_dirs} dirs",
+                end="",
+                flush=True,
             )
-            return 1
-
-    # Narrow the scan to the Google Photos albums root within takeout_dir.
-    # This avoids accidentally indexing images from other Google products
-    # (Drive, Chat, etc.) that may be present in the same Takeout archive.
-    photos_root = find_google_photos_root(takeout_dir)
-    print(f"Scanning {photos_root} …")
-    assets = scan_takeout(photos_root)
-    print(f"Found {len(assets)} image file(s).")
-
-    if not assets:
-        print("Nothing to index.")
-        return 0
+        elif p.phase == "thumbnailing" and p.thumbs_total > 0:
+            done_a = p.indexed
+            done_b = p.thumbs_ok + p.thumbs_skip
+            print(
+                f"\rProcessing… {done_a}/{p.thumbs_total} sha256  "
+                f"  {done_b}/{p.thumbs_total} thumbnails",
+                end="",
+                flush=True,
+            )
 
     conn = open_library_db(library_root)
-    thumbs_dir = library_state_dir(library_root) / "thumbs"
-    thumbs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_index(library_root, conn, on_progress=_on_progress)
+    finally:
+        conn.close()
 
-    indexed = 0
-    thumbs_ok = 0
-    thumbs_skip = 0
-    now = int(time.time())
+    print()  # newline after final progress line
 
-    for asset_file in assets:
-        # Parse sidecar (if available)
-        sidecar = None
-        if asset_file.sidecar_path is not None:
-            try:
-                sidecar = parse_sidecar(asset_file.sidecar_path)
-            except ValueError as exc:
-                print(f"  warning: {exc}", file=sys.stderr)
-
-        row: dict = {
-            "relpath": asset_file.relpath,
-            "filename": Path(asset_file.relpath).name,
-            "ext": Path(asset_file.relpath).suffix.lower(),
-            "size_bytes": asset_file.size_bytes,
-            "mime": asset_file.mime,
-            "sidecar_relpath": (
-                str(asset_file.sidecar_path.relative_to(photos_root))
-                if asset_file.sidecar_path
-                else None
-            ),
-            "indexed_at": now,
-        }
-
-        # Compute SHA-256 content hash; skip silently on read errors.
-        try:
-            h = hashlib.sha256()
-            with open(asset_file.abspath, "rb") as fh:
-                for chunk in iter(lambda: fh.read(65536), b""):
-                    h.update(chunk)
-            row["sha256"] = h.hexdigest()
-        except OSError:
-            pass
-
-        if sidecar is not None:
-            row.update(
-                {
-                    "title": sidecar.title,
-                    "description": sidecar.description,
-                    "google_photos_url": sidecar.google_photos_url,
-                    "taken_at": sidecar.taken_at,
-                    "created_at_sidecar": sidecar.created_at_sidecar,
-                    "image_views": sidecar.image_views,
-                    "geo_lat": sidecar.geo_lat,
-                    "geo_lon": sidecar.geo_lon,
-                    "geo_alt": sidecar.geo_alt,
-                    "geo_exif_lat": sidecar.geo_exif_lat,
-                    "geo_exif_lon": sidecar.geo_exif_lon,
-                    "geo_exif_alt": sidecar.geo_exif_alt,
-                    "favorited": _bool_to_int(sidecar.favorited),
-                    "archived": _bool_to_int(sidecar.archived),
-                    "trashed": _bool_to_int(sidecar.trashed),
-                    "origin_type": sidecar.origin_type,
-                    "origin_device_type": sidecar.origin_device_type,
-                    "origin_device_folder": sidecar.origin_device_folder,
-                    "app_source_package": sidecar.app_source_package,
-                }
-            )
-
-        from takeout_rater.db.queries import upsert_asset  # noqa: PLC0415
-
-        asset_id = upsert_asset(conn, row)
-        indexed += 1
-
-        if not args.no_thumbs:
-            thumb = thumb_path_for_id(thumbs_dir, asset_id)
-            if not thumb.exists():
-                try:
-                    generate_thumbnail(asset_file.abspath, thumb)
-                    thumbs_ok += 1
-                except (ImportError, OSError) as exc:
-                    print(
-                        f"  thumb skipped ({Path(asset_file.relpath).name}): {exc}", file=sys.stderr
-                    )
-                    thumbs_skip += 1
-            else:
-                thumbs_skip += 1
-
-    conn.close()
-
-    print(f"Indexed {indexed} asset(s).")
-    if not args.no_thumbs:
-        print(f"Thumbnails: {thumbs_ok} generated, {thumbs_skip} skipped.")
-    print(f"Library: {library_root / 'takeout-rater'}")
-    return 0
-
-
-def _cmd_rehash(args: argparse.Namespace) -> int:
-    """Execute the ``rehash`` sub-command.
-
-    Computes SHA-256 content hashes for already-indexed assets that are missing
-    a hash (or all assets when ``--all`` is given).  This is the migration path
-    for libraries that were indexed before SHA-256 computation was added.
-    """
-    import hashlib  # noqa: PLC0415
-
-    from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
-    from takeout_rater.db.queries import (  # noqa: PLC0415
-        get_asset_by_id,
-        list_all_asset_ids,
-        list_asset_ids_without_sha256,
-        update_asset_sha256,
-    )
-
-    library_root = Path(args.library_root).resolve()
-    db_path = library_db_path(library_root)
-
-    if not db_path.exists():
-        print(
-            f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <library_root>' first.",
-            file=sys.stderr,
-        )
+    if result.error:
+        print(f"error: {result.error}", file=sys.stderr)
         return 1
 
-    conn = open_library_db(library_root)
-
-    asset_ids = list_all_asset_ids(conn) if args.rehash_all else list_asset_ids_without_sha256(conn)
-
-    total = len(asset_ids)
-    if total == 0:
-        print("All assets already have a SHA-256 hash. Nothing to do.")
-        conn.close()
-        return 0
-
-    print(f"Computing SHA-256 for {total} asset(s) …")
-    done = 0
-    errors = 0
-
-    for asset_id in asset_ids:
-        asset = get_asset_by_id(conn, asset_id)
-        if asset is None:
-            continue
-        abspath = library_root / "Takeout" / asset.relpath
-        try:
-            h = hashlib.sha256()
-            with open(abspath, "rb") as fh:
-                for chunk in iter(lambda: fh.read(65536), b""):
-                    h.update(chunk)
-            update_asset_sha256(conn, asset_id, h.hexdigest())
-        except OSError as exc:
-            print(f"  warning: could not read {asset.relpath}: {exc}", file=sys.stderr)
-            errors += 1
-        done += 1
-        if done % 100 == 0:
-            print(f"  {done}/{total}", end="\r", flush=True)
-
-    conn.close()
-    print(f"\nHashed {done - errors}/{total} asset(s). {errors} error(s).")
+    print(f"Indexed {result.indexed} photo(s).")
+    print(f"Thumbnails: {result.thumbs_ok} generated, {result.thumbs_skip} skipped.")
+    print(f"Library: {library_root / 'takeout-rater'}")
     return 0
 
 
@@ -812,9 +626,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return _cmd_serve(args)
-
-    if args.command == "rehash":
-        return _cmd_rehash(args)
 
     print(f"Command '{args.command}' is not yet implemented (see roadmap in README).")
     return 1
