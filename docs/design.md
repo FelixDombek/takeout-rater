@@ -226,6 +226,7 @@ If HEIC decoding fails for a specific file, the asset is indexed but marked `uns
 | **10** ✅ | Extended scorer suite: BRISQUEScorer, CLIPIQAScorer, NIMAScorer, PyIQAScorer; dedicated `/scoring` page with Simple/Technical description toggle; `piq` and `pyiqa` as core dependencies |
 | **11** ✅ | Rescan extended to regenerate thumbnails: `missing_only` fills absent thumbs; `full` overwrites all (fixes stale/corrupt thumbs after pillow-heif or orientation upgrades); `CURRENT_INDEXER_VERSION` bumped 1→2 |
 | **12** ✅ | CLIP semantic search: `clip_embeddings` table (schema v10), shared CLIP backbone singleton, `embed` background job (batch CLIP ViT-L/14 image embedding), `/api/search` endpoint with in-memory cosine similarity, `/search` page with live-as-you-type results, 🔍 Search nav link |
+| **13** 🔜 | Facial Detection: InsightFace (`buffalo_l`, SCRFD + ArcFace R100 via ONNX Runtime) for face detection and 512-d identity embeddings; DBSCAN clustering into named person groups; CLIP-based "similar photos" surfacing for hidden-face photos; new `/faces` top-level page |
 
 ---
 
