@@ -16,6 +16,7 @@ from takeout_rater.api.assets import router as assets_router
 from takeout_rater.api.clip_routes import router as clip_router
 from takeout_rater.api.clusters import router as clusters_router
 from takeout_rater.api.config_routes import router as config_router
+from takeout_rater.api.faces import router as faces_router
 from takeout_rater.api.jobs import router as jobs_router
 from takeout_rater.api.presets import router as presets_router
 from takeout_rater.api.search import router as search_router
@@ -122,6 +123,7 @@ def create_app(
     app.include_router(jobs_router)
     app.include_router(search_router)
     app.include_router(clip_router)
+    app.include_router(faces_router)
 
     @app.get("/")
     def redirect_to_browse(request: Request) -> RedirectResponse:
@@ -175,6 +177,15 @@ def create_app(
             return _RR(url="/setup")  # type: ignore[return-value]
         templates = request.app.state.templates
         return templates.TemplateResponse("clip.html", {"request": request})
+
+    @app.get("/faces", response_class=HTMLResponse)
+    def faces_page(request: Request) -> HTMLResponse:
+        if request.app.state.db_conn is None:
+            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+
+            return _RR(url="/setup")  # type: ignore[return-value]
+        templates = request.app.state.templates
+        return templates.TemplateResponse("faces.html", {"request": request})
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_handler(

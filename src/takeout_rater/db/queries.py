@@ -2017,3 +2017,283 @@ def delete_clip_user_tag(conn: sqlite3.Connection, term: str) -> bool:
     cur = conn.execute("DELETE FROM clip_user_tags WHERE term = ?", (term,))
     conn.commit()
     return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Face detection & clustering queries
+# ---------------------------------------------------------------------------
+
+
+def insert_face_detection_run(
+    conn: sqlite3.Connection,
+    model_id: str,
+    params_json: str | None,
+) -> int:
+    """Insert a new face detection run and return its ID.
+
+    Args:
+        conn: Open database connection.
+        model_id: InsightFace model pack name (e.g. ``"buffalo_l"``).
+        params_json: JSON-serialised detection parameters.
+
+    Returns:
+        The integer primary key of the new row.
+    """
+    row = conn.execute(
+        "INSERT INTO face_detection_runs (model_id, params_json, started_at)"
+        " VALUES (?, ?, ?) RETURNING id",
+        (model_id, params_json, int(time.time())),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def finish_face_detection_run(conn: sqlite3.Connection, run_id: int) -> None:
+    """Mark a face detection run as finished."""
+    conn.execute(
+        "UPDATE face_detection_runs SET finished_at = ? WHERE id = ?",
+        (int(time.time()), run_id),
+    )
+    conn.commit()
+
+
+def bulk_insert_face_embeddings(
+    conn: sqlite3.Connection,
+    rows: list[tuple[int, int, int, float, float, float, float, float, bytes]],
+) -> None:
+    """Insert multiple face embedding rows in one transaction.
+
+    Args:
+        conn: Open database connection.
+        rows: List of tuples:
+            ``(asset_id, run_id, face_index, bbox_x1, bbox_y1, bbox_x2, bbox_y2,
+              det_score, embedding_blob)``.
+    """
+    now = int(time.time())
+    conn.executemany(
+        "INSERT INTO face_embeddings"
+        " (asset_id, run_id, face_index, bbox_x1, bbox_y1, bbox_x2, bbox_y2,"
+        "  det_score, embedding, computed_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(*r, now) for r in rows],
+    )
+    conn.commit()
+
+
+def list_asset_ids_without_face_detection(
+    conn: sqlite3.Connection,
+    run_id: int | None = None,
+) -> list[int]:
+    """Return IDs of assets that have no face embeddings.
+
+    When *run_id* is provided, only assets not covered by that specific
+    detection run are returned.
+
+    Args:
+        conn: Open database connection.
+        run_id: Optional detection run to check against.
+
+    Returns:
+        List of integer asset IDs ordered by ID.
+    """
+    if run_id is not None:
+        rows = conn.execute(
+            "SELECT a.id FROM assets a"
+            " LEFT JOIN face_embeddings fe"
+            "   ON a.id = fe.asset_id AND fe.run_id = ?"
+            " WHERE fe.id IS NULL"
+            " ORDER BY a.id",
+            (run_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT a.id FROM assets a"
+            " LEFT JOIN face_embeddings fe ON a.id = fe.asset_id"
+            " WHERE fe.id IS NULL"
+            " ORDER BY a.id",
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def count_face_embeddings(conn: sqlite3.Connection) -> int:
+    """Return total number of face embedding rows."""
+    row = conn.execute("SELECT COUNT(*) FROM face_embeddings").fetchone()
+    return row[0] if row else 0
+
+
+def count_faces_for_asset(conn: sqlite3.Connection, asset_id: int) -> int:
+    """Return the number of detected faces for a specific asset."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM face_embeddings WHERE asset_id = ?",
+        (asset_id,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def list_face_detection_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return all face detection runs, most recent first."""
+    rows = conn.execute(
+        "SELECT r.id, r.model_id, r.params_json, r.started_at, r.finished_at,"
+        "   COUNT(fe.id) AS n_faces"
+        " FROM face_detection_runs r"
+        " LEFT JOIN face_embeddings fe ON fe.run_id = r.id"
+        " GROUP BY r.id"
+        " ORDER BY r.started_at DESC",
+    ).fetchall()
+    return [
+        {
+            "run_id": row["id"],
+            "model_id": row["model_id"],
+            "params_json": row["params_json"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "n_faces": row["n_faces"],
+        }
+        for row in rows
+    ]
+
+
+def list_face_cluster_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return all face cluster runs, most recent first."""
+    rows = conn.execute(
+        "SELECT r.id, r.method, r.params_json, r.detection_run_id, r.created_at,"
+        "   COUNT(DISTINCT fc.id) AS n_clusters"
+        " FROM face_cluster_runs r"
+        " LEFT JOIN face_clusters fc ON fc.run_id = r.id"
+        " GROUP BY r.id"
+        " ORDER BY r.created_at DESC",
+    ).fetchall()
+    return [
+        {
+            "run_id": row["id"],
+            "method": row["method"],
+            "params_json": row["params_json"],
+            "detection_run_id": row["detection_run_id"],
+            "created_at": row["created_at"],
+            "n_clusters": row["n_clusters"],
+        }
+        for row in rows
+    ]
+
+
+def list_face_clusters_for_run(
+    conn: sqlite3.Connection,
+    run_id: int,
+) -> list[dict[str, Any]]:
+    """Return all face clusters in a clustering run, ordered by size desc.
+
+    Each dict includes ``cluster_id``, ``label``, ``n_faces``,
+    ``n_assets`` (distinct assets), and ``rep_asset_id`` (asset of the
+    representative face).
+    """
+    rows = conn.execute(
+        "SELECT fc.id AS cluster_id, fc.label,"
+        "   COUNT(fcm.face_id) AS n_faces,"
+        "   COUNT(DISTINCT fe.asset_id) AS n_assets,"
+        "   fe_rep.asset_id AS rep_asset_id"
+        " FROM face_clusters fc"
+        " JOIN face_cluster_members fcm ON fcm.cluster_id = fc.id"
+        " JOIN face_embeddings fe ON fe.id = fcm.face_id"
+        " LEFT JOIN face_cluster_members fcm_rep"
+        "   ON fcm_rep.cluster_id = fc.id AND fcm_rep.is_representative = 1"
+        " LEFT JOIN face_embeddings fe_rep ON fe_rep.id = fcm_rep.face_id"
+        " WHERE fc.run_id = ?"
+        " GROUP BY fc.id"
+        " ORDER BY n_faces DESC, fc.id",
+        (run_id,),
+    ).fetchall()
+    return [
+        {
+            "cluster_id": row["cluster_id"],
+            "label": row["label"],
+            "n_faces": row["n_faces"],
+            "n_assets": row["n_assets"],
+            "rep_asset_id": row["rep_asset_id"],
+        }
+        for row in rows
+    ]
+
+
+def get_face_cluster_assets(
+    conn: sqlite3.Connection,
+    cluster_id: int,
+) -> list[dict[str, Any]]:
+    """Return all assets in a face cluster with face details.
+
+    Returns a list of dicts with ``asset_id``, ``face_id``, ``distance``,
+    ``is_representative``, ``det_score``, ``bbox``, and ``filename``.
+    """
+    rows = conn.execute(
+        "SELECT fe.asset_id, fcm.face_id, fcm.distance, fcm.is_representative,"
+        "   fe.det_score, fe.bbox_x1, fe.bbox_y1, fe.bbox_x2, fe.bbox_y2,"
+        "   a.filename"
+        " FROM face_cluster_members fcm"
+        " JOIN face_embeddings fe ON fe.id = fcm.face_id"
+        " JOIN assets a ON a.id = fe.asset_id"
+        " WHERE fcm.cluster_id = ?"
+        " ORDER BY fcm.is_representative DESC, fcm.distance ASC",
+        (cluster_id,),
+    ).fetchall()
+    return [
+        {
+            "asset_id": row["asset_id"],
+            "face_id": row["face_id"],
+            "distance": row["distance"],
+            "is_representative": row["is_representative"],
+            "det_score": row["det_score"],
+            "bbox": (row["bbox_x1"], row["bbox_y1"], row["bbox_x2"], row["bbox_y2"]),
+            "filename": row["filename"],
+        }
+        for row in rows
+    ]
+
+
+def rename_face_cluster(
+    conn: sqlite3.Connection,
+    cluster_id: int,
+    label: str,
+) -> bool:
+    """Set the user-friendly label for a face cluster.
+
+    Args:
+        conn: Open database connection.
+        cluster_id: The face cluster to rename.
+        label: New label (person name).
+
+    Returns:
+        ``True`` if the cluster existed and was updated.
+    """
+    cur = conn.execute(
+        "UPDATE face_clusters SET label = ? WHERE id = ?",
+        (label, cluster_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_face_cluster_run(conn: sqlite3.Connection, run_id: int) -> bool:
+    """Delete a face clustering run and all its clusters and members.
+
+    Returns ``True`` if the run existed and was deleted.
+    """
+    cluster_ids = [
+        row[0]
+        for row in conn.execute(
+            "SELECT id FROM face_clusters WHERE run_id = ?", (run_id,)
+        ).fetchall()
+    ]
+    if cluster_ids:
+        conn.executemany(
+            "DELETE FROM face_cluster_members WHERE cluster_id = ?",
+            [(cid,) for cid in cluster_ids],
+        )
+        conn.execute("DELETE FROM face_clusters WHERE run_id = ?", (run_id,))
+    result = conn.execute("DELETE FROM face_cluster_runs WHERE id = ?", (run_id,))
+    conn.commit()
+    return result.rowcount > 0
+
+
+def get_face_cluster_label(conn: sqlite3.Connection, cluster_id: int) -> str | None:
+    """Return the label for a face cluster, or ``None``."""
+    row = conn.execute("SELECT label FROM face_clusters WHERE id = ?", (cluster_id,)).fetchone()
+    return row["label"] if row else None
