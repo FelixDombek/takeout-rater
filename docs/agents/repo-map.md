@@ -48,7 +48,7 @@ takeout-rater/
 | `scorers/adapters/pyiqa_adapter.py` | PyIQA adapter: MUSIQ, TOPIQ, NIQE (0–1 normalised) |
 | `scorers/adapters/cafe_style.py` | CafeAI style classifier: photo/anime/illustration/3D/CGI probabilities (0–1 each) |
 | **Scoring pipeline** | |
-| `scoring/pipeline.py` | `run_scorer()` — runs a scorer, writes directly to `asset_scores` |
+| `scoring/pipeline.py` | `run_scorer()` — runs a scorer, writes to `asset_scores` |
 | `scoring/phash.py` | `compute_dhash()`, `compute_phash_all()` — pHash via dhash algorithm |
 | **Indexing** | |
 | `indexing/scanner.py` | `scan_takeout()` — walk Takeout tree, enumerate `AssetFile` objects |
