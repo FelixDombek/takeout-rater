@@ -94,8 +94,8 @@ def test_migrate_is_idempotent() -> None:
 
 
 def test_migrate_raises_on_stale_schema() -> None:
-    """migrate() must raise SchemaMismatchError for pre-version-12 databases."""
-    for stale_version in range(1, 12):
+    """migrate() must raise SchemaMismatchError for pre-version-13 databases."""
+    for stale_version in range(1, 13):
         conn = sqlite3.connect(":memory:", check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA user_version = {stale_version}")

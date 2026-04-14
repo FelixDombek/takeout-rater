@@ -132,6 +132,53 @@ CREATE TABLE IF NOT EXISTS clip_user_tags (
     created_at INTEGER NOT NULL
 );
 
+-- ── Facial detection tables ────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS face_detection_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id    TEXT NOT NULL,
+    params_json TEXT,
+    started_at  INTEGER NOT NULL,
+    finished_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS face_embeddings (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id        INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    run_id          INTEGER NOT NULL REFERENCES face_detection_runs(id) ON DELETE CASCADE,
+    face_index      INTEGER NOT NULL DEFAULT 0,
+    bbox_x1         REAL NOT NULL,
+    bbox_y1         REAL NOT NULL,
+    bbox_x2         REAL NOT NULL,
+    bbox_y2         REAL NOT NULL,
+    det_score       REAL,
+    embedding       BLOB NOT NULL,
+    computed_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS face_cluster_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    method      TEXT NOT NULL,
+    params_json TEXT,
+    detection_run_id INTEGER REFERENCES face_detection_runs(id),
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS face_clusters (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER NOT NULL REFERENCES face_cluster_runs(id) ON DELETE CASCADE,
+    label       TEXT,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS face_cluster_members (
+    cluster_id  INTEGER NOT NULL REFERENCES face_clusters(id) ON DELETE CASCADE,
+    face_id     INTEGER NOT NULL REFERENCES face_embeddings(id) ON DELETE CASCADE,
+    distance    REAL,
+    is_representative INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (cluster_id, face_id)
+);
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_assets_taken_at         ON assets (taken_at);
 CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
@@ -141,5 +188,9 @@ CREATE INDEX IF NOT EXISTS idx_asset_scores_asset_id   ON asset_scores (asset_id
 CREATE INDEX IF NOT EXISTS idx_asset_scores_scorer     ON asset_scores (scorer_id, variant_id, metric_key);
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_id         ON clusters (run_id);
+CREATE INDEX IF NOT EXISTS idx_face_embeddings_asset_id ON face_embeddings(asset_id);
+CREATE INDEX IF NOT EXISTS idx_face_embeddings_run_id   ON face_embeddings(run_id);
+CREATE INDEX IF NOT EXISTS idx_face_clusters_run_id     ON face_clusters(run_id);
+CREATE INDEX IF NOT EXISTS idx_face_cluster_members_face_id ON face_cluster_members(face_id);
 
-PRAGMA user_version = 12;
+PRAGMA user_version = 13;

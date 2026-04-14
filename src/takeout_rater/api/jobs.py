@@ -40,7 +40,17 @@ router = APIRouter()
 # Job progress dataclass
 # ---------------------------------------------------------------------------
 
-_JOB_TYPES = ("index", "score", "cluster", "export", "rehash", "rescan", "embed")
+_JOB_TYPES = (
+    "index",
+    "score",
+    "cluster",
+    "export",
+    "rehash",
+    "rescan",
+    "embed",
+    "detect_faces",
+    "cluster_faces",
+)
 
 
 @dataclass
@@ -1247,6 +1257,262 @@ def start_embed_job(request: Request) -> JSONResponse:
             worker_conn.close()
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-embed")
+    thread.start()
+
+    return JSONResponse({"status": "started"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/detect_faces/start
+# ---------------------------------------------------------------------------
+
+
+class _DetectFacesStartBody(BaseModel):
+    model_pack: str = "buffalo_l"  # "buffalo_l" | "buffalo_sc"
+    det_thresh: float = 0.5
+
+
+@router.post("/api/jobs/detect_faces/start")
+def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSONResponse:
+    """Start a background face detection job.
+
+    Uses InsightFace to detect faces and compute 512-d ArcFace identity
+    embeddings for every asset in the library.  Results are stored in the
+    ``face_embeddings`` table.
+
+    Body fields
+    -----------
+    model_pack : str
+        InsightFace model pack.  ``"buffalo_l"`` (default, best accuracy,
+        ~350 MB download) or ``"buffalo_sc"`` (smaller, faster).
+    det_thresh : float
+        Minimum detection confidence.  Default ``0.5``.
+
+    Returns ``409`` if a detect_faces job is already running.
+    """
+    _require_library_root(request)
+    jobs = _get_jobs(request.app)
+
+    if body.model_pack not in ("buffalo_l", "buffalo_sc"):
+        raise HTTPException(
+            status_code=400, detail="model_pack must be 'buffalo_l' or 'buffalo_sc'."
+        )
+
+    existing = jobs.get("detect_faces")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="A face detection job is already running.")
+
+    library_root: Path = request.app.state.library_root
+    model_pack = body.model_pack
+    det_thresh = body.det_thresh
+    progress = JobProgress(job_type="detect_faces", running=True, message="Starting…")
+    jobs["detect_faces"] = progress
+
+    def _worker() -> None:
+        import json as _json  # noqa: PLC0415
+        import struct  # noqa: PLC0415
+
+        from takeout_rater.db.connection import (
+            library_state_dir,  # noqa: PLC0415
+            open_library_db,  # noqa: PLC0415
+        )
+        from takeout_rater.db.queries import (
+            bulk_insert_face_embeddings,  # noqa: PLC0415
+            finish_face_detection_run,  # noqa: PLC0415
+            insert_face_detection_run,  # noqa: PLC0415
+            list_asset_ids_without_face_detection,  # noqa: PLC0415
+        )
+        from takeout_rater.faces.detector import (
+            EMBEDDING_DIM,  # noqa: PLC0415
+            FaceDetector,  # noqa: PLC0415
+        )
+        from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+
+        worker_conn = open_library_db(library_root)
+        thumbs_dir = library_state_dir(library_root) / "thumbs"
+        batch_size = 32
+        try:
+            params = {
+                "model_pack": model_pack,
+                "det_thresh": det_thresh,
+            }
+            params_json = _json.dumps(params, separators=(",", ":"), sort_keys=True)
+            run_id = insert_face_detection_run(worker_conn, model_pack, params_json)
+
+            asset_ids = list_asset_ids_without_face_detection(worker_conn, run_id=run_id)
+            total = len(asset_ids)
+            progress.total = total
+            if total == 0:
+                progress.message = "All assets already have face detections."
+                finish_face_detection_run(worker_conn, run_id)
+                progress.running = False
+                progress.done = True
+                worker_conn.close()
+                return
+
+            progress.message = f"Loading InsightFace ({model_pack})…"
+
+            detector = FaceDetector(
+                model_pack=model_pack,
+                det_thresh=det_thresh,
+            )
+
+            processed = 0
+            total_faces = 0
+            for batch_start in range(0, total, batch_size):
+                if progress.cancel_event.is_set():
+                    break
+
+                batch_ids = asset_ids[batch_start : batch_start + batch_size]
+                db_rows: list[tuple[int, int, int, float, float, float, float, float, bytes]] = []
+
+                for aid in batch_ids:
+                    thumb = thumb_path_for_id(thumbs_dir, aid)
+                    if not thumb.exists():
+                        continue
+
+                    progress.current_item = str(thumb.name)
+                    try:
+                        faces = detector.detect(thumb)
+                    except Exception:  # noqa: BLE001
+                        continue
+
+                    for face in faces:
+                        blob = struct.pack(f"{EMBEDDING_DIM}f", *face.embedding)
+                        db_rows.append(
+                            (
+                                aid,
+                                run_id,
+                                face.face_index,
+                                face.bbox[0],
+                                face.bbox[1],
+                                face.bbox[2],
+                                face.bbox[3],
+                                face.det_score,
+                                blob,
+                            )
+                        )
+                        total_faces += 1
+
+                if db_rows:
+                    bulk_insert_face_embeddings(worker_conn, db_rows)
+
+                processed += len(batch_ids)
+                progress.processed = processed
+                progress.message = (
+                    f"Detecting faces… {processed}\u202f/\u202f{total}"
+                    f" ({total_faces} face(s) found)"
+                )
+
+            finish_face_detection_run(worker_conn, run_id)
+            progress.current_item = ""
+            if progress.cancel_event.is_set():
+                progress.message = f"Face detection cancelled — {total_faces} face(s) found."
+            else:
+                progress.message = (
+                    f"Face detection complete — {processed} asset(s) processed,"
+                    f" {total_faces} face(s) found."
+                )
+            progress.running = False
+            progress.done = True
+        except Exception as exc:  # noqa: BLE001
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+            progress.current_item = ""
+            progress.running = False
+            progress.done = True
+        finally:
+            worker_conn.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-detect-faces")
+    thread.start()
+
+    return JSONResponse({"status": "started"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/cluster_faces/start
+# ---------------------------------------------------------------------------
+
+
+class _ClusterFacesStartBody(BaseModel):
+    eps: float = 0.5
+    min_samples: int = 2
+    detection_run_id: int | None = None
+
+
+@router.post("/api/jobs/cluster_faces/start")
+def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> JSONResponse:
+    """Start a background face clustering job.
+
+    Clusters face embeddings into person groups using DBSCAN with cosine
+    distance.  Requires at least one completed face detection run.
+
+    Body fields
+    -----------
+    eps : float
+        DBSCAN neighbourhood radius (cosine distance).  Default ``0.5``.
+    min_samples : int
+        Minimum faces per cluster.  Default ``2``.
+    detection_run_id : int, optional
+        Restrict to faces from a specific detection run.
+
+    Returns ``409`` if a cluster_faces job is already running.
+    """
+    _require_library_root(request)
+    jobs = _get_jobs(request.app)
+
+    existing = jobs.get("cluster_faces")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="A face clustering job is already running.")
+
+    library_root: Path = request.app.state.library_root
+    eps = body.eps
+    min_samples = body.min_samples
+    detection_run_id = body.detection_run_id
+    progress = JobProgress(job_type="cluster_faces", running=True, message="Starting…")
+    jobs["cluster_faces"] = progress
+
+    def _worker() -> None:
+        from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+        from takeout_rater.db.queries import count_face_embeddings  # noqa: PLC0415
+        from takeout_rater.faces.clustering import cluster_faces  # noqa: PLC0415
+
+        worker_conn = open_library_db(library_root)
+        try:
+            n_emb = count_face_embeddings(worker_conn)
+            if n_emb == 0:
+                progress.message = "No face embeddings found. Run the Face Detection job first."
+                progress.running = False
+                progress.done = True
+                return
+
+            progress.message = f"Clustering {n_emb} face embedding(s)…"
+            progress.total = n_emb
+
+            def _cb(processed: int, total: int) -> None:
+                progress.processed = processed
+                progress.total = total
+
+            n_clusters = cluster_faces(
+                worker_conn,
+                detection_run_id=detection_run_id,
+                eps=eps,
+                min_samples=min_samples,
+                on_progress=_cb,
+            )
+            progress.message = f"Face clustering complete — {n_clusters} person group(s) found."
+            progress.running = False
+            progress.done = True
+        except Exception as exc:  # noqa: BLE001
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+            progress.running = False
+            progress.done = True
+        finally:
+            worker_conn.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-cluster-faces")
     thread.start()
 
     return JSONResponse({"status": "started"})
