@@ -583,100 +583,38 @@ def count_assets_newer_than(
     return conn.execute(sql, params).fetchone()[0]
 
 
-def insert_scorer_run(
+def upsert_asset_scores(
     conn: sqlite3.Connection,
     scorer_id: str,
     variant_id: str,
+    scores: list[tuple[int, str, float]],
     *,
     scorer_version: str | None = None,
-    params_json: str | None = None,
-    params_hash: str | None = None,
-) -> int:
-    """Insert a new scorer-run record and return its ID.
-
-    The ``started_at`` timestamp is set to the current Unix time.  Call
-    :func:`finish_scorer_run` once scoring is complete.
-
-    Args:
-        conn: Open database connection.
-        scorer_id: Stable scorer identifier (e.g. ``"blur"``).
-        variant_id: Variant identifier (e.g. ``"default"``).
-        scorer_version: Optional version string stored for auditability.
-        params_json: Optional JSON-serialised scorer parameters.
-        params_hash: Optional hash of ``params_json`` for deduplication.
-
-    Returns:
-        The integer primary key of the new ``scorer_runs`` row.
-    """
-    row = conn.execute(
-        "INSERT INTO scorer_runs (scorer_id, variant_id, scorer_version, params_json, params_hash, started_at)"
-        " VALUES (?, ?, ?, ?, ?, ?)"
-        " RETURNING id",
-        (scorer_id, variant_id, scorer_version, params_json, params_hash, int(time.time())),
-    ).fetchone()
-    conn.commit()
-    return row[0]
-
-
-def finish_scorer_run(conn: sqlite3.Connection, run_id: int) -> None:
-    """Mark a scorer run as finished by setting its ``finished_at`` timestamp.
-
-    Args:
-        conn: Open database connection.
-        run_id: The ``id`` of the ``scorer_runs`` row to update.
-    """
-    conn.execute(
-        "UPDATE scorer_runs SET finished_at = ? WHERE id = ?",
-        (int(time.time()), run_id),
-    )
-    conn.commit()
-
-
-def bulk_insert_asset_scores(
-    conn: sqlite3.Connection,
-    run_id: int,
-    scores: list[tuple[int, str, float]],
 ) -> None:
-    """Insert multiple ``asset_scores`` rows, replacing any previous scores.
+    """Insert or replace ``asset_scores`` rows.
 
-    For each ``(asset_id, metric_key)`` pair in *scores*, any existing rows
-    from earlier runs of the *same* scorer+variant are deleted first so that
-    re-running a scorer overwrites old results instead of accumulating
-    duplicates.  Within the same run, the first value for a given
-    ``(asset_id, metric_key)`` pair is preserved (``INSERT OR IGNORE``).
+    Each ``(asset_id, scorer_id, variant_id, metric_key)`` combination is
+    unique.  Re-scoring the same asset simply overwrites the previous value.
 
     Args:
         conn: Open database connection.
-        run_id: Foreign key into ``scorer_runs``.
+        scorer_id: Scorer identifier (e.g. ``"simple"``).
+        variant_id: Variant identifier (e.g. ``"blur"``).
         scores: Iterable of ``(asset_id, metric_key, value)`` triples.
+        scorer_version: Optional version string stored for auditability.
     """
     if not scores:
         return
 
-    # Fetch scorer identity so we can target only previous runs of this scorer.
-    run_row = conn.execute(
-        "SELECT scorer_id, variant_id FROM scorer_runs WHERE id = ?", (run_id,)
-    ).fetchone()
-    if run_row:
-        scorer_id: str = run_row[0]
-        variant_id: str = run_row[1]
-        # Delete existing scores for these assets from any *previous* run of the
-        # same scorer+variant so re-runs overwrite rather than duplicate.
-        asset_ids = list({a for a, _, _ in scores})
-        placeholders = ",".join("?" * len(asset_ids))
-        conn.execute(
-            f"DELETE FROM asset_scores"  # noqa: S608
-            f" WHERE scorer_run_id IN ("
-            f"   SELECT id FROM scorer_runs WHERE scorer_id = ? AND variant_id = ? AND id != ?"
-            f" )"
-            f" AND asset_id IN ({placeholders})",
-            [scorer_id, variant_id, run_id, *asset_ids],
-        )
-
+    now = int(time.time())
     conn.executemany(
-        "INSERT OR IGNORE INTO asset_scores (asset_id, scorer_run_id, metric_key, value)"
-        " VALUES (?, ?, ?, ?)",
-        [(asset_id, run_id, metric_key, value) for asset_id, metric_key, value in scores],
+        "INSERT OR REPLACE INTO asset_scores"
+        " (asset_id, scorer_id, variant_id, metric_key, value, scorer_version, scored_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (asset_id, scorer_id, variant_id, metric_key, value, scorer_version, now)
+            for asset_id, metric_key, value in scores
+        ],
     )
     conn.commit()
 
@@ -685,11 +623,7 @@ def get_asset_scores(
     conn: sqlite3.Connection,
     asset_id: int,
 ) -> list[dict[str, Any]]:
-    """Return the latest scores for a single asset, one per scorer metric.
-
-    When the same scorer has been run multiple times (e.g. via the re-score
-    option), only the most recent result for each ``(scorer_id, variant_id,
-    metric_key)`` combination is returned.
+    """Return all scores for a single asset.
 
     Args:
         conn: Open database connection.
@@ -697,22 +631,13 @@ def get_asset_scores(
 
     Returns:
         List of dicts with keys ``scorer_id``, ``variant_id``, ``metric_key``,
-        ``value``, and ``finished_at``.  Ordered alphabetically by
+        ``value``, and ``scored_at``.  Ordered alphabetically by
         ``scorer_id``, ``variant_id``, ``metric_key``.
     """
     rows = conn.execute(
-        "SELECT scorer_id, variant_id, metric_key, value, finished_at"
-        " FROM ("
-        "   SELECT r.scorer_id, r.variant_id, s.metric_key, s.value, r.finished_at,"
-        "          ROW_NUMBER() OVER ("
-        "            PARTITION BY r.scorer_id, r.variant_id, s.metric_key"
-        "            ORDER BY r.finished_at DESC, r.id DESC"
-        "          ) AS rn"
-        "   FROM asset_scores s"
-        "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
-        "   WHERE s.asset_id = ? AND r.finished_at IS NOT NULL"
-        " )"
-        " WHERE rn = 1"
+        "SELECT scorer_id, variant_id, metric_key, value, scored_at"
+        " FROM asset_scores"
+        " WHERE asset_id = ?"
         " ORDER BY scorer_id, variant_id, metric_key",
         (asset_id,),
     ).fetchall()
@@ -722,18 +647,18 @@ def get_asset_scores(
             "variant_id": row["variant_id"],
             "metric_key": row["metric_key"],
             "value": row["value"],
-            "finished_at": row["finished_at"],
+            "scored_at": row["scored_at"],
         }
         for row in rows
     ]
 
 
-def get_latest_scorer_run_id(
+def has_scores_for(
     conn: sqlite3.Connection,
     scorer_id: str,
     variant_id: str,
-) -> int | None:
-    """Return the ID of the most recently *finished* run for a scorer+variant.
+) -> bool:
+    """Return whether any scores exist for the given scorer+variant.
 
     Args:
         conn: Open database connection.
@@ -741,15 +666,14 @@ def get_latest_scorer_run_id(
         variant_id: Variant identifier.
 
     Returns:
-        Integer run ID, or ``None`` if no finished run exists.
+        ``True`` if at least one score row exists.
     """
     row = conn.execute(
-        "SELECT id FROM scorer_runs"
-        " WHERE scorer_id = ? AND variant_id = ? AND finished_at IS NOT NULL"
-        " ORDER BY finished_at DESC, id DESC LIMIT 1",
+        "SELECT 1 FROM asset_scores"
+        " WHERE scorer_id = ? AND variant_id = ? LIMIT 1",
         (scorer_id, variant_id),
     ).fetchone()
-    return row[0] if row else None
+    return row is not None
 
 
 def list_available_score_metrics_with_variants(
@@ -757,18 +681,11 @@ def list_available_score_metrics_with_variants(
 ) -> set[tuple[str, str, str]]:
     """Return the set of (scorer_id, variant_id, metric_key) triples with scored results.
 
-    Only considers scores from *finished* scorer runs so that partially-complete
-    runs are not surfaced in the UI.  Preserves the ``variant_id`` so that
-    callers can generate one sort option per distinct scorer+variant+metric combination.
-
     Returns:
         A set of ``(scorer_id, variant_id, metric_key)`` tuples.
     """
     rows = conn.execute(
-        "SELECT DISTINCT r.scorer_id, r.variant_id, s.metric_key"
-        " FROM asset_scores s"
-        " JOIN scorer_runs r ON r.id = s.scorer_run_id"
-        " WHERE r.finished_at IS NOT NULL"
+        "SELECT DISTINCT scorer_id, variant_id, metric_key FROM asset_scores"
     ).fetchall()
     return {(row[0], row[1], row[2]) for row in rows}
 
@@ -789,15 +706,14 @@ def list_assets_by_score(
 ) -> list[tuple[AssetRow, float]]:
     """Return assets that have been scored, sorted by score value.
 
-    Only assets with a score from the *latest finished* run for the given
-    ``scorer_id`` + ``variant_id`` are returned.  Assets without a score are
-    excluded (per the design: "only scored" view when a primary sort metric is active).
+    Assets without a score for the given ``scorer_id`` + ``variant_id`` +
+    ``metric_key`` are excluded.
 
     Args:
         conn: Open database connection.
         scorer_id: Scorer whose scores to sort by.
         metric_key: Metric key to sort by.
-        variant_id: Variant identifier; the run is looked up by ``(scorer_id, variant_id)``.
+        variant_id: Variant identifier.
         limit: Maximum number of rows.
         offset: Rows to skip (for pagination).
         descending: ``True`` (default) → highest score first.
@@ -812,13 +728,13 @@ def list_assets_by_score(
     if not metric_key:
         raise ValueError("metric_key must be a non-empty string")
 
-    run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
-    if run_id is None:
-        return []
-
     order = "DESC" if descending else "ASC"
-    conditions: list[str] = ["s.scorer_run_id = ?", "s.metric_key = ?"]
-    params: list[Any] = [run_id, metric_key]
+    conditions: list[str] = [
+        "s.scorer_id = ?",
+        "s.variant_id = ?",
+        "s.metric_key = ?",
+    ]
+    params: list[Any] = [scorer_id, variant_id, metric_key]
 
     if favorited is not None:
         conditions.append("a.favorited = ?")
@@ -859,13 +775,13 @@ def count_assets_with_score(
     min_score: float | None = None,
     max_score: float | None = None,
 ) -> int:
-    """Count assets that have a score from the latest run for a scorer+variant.
+    """Count assets that have a score for a scorer+variant+metric.
 
     Args:
         conn: Open database connection.
         scorer_id: Scorer ID.
         metric_key: Metric key.
-        variant_id: Variant identifier; the run is looked up by ``(scorer_id, variant_id)``.
+        variant_id: Variant identifier.
         favorited: Optional favorited filter.
         trashed: Optional trashed filter.
         min_score: Optional inclusive lower bound on the score value.
@@ -874,12 +790,12 @@ def count_assets_with_score(
     Returns:
         Integer count.
     """
-    run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
-    if run_id is None:
-        return 0
-
-    conditions: list[str] = ["s.scorer_run_id = ?", "s.metric_key = ?"]
-    params: list[Any] = [run_id, metric_key]
+    conditions: list[str] = [
+        "s.scorer_id = ?",
+        "s.variant_id = ?",
+        "s.metric_key = ?",
+    ]
+    params: list[Any] = [scorer_id, variant_id, metric_key]
 
     if favorited is not None:
         conditions.append("a.favorited = ?")
@@ -929,11 +845,6 @@ def list_assets_multi_sort(
     The *first* criterion is mandatory (INNER JOIN); subsequent ones use LEFT
     JOINs so that assets without a secondary score still appear (sorted last).
 
-    Only assets that have a score from the latest finished run for the *first*
-    criterion are returned.  If a ``min_score`` / ``max_score`` is provided for
-    any criterion, assets that lack a score for that criterion (NULL from the
-    LEFT JOIN) are excluded.
-
     Args:
         conn: Open database connection.
         criteria: Ordered list of sort levels.  Must contain at least one entry.
@@ -948,43 +859,29 @@ def list_assets_multi_sort(
     if not criteria:
         raise ValueError("criteria must contain at least one SortCriterion")
 
-    # Resolve run IDs for each criterion; bail early if the primary has no run.
-    run_ids: list[int | None] = []
-    for c in criteria:
-        rid = get_latest_scorer_run_id(conn, c.scorer_id, c.variant_id)
-        run_ids.append(rid)
-
-    if run_ids[0] is None:
-        return []
-
+    c0 = criteria[0]
     select_cols = ["a.*", "s1.value AS score_value"]
     joins = [
         "INNER JOIN asset_scores s1"
         " ON s1.asset_id = a.id"
-        " AND s1.scorer_run_id = ?"
+        " AND s1.scorer_id = ?"
+        " AND s1.variant_id = ?"
         " AND s1.metric_key = ?"
     ]
-    join_params: list[Any] = [run_ids[0], criteria[0].metric_key]
+    join_params: list[Any] = [c0.scorer_id, c0.variant_id, c0.metric_key]
     order_cols = ["s1.value DESC"]
 
-    for i, (c, rid) in enumerate(zip(criteria[1:], run_ids[1:], strict=True), start=2):
+    for i, c in enumerate(criteria[1:], start=2):
         alias = f"s{i}"
         select_cols.append(f"{alias}.value AS score_value_{i}")
-        if rid is not None:
-            joins.append(
-                f"LEFT JOIN asset_scores {alias}"
-                f" ON {alias}.asset_id = a.id"
-                f" AND {alias}.scorer_run_id = ?"
-                f" AND {alias}.metric_key = ?"
-            )
-            join_params.extend([rid, c.metric_key])
-        else:
-            # No run exists for this criterion – emit a NULL column so the
-            # ORDER BY clause still references a valid alias.
-            joins.append(
-                f"LEFT JOIN (SELECT NULL AS asset_id, NULL AS value) {alias}"
-                f" ON {alias}.asset_id = a.id"
-            )
+        joins.append(
+            f"LEFT JOIN asset_scores {alias}"
+            f" ON {alias}.asset_id = a.id"
+            f" AND {alias}.scorer_id = ?"
+            f" AND {alias}.variant_id = ?"
+            f" AND {alias}.metric_key = ?"
+        )
+        join_params.extend([c.scorer_id, c.variant_id, c.metric_key])
         order_cols.append(f"{alias}.value DESC NULLS LAST")
 
     conditions: list[str] = []
@@ -1049,37 +946,26 @@ def count_assets_multi_sort(
     if not criteria:
         raise ValueError("criteria must contain at least one SortCriterion")
 
-    run_ids: list[int | None] = []
-    for c in criteria:
-        rid = get_latest_scorer_run_id(conn, c.scorer_id, c.variant_id)
-        run_ids.append(rid)
-
-    if run_ids[0] is None:
-        return 0
-
+    c0 = criteria[0]
     joins = [
         "INNER JOIN asset_scores s1"
         " ON s1.asset_id = a.id"
-        " AND s1.scorer_run_id = ?"
+        " AND s1.scorer_id = ?"
+        " AND s1.variant_id = ?"
         " AND s1.metric_key = ?"
     ]
-    join_params: list[Any] = [run_ids[0], criteria[0].metric_key]
+    join_params: list[Any] = [c0.scorer_id, c0.variant_id, c0.metric_key]
 
-    for i, (c, rid) in enumerate(zip(criteria[1:], run_ids[1:], strict=True), start=2):
+    for i, c in enumerate(criteria[1:], start=2):
         alias = f"s{i}"
-        if rid is not None:
-            joins.append(
-                f"LEFT JOIN asset_scores {alias}"
-                f" ON {alias}.asset_id = a.id"
-                f" AND {alias}.scorer_run_id = ?"
-                f" AND {alias}.metric_key = ?"
-            )
-            join_params.extend([rid, c.metric_key])
-        else:
-            joins.append(
-                f"LEFT JOIN (SELECT NULL AS asset_id, NULL AS value) {alias}"
-                f" ON {alias}.asset_id = a.id"
-            )
+        joins.append(
+            f"LEFT JOIN asset_scores {alias}"
+            f" ON {alias}.asset_id = a.id"
+            f" AND {alias}.scorer_id = ?"
+            f" AND {alias}.variant_id = ?"
+            f" AND {alias}.metric_key = ?"
+        )
+        join_params.extend([c.scorer_id, c.variant_id, c.metric_key])
 
     conditions: list[str] = []
     where_params: list[Any] = []
@@ -1616,14 +1502,11 @@ def list_asset_ids_without_score(
 ) -> list[int]:
     """Return IDs of assets that need scoring (no score, or score is stale).
 
-    An asset is considered *needing a score* when it either has no finished
-    scorer run for the given ``scorer_id`` + ``variant_id`` + ``metric_key``,
-    **or** all its existing scores were produced by a different (older)
-    ``scorer_version``.  The latter case ensures that bumping a scorer's
-    version string automatically re-queues assets whose stored results came
-    from a now-superseded implementation.
+    An asset is considered *needing a score* when it either has no score row
+    for the given ``scorer_id`` + ``variant_id`` + ``metric_key``, **or** its
+    existing score was produced by a different (older) ``scorer_version``.
 
-    When *scorer_version* is ``None`` any finished run counts — backward
+    When *scorer_version* is ``None`` any existing score counts — backward
     compatible with callers that do not track versions.
 
     Args:
@@ -1632,9 +1515,9 @@ def list_asset_ids_without_score(
         variant_id: Variant ID.
         metric_key: Metric key.
         scorer_version: Current scorer version string.  When provided, only
-            runs whose ``scorer_version`` exactly matches this value are
-            considered up-to-date.  Assets scored by a different version are
-            treated as un-scored.
+            scores whose ``scorer_version`` exactly matches are considered
+            up-to-date.  Assets scored by a different version are treated as
+            un-scored.
 
     Returns:
         List of integer asset IDs ordered by ``assets.id``.
@@ -1644,10 +1527,8 @@ def list_asset_ids_without_score(
             "SELECT a.id FROM assets a"
             " WHERE a.id NOT IN ("
             "   SELECT s.asset_id FROM asset_scores s"
-            "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
-            "   WHERE r.scorer_id = ? AND r.variant_id = ? AND s.metric_key = ?"
-            "     AND r.scorer_version = ?"
-            "     AND r.finished_at IS NOT NULL"
+            "   WHERE s.scorer_id = ? AND s.variant_id = ? AND s.metric_key = ?"
+            "     AND s.scorer_version = ?"
             " )"
             " ORDER BY a.id",
             (scorer_id, variant_id, metric_key, scorer_version),
@@ -1657,9 +1538,7 @@ def list_asset_ids_without_score(
             "SELECT a.id FROM assets a"
             " WHERE a.id NOT IN ("
             "   SELECT s.asset_id FROM asset_scores s"
-            "   JOIN scorer_runs r ON r.id = s.scorer_run_id"
-            "   WHERE r.scorer_id = ? AND r.variant_id = ? AND s.metric_key = ?"
-            "     AND r.finished_at IS NOT NULL"
+            "   WHERE s.scorer_id = ? AND s.variant_id = ? AND s.metric_key = ?"
             " )"
             " ORDER BY a.id",
             (scorer_id, variant_id, metric_key),

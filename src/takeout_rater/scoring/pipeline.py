@@ -5,13 +5,11 @@ Usage example::
     from takeout_rater.scorers.heuristics.simple import SimpleScorer
 
     scorer = SimpleScorer.create(variant_id="blur")
-    run_id = run_scorer(conn, scorer, thumbs_dir)
+    run_scorer(conn, scorer, thumbs_dir)
 
-The function creates a ``scorer_runs`` record, iterates over assets in
-configurable batches, calls ``scorer.score_batch()``, and writes each result
-to ``asset_scores``.  When finished it sets ``scorer_runs.finished_at`` and
-returns the run ID.  ``finish_scorer_run()`` is always called via a
-``try/finally`` block, even if an error occurs mid-run.
+The function iterates over assets in configurable batches, calls
+``scorer.score_batch()``, and writes each result directly to
+``asset_scores`` via ``INSERT OR REPLACE``.
 """
 
 from __future__ import annotations
@@ -22,11 +20,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from takeout_rater.db.queries import (
-    bulk_insert_asset_scores,
-    finish_scorer_run,
-    get_latest_scorer_run_id,
-    insert_scorer_run,
     list_asset_ids_without_score,
+    upsert_asset_scores,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 from takeout_rater.scorers.base import BaseScorer
@@ -96,9 +91,10 @@ def run_scorer(
 ) -> int:
     """Run *scorer* over assets and persist the results to the library DB.
 
-    A new ``scorer_runs`` record is created before processing begins and its
-    ``finished_at`` timestamp is always set when the function returns (even if
-    an error occurs mid-run), via a ``try/finally`` block.
+    Scores are written directly to ``asset_scores`` via ``INSERT OR REPLACE``.
+    There is no separate "run" record; each score row is self-contained with
+    its ``scorer_id``, ``variant_id``, ``metric_key``, ``scorer_version``, and
+    ``scored_at`` timestamp.
 
     Args:
         conn: Open library database connection.
@@ -119,25 +115,20 @@ def run_scorer(
             ``(scored_so_far, total)`` integers.
         cancel_check: Optional callable that returns ``True`` when the run
             should be aborted.  Checked after each batch; when it returns
-            ``True`` the loop exits early and the scorer run is still finalised
-            in the DB.
+            ``True`` the loop exits early.
 
     Returns:
-        The integer primary key of the new ``scorer_runs`` row.
+        The number of assets scored.
     """
     spec = scorer.spec()
     scorer_id = spec.scorer_id
     variant_id = scorer.variant_id
+    scorer_version = spec.version
 
     # Determine which assets to score
     stream_all_assets = False
     if asset_ids is None:
         if skip_existing and spec.metrics:
-            # Use the variant's primary_metric_key when specified (e.g. the
-            # "luminosity" and "noise" variants of SimpleScorer write different
-            # metric keys than the scorer's global first metric).  Fall back to
-            # spec.metrics[0].key for scorers whose variants all share the same
-            # metric namespace.
             variant_spec = next((v for v in spec.variants if v.variant_id == variant_id), None)
             first_metric = (
                 variant_spec.primary_metric_key
@@ -145,102 +136,93 @@ def run_scorer(
                 else spec.metrics[0].key
             )
             asset_ids = list_asset_ids_without_score(
-                conn, scorer_id, variant_id, first_metric, scorer_version=spec.version
+                conn, scorer_id, variant_id, first_metric, scorer_version=scorer_version
             )
         else:
-            # Score all assets by streaming IDs directly from the DB to avoid
-            # materializing full AssetRow objects or all IDs in memory.
             stream_all_assets = True
 
-    # When skip_existing=True produced an empty work list it means every asset
-    # already has a score from the current scorer version.  Creating a new
-    # (empty) scorer_run record would make it the "latest finished run", hiding
-    # all existing scores from browse queries.  Return the existing run id
-    # instead so that callers see the already-scored data unchanged.
+    # Nothing to score — return early.
     if asset_ids is not None and not asset_ids:
-        existing_run_id = get_latest_scorer_run_id(conn, scorer_id, variant_id)
-        if existing_run_id is not None:
-            return existing_run_id
+        return 0
 
-    # Create scorer run record
-    run_id = insert_scorer_run(conn, scorer_id, variant_id, scorer_version=spec.version)
+    scored = 0
 
-    try:
-        if stream_all_assets:
-            cur = conn.execute("SELECT COUNT(*) FROM assets")
-            row = cur.fetchone()
-            total = int(row[0]) if row is not None and row[0] is not None else 0
-            scored = 0
+    if stream_all_assets:
+        cur = conn.execute("SELECT COUNT(*) FROM assets")
+        row = cur.fetchone()
+        total = int(row[0]) if row is not None and row[0] is not None else 0
 
-            id_cur = conn.execute("SELECT id FROM assets ORDER BY id")
-            while True:
-                if cancel_check is not None and cancel_check():
-                    break
-                id_rows = id_cur.fetchmany(batch_size)
-                if not id_rows:
-                    break
+        id_cur = conn.execute("SELECT id FROM assets ORDER BY id")
+        while True:
+            if cancel_check is not None and cancel_check():
+                break
+            id_rows = id_cur.fetchmany(batch_size)
+            if not id_rows:
+                break
 
-                batch_ids = [int(r[0]) for r in id_rows]
+            batch_ids = [int(r[0]) for r in id_rows]
 
-                valid_pairs: list[tuple[int, Path]] = []
-                for aid in batch_ids:
-                    thumb = thumb_path_for_id(thumbs_dir, aid)
-                    if thumb.exists():
-                        valid_pairs.append((aid, thumb))
+            valid_pairs: list[tuple[int, Path]] = []
+            for aid in batch_ids:
+                thumb = thumb_path_for_id(thumbs_dir, aid)
+                if thumb.exists():
+                    valid_pairs.append((aid, thumb))
 
-                if valid_pairs:
-                    paths = [p for _, p in valid_pairs]
-                    score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
+            if valid_pairs:
+                paths = [p for _, p in valid_pairs]
+                score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
 
-                    rows: list[tuple[int, str, float]] = []
-                    for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):
-                        for metric_key, value in score_dict.items():
-                            rows.append((aid, metric_key, value))
+                rows: list[tuple[int, str, float]] = []
+                for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):
+                    for metric_key, value in score_dict.items():
+                        rows.append((aid, metric_key, value))
 
-                    if rows:
-                        bulk_insert_asset_scores(conn, run_id, rows)
+                if rows:
+                    upsert_asset_scores(
+                        conn, scorer_id, variant_id, rows,
+                        scorer_version=scorer_version,
+                    )
 
-                scored += len(batch_ids)
-                if on_progress is not None:
-                    on_progress(scored, total)
+            scored += len(batch_ids)
+            if on_progress is not None:
+                on_progress(scored, total)
 
-        else:
-            assert asset_ids is not None
-            total = len(asset_ids)
-            scored = 0
+    else:
+        assert asset_ids is not None
+        total = len(asset_ids)
 
-            for batch_start in range(0, total, batch_size):
-                if cancel_check is not None and cancel_check():
-                    break
-                batch_ids = asset_ids[batch_start : batch_start + batch_size]
+        for batch_start in range(0, total, batch_size):
+            if cancel_check is not None and cancel_check():
+                break
+            batch_ids = asset_ids[batch_start : batch_start + batch_size]
 
-                # Build (asset_id, thumb_path) pairs, skipping missing thumbnails
-                valid_pairs = []
-                for aid in batch_ids:
-                    thumb = thumb_path_for_id(thumbs_dir, aid)
-                    if thumb.exists():
-                        valid_pairs.append((aid, thumb))
+            # Build (asset_id, thumb_path) pairs, skipping missing thumbnails
+            valid_pairs = []
+            for aid in batch_ids:
+                thumb = thumb_path_for_id(thumbs_dir, aid)
+                if thumb.exists():
+                    valid_pairs.append((aid, thumb))
 
-                if valid_pairs:
-                    paths = [p for _, p in valid_pairs]
-                    score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
+            if valid_pairs:
+                paths = [p for _, p in valid_pairs]
+                score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
 
-                    rows = []
-                    for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):
-                        for metric_key, value in score_dict.items():
-                            rows.append((aid, metric_key, value))
+                rows = []
+                for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):
+                    for metric_key, value in score_dict.items():
+                        rows.append((aid, metric_key, value))
 
-                    if rows:
-                        bulk_insert_asset_scores(conn, run_id, rows)
+                if rows:
+                    upsert_asset_scores(
+                        conn, scorer_id, variant_id, rows,
+                        scorer_version=scorer_version,
+                    )
 
-                scored += len(batch_ids)
-                if on_progress is not None:
-                    on_progress(scored, total)
+            scored += len(batch_ids)
+            if on_progress is not None:
+                on_progress(scored, total)
 
-    finally:
-        finish_scorer_run(conn, run_id)
-
-    return run_id
+    return scored
 
 
 def run_scorer_by_id(
@@ -269,7 +251,7 @@ def run_scorer_by_id(
         cancel_check: Optional cancel callback (see :func:`run_scorer`).
 
     Returns:
-        The ``scorer_runs`` run ID.
+        The number of assets scored.
 
     Raises:
         KeyError: If *scorer_id* is not found in the registry.

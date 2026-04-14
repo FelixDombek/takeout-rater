@@ -106,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--rerun",
         action="store_true",
         default=False,
-        help="Re-score even if scores already exist (creates a new scorer_run).",
+        help="Re-score even if scores already exist (overwrites previous scores).",
     )
     score_parser.add_argument(
         "--batch-size",
@@ -526,7 +526,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
         def _score_progress(done: int, total: int, _label: str = scorer_id_label) -> None:
             print(f"  {_label}: {done}/{total}", end="\r", flush=True)
 
-        run_id = run_scorer(
+        num_scored = run_scorer(
             conn,
             scorer,
             thumbs_dir,
@@ -534,7 +534,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
             skip_existing=not args.rerun,
             on_progress=_score_progress,
         )
-        print(f"\n  Done (scorer_run id={run_id}).")
+        print(f"\n  Done ({num_scored} assets scored).")
 
     conn.close()
     return exit_code

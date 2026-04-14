@@ -66,23 +66,15 @@ CREATE TABLE IF NOT EXISTS album_assets (
     PRIMARY KEY (album_id, asset_id)
 );
 
-CREATE TABLE IF NOT EXISTS scorer_runs (
-    id              INTEGER PRIMARY KEY,
-    scorer_id       TEXT NOT NULL,
-    variant_id      TEXT NOT NULL,
-    scorer_version  TEXT,
-    params_json     TEXT,
-    params_hash     TEXT,
-    started_at      INTEGER,
-    finished_at     INTEGER
-);
-
 CREATE TABLE IF NOT EXISTS asset_scores (
     asset_id        INTEGER NOT NULL REFERENCES assets(id),
-    scorer_run_id   INTEGER NOT NULL REFERENCES scorer_runs(id),
+    scorer_id       TEXT NOT NULL,
+    variant_id      TEXT NOT NULL,
     metric_key      TEXT NOT NULL,
     value           REAL NOT NULL,
-    PRIMARY KEY (asset_id, scorer_run_id, metric_key)
+    scorer_version  TEXT,
+    scored_at       INTEGER,
+    PRIMARY KEY (asset_id, scorer_id, variant_id, metric_key)
 );
 
 CREATE TABLE IF NOT EXISTS phash (
@@ -146,8 +138,8 @@ CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
 CREATE INDEX IF NOT EXISTS idx_assets_sha256           ON assets (sha256);
 CREATE INDEX IF NOT EXISTS idx_asset_paths_asset_id    ON asset_paths (asset_id);
 CREATE INDEX IF NOT EXISTS idx_asset_scores_asset_id   ON asset_scores (asset_id);
-CREATE INDEX IF NOT EXISTS idx_asset_scores_run_metric ON asset_scores (scorer_run_id, metric_key);
+CREATE INDEX IF NOT EXISTS idx_asset_scores_scorer     ON asset_scores (scorer_id, variant_id, metric_key);
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_id         ON clusters (run_id);
 
-PRAGMA user_version = 11;
+PRAGMA user_version = 12;
