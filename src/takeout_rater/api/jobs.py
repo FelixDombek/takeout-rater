@@ -597,6 +597,20 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                             f"CLIP clustering… {processed}\u202f/\u202f{total} embeddings"
                         )
 
+                def _clip_post_cb(processed: int, total: int) -> None:
+                    progress.processed = processed
+                    progress.total = total
+                    if total > 0:
+                        progress.message = (
+                            f"Post-processing components… {processed}\u202f/\u202f{total}"
+                        )
+
+                def _clip_save_cb(processed: int, total: int) -> None:
+                    progress.processed = processed
+                    progress.total = total
+                    if total > 0:
+                        progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
+
                 n_clusters = build_clip_clusters(
                     worker_conn,
                     metric=clip_metric,
@@ -604,6 +618,8 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     min_cluster_size=min_size,
                     single_linkage=single_linkage,
                     on_progress=_clip_cb,
+                    on_post_progress=_clip_post_cb,
+                    on_save_progress=_clip_save_cb,
                 )
                 progress.message = f"CLIP clustering complete — {n_clusters} cluster(s) found."
                 progress.running = False
@@ -622,6 +638,20 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     if total > 0:
                         progress.message = f"Clustering… {processed}/{total} hashes"
 
+                def _post_cb(processed: int, total: int) -> None:
+                    progress.processed = processed
+                    progress.total = total
+                    if total > 0:
+                        progress.message = (
+                            f"Post-processing components… {processed}\u202f/\u202f{total}"
+                        )
+
+                def _save_cb(processed: int, total: int) -> None:
+                    progress.processed = processed
+                    progress.total = total
+                    if total > 0:
+                        progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
+
                 n_clusters = build_clusters(
                     worker_conn,
                     threshold=threshold,
@@ -629,6 +659,8 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     min_cluster_size=min_size,
                     single_linkage=single_linkage,
                     on_progress=_cb,
+                    on_post_progress=_post_cb,
+                    on_save_progress=_save_cb,
                 )
                 progress.message = f"Clustering complete — {n_clusters} cluster(s) found."
                 progress.running = False
