@@ -697,6 +697,31 @@ def serve_thumbnail(
     return FileResponse(str(thumb), media_type="image/jpeg")
 
 
+@router.get("/image/{asset_id}")
+def serve_image(
+    asset_id: int,
+    request: Request,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+    takeout_root: Path | None = Depends(_get_takeout_root),  # noqa: B008
+) -> FileResponse:
+    """Serve the original full-size image for an asset.
+
+    Falls back to the thumbnail if the original file is not accessible.
+    Returns 404 if neither the original nor the thumbnail is available.
+    """
+    asset: AssetRow | None = get_asset_by_id(conn, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
+
+    if takeout_root is not None and asset.relpath is not None:
+        image_path = takeout_root / asset.relpath
+        if image_path.exists():
+            media_type = asset.mime or "application/octet-stream"
+            return FileResponse(str(image_path), media_type=media_type)
+
+    raise HTTPException(status_code=404, detail=f"Original image for asset {asset_id} not found")
+
+
 @router.get("/api/timeline")
 def get_timeline(
     request: Request,

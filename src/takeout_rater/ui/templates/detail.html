@@ -19,6 +19,61 @@
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,.2);
     background: #ddd;
+    cursor: zoom-in;
+    display: block;
+  }
+
+  /* ── Full-screen image overlay ──────────────────────────────────────── */
+  #img-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+  }
+  #img-overlay.open { display: flex; }
+  #img-overlay-img {
+    max-width: 100vw;
+    max-height: 100vh;
+    object-fit: contain;
+    transform-origin: center center;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  #img-overlay-img.grabbing { cursor: grabbing; }
+  #img-overlay-close {
+    position: fixed;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 2.5rem;
+    height: 2.5rem;
+    font-size: 1.2rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 1001;
+    transition: background 0.12s;
+  }
+  #img-overlay-close:hover { background: rgba(0,0,0,0.88); }
+  #img-overlay-hint {
+    position: fixed;
+    bottom: 0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255,255,255,0.45);
+    font-size: 0.75rem;
+    pointer-events: none;
+    white-space: nowrap;
   }
   .detail-meta { font-size: 0.9rem; }
   .detail-meta h1 { font-size: 1.25rem; margin-bottom: 0.75rem; overflow-wrap: break-word; }
@@ -142,9 +197,11 @@
   <div>
     <img
       class="detail-img"
-      src="/thumbs/{{ asset.id }}"
+      src="/image/{{ asset.id }}"
       alt="{{ asset.title or asset.filename }}"
       onerror="this.style.background='#e0e0e0'"
+      onclick="openImgOverlay(this.src, this.alt)"
+      title="Click to zoom"
     >
   </div>
 
@@ -202,6 +259,13 @@
     {% endif %}
 
   </div>
+</div>
+
+{# ── Full-screen zoom overlay ──────────────────────────────────────────── #}
+<div id="img-overlay" role="dialog" aria-modal="true" aria-label="Image viewer">
+  <button id="img-overlay-close" onclick="closeImgOverlay()" aria-label="Close">✕</button>
+  <img id="img-overlay-img" src="" alt="">
+  <div id="img-overlay-hint">Scroll to zoom · drag to pan · Esc to close</div>
 </div>
 
 {# ── Info tabs: SCORES / JSON / EXIF ─────────────────────────────── #}
@@ -360,6 +424,145 @@ function loadClipWords(panel) {
       panel.querySelector(".clip-empty").style.display = "";
     });
 }
+
+// ── Full-screen image overlay ──────────────────────────────────────────────
+(function () {
+  const overlay = document.getElementById('img-overlay');
+  const overlayImg = document.getElementById('img-overlay-img');
+
+  // Zoom / pan state
+  let scale = 1;
+  let originX = 0, originY = 0;
+  let panX = 0, panY = 0;
+  let isPanning = false;
+  let panStartX = 0, panStartY = 0;
+  let panOriginX = 0, panOriginY = 0;
+
+  function applyTransform() {
+    overlayImg.style.transform =
+      'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+  }
+
+  function resetTransform() {
+    scale = 1; panX = 0; panY = 0;
+    applyTransform();
+  }
+
+  window.openImgOverlay = function (src, alt) {
+    overlayImg.src = src;
+    overlayImg.alt = alt || '';
+    resetTransform();
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    overlay.focus();
+  };
+
+  window.closeImgOverlay = function () {
+    overlay.classList.remove('open');
+    document.body.style.overflow = '';
+    overlayImg.src = '';
+    resetTransform();
+  };
+
+  // Close on backdrop click (not on image)
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) closeImgOverlay();
+  });
+
+  // Keyboard: Esc closes
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && overlay.classList.contains('open')) {
+      closeImgOverlay();
+    }
+  });
+
+  // Mouse wheel zoom
+  overlay.addEventListener('wheel', function (e) {
+    if (!overlay.classList.contains('open')) return;
+    e.preventDefault();
+    const rect = overlayImg.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left - rect.width / 2;
+    const mouseY = e.clientY - rect.top  - rect.height / 2;
+    const delta = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const newScale = Math.max(0.2, Math.min(20, scale * delta));
+    // Adjust pan to zoom toward cursor position
+    panX = panX + mouseX * (1 - newScale / scale);
+    panY = panY + mouseY * (1 - newScale / scale);
+    scale = newScale;
+    applyTransform();
+  }, { passive: false });
+
+  // Mouse drag to pan
+  overlayImg.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    panOriginX = panX;
+    panOriginY = panY;
+    overlayImg.classList.add('grabbing');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!isPanning) return;
+    panX = panOriginX + (e.clientX - panStartX);
+    panY = panOriginY + (e.clientY - panStartY);
+    applyTransform();
+  });
+  document.addEventListener('mouseup', function () {
+    if (isPanning) {
+      isPanning = false;
+      overlayImg.classList.remove('grabbing');
+    }
+  });
+
+  // Touch: pinch-to-zoom + drag
+  let touches = [];
+  let touchStartScale = 1;
+  let touchStartPanX = 0, touchStartPanY = 0;
+  let touchStartMidX = 0, touchStartMidY = 0;
+
+  overlay.addEventListener('touchstart', function (e) {
+    touches = Array.from(e.touches);
+    touchStartScale = scale;
+    touchStartPanX = panX;
+    touchStartPanY = panY;
+    if (touches.length === 2) {
+      touchStartMidX = (touches[0].clientX + touches[1].clientX) / 2;
+      touchStartMidY = (touches[0].clientY + touches[1].clientY) / 2;
+    } else if (touches.length === 1) {
+      panStartX = touches[0].clientX;
+      panStartY = touches[0].clientY;
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  overlay.addEventListener('touchmove', function (e) {
+    const cur = Array.from(e.touches);
+    if (cur.length === 2 && touches.length === 2) {
+      const startDist = Math.hypot(
+        touches[1].clientX - touches[0].clientX,
+        touches[1].clientY - touches[0].clientY
+      );
+      const curDist = Math.hypot(
+        cur[1].clientX - cur[0].clientX,
+        cur[1].clientY - cur[0].clientY
+      );
+      const newScale = Math.max(0.2, Math.min(20, touchStartScale * (curDist / startDist)));
+      const midX = (cur[0].clientX + cur[1].clientX) / 2;
+      const midY = (cur[0].clientY + cur[1].clientY) / 2;
+      panX = touchStartPanX + (midX - touchStartMidX);
+      panY = touchStartPanY + (midY - touchStartMidY);
+      scale = newScale;
+      applyTransform();
+    } else if (cur.length === 1) {
+      panX = touchStartPanX + (cur[0].clientX - panStartX);
+      panY = touchStartPanY + (cur[0].clientY - panStartY);
+      applyTransform();
+    }
+    e.preventDefault();
+  }, { passive: false });
+})();
 
 {% if phash_hex %}
 (function () {
