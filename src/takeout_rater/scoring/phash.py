@@ -30,6 +30,39 @@ DHASH_ALGO = "dhash16"
 _HASH_SIZE = 16  # produces a 256-bit hash (16 × 16 grid)
 
 
+def compute_dhash_from_image(img: object, *, hash_size: int = _HASH_SIZE) -> str:
+    """Compute the difference hash (dhash) from a PIL Image object.
+
+    The image is resized to ``(hash_size + 1) × hash_size`` pixels, converted
+    to greyscale, and the horizontal gradient is encoded as a ``hash_size²``-bit
+    integer.
+
+    Args:
+        img: A PIL ``Image`` object (already opened).
+        hash_size: Side length of the hash grid (default 16 → 256-bit hash).
+
+    Returns:
+        Hexadecimal string of length ``hash_size² / 4`` (64 chars for 256-bit).
+
+    Raises:
+        ImportError: If Pillow is not installed.
+    """
+    # img is already a PIL Image, so we just process it directly
+    # (caller must import PIL.Image)
+    img_gray = img.convert("L").resize((hash_size + 1, hash_size))  # type: ignore[union-attr]
+    px = img_gray.load()
+    bits = 0
+    for idx in range(hash_size * hash_size):
+        row = idx // hash_size
+        col = idx % hash_size
+        left = px[col, row]  # type: ignore[index]
+        right = px[col + 1, row]  # type: ignore[index]
+        if left > right:
+            bits |= 1 << idx
+    hex_chars = hash_size * hash_size // 4
+    return f"{bits:0{hex_chars}x}"
+
+
 def compute_dhash(image_path: Path, *, hash_size: int = _HASH_SIZE) -> str:
     """Compute the difference hash (dhash) of an image file.
 
@@ -51,18 +84,7 @@ def compute_dhash(image_path: Path, *, hash_size: int = _HASH_SIZE) -> str:
     from PIL import Image  # noqa: PLC0415
 
     with Image.open(image_path) as img:
-        img = img.convert("L").resize((hash_size + 1, hash_size))
-        px = img.load()
-        bits = 0
-        for idx in range(hash_size * hash_size):
-            row = idx // hash_size
-            col = idx % hash_size
-            left = px[col, row]  # type: ignore[index]
-            right = px[col + 1, row]  # type: ignore[index]
-            if left > right:
-                bits |= 1 << idx
-    hex_chars = hash_size * hash_size // 4
-    return f"{bits:0{hex_chars}x}"
+        return compute_dhash_from_image(img, hash_size=hash_size)
 
 
 def hamming_distance(hash_a: str, hash_b: str) -> int:
