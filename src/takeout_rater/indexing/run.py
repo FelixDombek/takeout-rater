@@ -173,14 +173,14 @@ def run_index(
     # first run) overlaps with the scan rather than blocking the processing
     # phase.
     #
-    # _clip_warmup_ok is set to True ONLY after get_clip_model() returns
-    # successfully.  Workers check this flag before attempting CLIP inference,
+    # _clip_warmup_ok is set ONLY after get_clip_model() returns
+    # successfully.  Workers check this event before attempting CLIP inference,
     # so they never compete for the model-loading lock.  If the warm-up times
     # out (e.g. because the model host is unreachable and the request hangs),
     # workers skip CLIP entirely rather than blocking indefinitely — which
     # would also prevent Ctrl-C from working (Python's ThreadPoolExecutor
     # atexit handler waits for all workers to finish).
-    _clip_warmup_ok: list[bool] = [False]
+    _clip_warmup_ok = threading.Event()
 
     def _warmup_clip() -> None:
         try:
@@ -191,7 +191,7 @@ def run_index(
 
             if is_available():
                 get_clip_model()
-                _clip_warmup_ok[0] = True  # only set after successful return
+                _clip_warmup_ok.set()  # only set after successful return
         except Exception:  # noqa: BLE001
             pass
 
@@ -338,8 +338,8 @@ def run_index(
             # Compute CLIP embedding if warm-up confirmed the model loaded.
             # Checking _clip_warmup_ok here ensures workers never contend for
             # the model-loading lock; get_clip_model() returns the cached
-            # singleton immediately once the flag is True.
-            if img is not None and _clip_warmup_ok[0]:
+            # singleton immediately once the event is set.
+            if img is not None and _clip_warmup_ok.is_set():
                 try:
                     import struct  # noqa: PLC0415
 
