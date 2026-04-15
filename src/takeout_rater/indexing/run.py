@@ -171,10 +171,16 @@ def run_index(
     # We kick off a background thread to download/warm the CLIP backbone at
     # the same time so that model loading (which can take several minutes on a
     # first run) overlaps with the scan rather than blocking the processing
-    # phase.  Workers will call get_clip_model() too, but because the singleton
-    # lock is already held by the warm-up thread (or the model is already
-    # loaded), they will either find it ready immediately or wait only for the
-    # remainder of the download — not trigger a fresh download themselves.
+    # phase.
+    #
+    # _clip_warmup_ok is set to True ONLY after get_clip_model() returns
+    # successfully.  Workers check this flag before attempting CLIP inference,
+    # so they never compete for the model-loading lock.  If the warm-up times
+    # out (e.g. because the model host is unreachable and the request hangs),
+    # workers skip CLIP entirely rather than blocking indefinitely — which
+    # would also prevent Ctrl-C from working (Python's ThreadPoolExecutor
+    # atexit handler waits for all workers to finish).
+    _clip_warmup_ok: list[bool] = [False]
 
     def _warmup_clip() -> None:
         try:
@@ -185,6 +191,7 @@ def run_index(
 
             if is_available():
                 get_clip_model()
+                _clip_warmup_ok[0] = True  # only set after successful return
         except Exception:  # noqa: BLE001
             pass
 
@@ -202,20 +209,20 @@ def run_index(
     progress.found = len(assets)
 
     if not assets:
-        _warmup_thread.join()
+        _warmup_thread.join(timeout=300)
         progress.running = False
         progress.done = True
         return progress
 
     # ── Phase 1b: Wait for model warm-up if still loading ─────────────────────
-    # If the scan finished before the model loaded, block here briefly so that
-    # workers never see a cold model.  The UI shows "Loading CLIP model…"
-    # during this window.
+    # If the scan finished before the model loaded, block here (up to 5 min)
+    # so that workers skip CLIP rather than block.  The UI shows
+    # "Loading CLIP model…" during this window.
     if _warmup_thread.is_alive():
         progress.phase = "loading_models"
         if on_progress:
             on_progress(progress)
-        _warmup_thread.join()
+        _warmup_thread.join(timeout=300)
 
     # ── Phase 2: Processing ───────────────────────────────────────────────────
     progress.phase = "processing"
@@ -313,8 +320,10 @@ def run_index(
             # Compute phash from the in-memory image
             img = None
             try:
-                from PIL import Image  # noqa: PLC0415
                 import io  # noqa: PLC0415
+
+                from PIL import Image  # noqa: PLC0415
+
                 from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
 
                 img = Image.open(io.BytesIO(file_bytes))
@@ -326,10 +335,14 @@ def run_index(
             except (ImportError, OSError):
                 pass
 
-            # Compute CLIP embedding if CLIP is available, reusing the loaded image
-            if img is not None:
+            # Compute CLIP embedding if warm-up confirmed the model loaded.
+            # Checking _clip_warmup_ok here ensures workers never contend for
+            # the model-loading lock; get_clip_model() returns the cached
+            # singleton immediately once the flag is True.
+            if img is not None and _clip_warmup_ok[0]:
                 try:
                     import struct  # noqa: PLC0415
+
                     import torch  # noqa: PLC0415
 
                     from takeout_rater.scorers.adapters.clip_backbone import (
@@ -337,18 +350,12 @@ def run_index(
                     )
 
                     model, preprocess, _tokenizer, device = get_clip_model()
-                    
-                    # Preprocess the already-loaded image
                     img_rgb = img.convert("RGB")
                     img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
-                    
-                    # Generate embedding
                     with torch.no_grad():
                         embedding = model.encode_image(img_tensor)
                         embedding = embedding / embedding.norm(dim=-1, keepdim=True)
                         embedding = embedding.cpu().float().numpy()[0]
-                    
-                    # Store in DB
                     blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
                     wconn3 = open_library_db(library_root)
                     wconn3.execute(

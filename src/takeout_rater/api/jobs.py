@@ -539,12 +539,10 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
     def _worker() -> None:
         from takeout_rater.db.connection import (
-            library_state_dir,  # noqa: PLC0415
             open_library_db,  # noqa: PLC0415
         )
 
         worker_conn = open_library_db(library_root)
-        thumbs_dir = library_state_dir(library_root) / "thumbs"
         try:
             if method == "clip":
                 # ── CLIP embedding clustering ────────────────────────────────
