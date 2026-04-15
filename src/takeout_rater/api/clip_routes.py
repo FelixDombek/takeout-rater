@@ -1,15 +1,18 @@
 """FastAPI router for the CLIP feature page.
 
-Provides API endpoints for managing user-defined CLIP vocabulary tags.
+Provides API endpoints for managing user-defined CLIP vocabulary tags and
+for generating the 3-D embedding map used by the interactive visualization.
+
 User tags are stored in the ``clip_user_tags`` table and are included
 alongside the predefined vocabulary when computing CLIP word matches in
 the asset detail view.
 
 Endpoints
 ---------
-GET  /api/clip/tags           – list all user-defined tags
-POST /api/clip/tags           – add a new user-defined tag
-DELETE /api/clip/tags/{term}  – remove a user-defined tag
+GET  /api/clip/tags              – list all user-defined tags
+POST /api/clip/tags              – add a new user-defined tag
+DELETE /api/clip/tags/{term}     – remove a user-defined tag
+GET  /api/clip/embedding-map     – compute/return 3-D UMAP projection + clusters
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from takeout_rater.db.queries import (
     delete_clip_user_tag,
     insert_clip_user_tag,
     list_clip_user_tags,
+    load_clip_embeddings_with_relpaths,
 )
 
 router = APIRouter()
@@ -108,3 +112,61 @@ def remove_tag(
 
     tags = list_clip_user_tags(conn)
     return JSONResponse({"tags": tags})
+
+
+@router.get("/api/clip/embedding-map")
+def get_embedding_map(
+    request: Request,
+    refresh: bool = False,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return a 3-D UMAP projection of all stored CLIP embeddings.
+
+    The pipeline is:
+    1. **StandardScaler** – per-dimension normalisation.
+    2. **PCA** – reduce 768 → 50 components to remove noise.
+    3. **UMAP** – project 50 → 3 dimensions (``metric="cosine"``).
+    4. **KMeans** – cluster the 3-D points to colour them by group.
+    5. **Representative** – for each cluster, the asset closest to its
+       centroid is selected as the preview thumbnail.
+
+    The result is cached in ``app.state.clip_embedding_map`` and reused on
+    subsequent calls unless ``refresh=true`` is passed.
+
+    Query parameters
+    ----------------
+    refresh : bool
+        Pass ``true`` to force recomputation (e.g. after new embeddings have
+        been added).
+
+    Returns
+    -------
+    JSON:
+
+    .. code-block:: json
+
+        {
+            "points": [
+                {"asset_id": 1, "x": 0.1, "y": -0.2, "z": 0.5,
+                 "cluster_id": 0, "relpath": "Photos/img.jpg"}
+            ],
+            "clusters": [
+                {"cluster_id": 0, "representative_asset_id": 1, "size": 42}
+            ],
+            "total": 500
+        }
+    """
+    # Return cached result when available and refresh not requested
+    cached = getattr(request.app.state, "clip_embedding_map", None)
+    if cached is not None and not refresh:
+        return JSONResponse(cached)
+
+    rows = load_clip_embeddings_with_relpaths(conn)
+    if not rows:
+        return JSONResponse({"points": [], "clusters": [], "total": 0})
+
+    from takeout_rater.clustering.embedding_map import build_embedding_map  # noqa: PLC0415
+
+    result = build_embedding_map(rows)
+    request.app.state.clip_embedding_map = result
+    return JSONResponse(result)

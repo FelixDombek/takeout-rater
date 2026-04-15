@@ -1137,6 +1137,9 @@ def start_embed_job(request: Request) -> JSONResponse:
             # Invalidate the in-memory search index so the next search rebuilds it.
             if hasattr(request.app.state, "clip_index"):
                 request.app.state.clip_index = None
+            # Invalidate the 3-D embedding map cache so the next visit recomputes.
+            if hasattr(request.app.state, "clip_embedding_map"):
+                request.app.state.clip_embedding_map = None
 
             progress.current_item = ""
             if progress.cancel_event.is_set():

@@ -35,6 +35,8 @@ dependencies = [
     "onnxruntime>=1.17",
     # Clustering (DBSCAN for face embeddings)
     "scikit-learn>=1.4",
+    # UMAP dimensionality reduction (embedding visualization)
+    "umap-learn>=0.5",
 ]
 
 [project.optional-dependencies]

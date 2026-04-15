@@ -4,7 +4,7 @@
 
 {% block head %}
 <style>
-  .clip-page { max-width: 780px; margin: 0 auto; }
+  .clip-page { max-width: 960px; margin: 0 auto; }
   .clip-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   .clip-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
   .clip-page h2.section-heading {
@@ -89,6 +89,122 @@
     font-size: 0.85rem;
     font-style: italic;
   }
+
+  /* ── Embedding visualization ─────────────────────────────────────────── */
+  .viz-section {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .viz-section p.desc {
+    color: #555;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    line-height: 1.5;
+  }
+  .viz-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .viz-controls .viz-info {
+    font-size: 0.8rem;
+    color: #666;
+  }
+  #viz-canvas-wrap {
+    position: relative;
+    width: 100%;
+    height: 520px;
+    background: #0d0d1a;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  #viz-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  /* Hover tooltip */
+  #viz-tooltip {
+    display: none;
+    position: absolute;
+    pointer-events: none;
+    background: rgba(10,10,20,0.88);
+    color: #fff;
+    border-radius: 6px;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.78rem;
+    max-width: 160px;
+    z-index: 10;
+    line-height: 1.3;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  #viz-tooltip img {
+    display: block;
+    width: 120px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 3px;
+    margin-bottom: 0.3rem;
+  }
+  /* Loading / empty state */
+  #viz-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #aaa;
+    font-size: 0.9rem;
+    gap: 0.5rem;
+    pointer-events: none;
+  }
+  #viz-overlay .viz-spinner {
+    width: 28px; height: 28px;
+    border: 3px solid #444;
+    border-top-color: #7c9cff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Cluster legend */
+  #viz-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: #333;
+    background: #f5f5f5;
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #e0e0e0;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .legend-item:hover { background: #e8eeff; }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .legend-thumb {
+    width: 24px; height: 24px;
+    object-fit: cover;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
 </style>
 {% endblock %}
 
@@ -100,6 +216,29 @@
     per-photo visual concept tagging. CLIP embeddings are now computed automatically
     during indexing.
   </p>
+
+  <!-- ── Embedding visualization ───────────────────────────────────────────── -->
+  <h2 class="section-heading">Embedding Space Visualization</h2>
+  <div class="viz-section">
+    <p class="desc">
+      3-D projection of all image embeddings computed with UMAP (via PCA → UMAP).
+      Visually similar images cluster together. <strong>Drag</strong> to rotate,
+      <strong>scroll</strong> to zoom, <strong>right-drag</strong> to pan.
+      Click any point to open that photo.
+    </p>
+    <div class="viz-controls">
+      <button class="btn btn-primary" id="btn-build-viz" onclick="loadViz(false)">Build / Refresh</button>
+      <span class="viz-info" id="viz-info-text"></span>
+    </div>
+    <div id="viz-canvas-wrap">
+      <canvas id="viz-canvas"></canvas>
+      <div id="viz-tooltip"></div>
+      <div id="viz-overlay">
+        <span>Click <strong>Build / Refresh</strong> to generate the visualization.</span>
+      </div>
+    </div>
+    <div id="viz-legend"></div>
+  </div>
 
   <!-- ── User tagging terms ─────────────────────────────────────────────── -->
   <h2 class="section-heading">Custom Tag Terms</h2>
@@ -122,8 +261,281 @@
   </div>
 </div>
 
+<!-- Three.js r158 + OrbitControls (loaded from CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+
 <script>
 (function () {
+
+  // ── Cluster colour palette ───────────────────────────────────────────────
+  var PALETTE = [
+    0x4e79a7, 0xf28e2b, 0xe15759, 0x76b7b2,
+    0x59a14f, 0xedc948, 0xb07aa1, 0xff9da7,
+    0x9c755f, 0xbab0ac, 0x499894, 0xd37295,
+  ];
+  function clusterColor(id) { return PALETTE[id % PALETTE.length]; }
+  function clusterColorHex(id) {
+    var c = clusterColor(id);
+    return '#' + ('000000' + c.toString(16)).slice(-6);
+  }
+
+  // ── Three.js scene globals ───────────────────────────────────────────────
+  var renderer, scene, camera, controls, pointCloud;
+  var vizData = null;       // last loaded API response
+  var assetIds = null;      // Float32Array → parallel to geometry attributes
+  var initialized = false;
+
+  function initThree() {
+    var wrap = document.getElementById('viz-canvas-wrap');
+    var canvas = document.getElementById('viz-canvas');
+    if (!wrap || !canvas) return;
+
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+    renderer.setClearColor(0x0d0d1a);
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(60, wrap.clientWidth / wrap.clientHeight, 0.01, 1000);
+    camera.position.set(0, 0, 18);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.screenSpacePanning = true;
+    controls.minDistance = 0.5;
+    controls.maxDistance = 200;
+
+    window.addEventListener('resize', function() {
+      if (!wrap) return;
+      renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+      camera.aspect = wrap.clientWidth / wrap.clientHeight;
+      camera.updateProjectionMatrix();
+    });
+
+    initialized = true;
+    animate();
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+
+  // ── Build point cloud from API data ─────────────────────────────────────
+  function buildPointCloud(data) {
+    // Remove old cloud
+    if (pointCloud) { scene.remove(pointCloud); pointCloud = null; }
+
+    var pts = data.points;
+    var n = pts.length;
+    if (n === 0) return;
+
+    var positions = new Float32Array(n * 3);
+    var colors    = new Float32Array(n * 3);
+    assetIds = new Int32Array(n);
+
+    var color = new THREE.Color();
+    for (var i = 0; i < n; i++) {
+      var p = pts[i];
+      positions[i*3]   = p.x;
+      positions[i*3+1] = p.y;
+      positions[i*3+2] = p.z;
+      color.set(clusterColor(p.cluster_id));
+      colors[i*3]   = color.r;
+      colors[i*3+1] = color.g;
+      colors[i*3+2] = color.b;
+      assetIds[i] = p.asset_id;
+    }
+
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+
+    var mat = new THREE.PointsMaterial({
+      size: 0.28,
+      vertexColors: true,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.85,
+    });
+
+    pointCloud = new THREE.Points(geo, mat);
+    scene.add(pointCloud);
+
+    // Re-centre camera on the centroid of the cloud
+    geo.computeBoundingBox();
+    var box = geo.boundingBox;
+    var cx = (box.min.x + box.max.x) / 2;
+    var cy = (box.min.y + box.max.y) / 2;
+    var cz = (box.min.z + box.max.z) / 2;
+    var span = Math.max(
+      box.max.x - box.min.x,
+      box.max.y - box.min.y,
+      box.max.z - box.min.z
+    );
+    controls.target.set(cx, cy, cz);
+    camera.position.set(cx, cy, cz + span * 1.5);
+    controls.update();
+  }
+
+  // ── Cluster legend ───────────────────────────────────────────────────────
+  function buildLegend(data) {
+    var el = document.getElementById('viz-legend');
+    if (!el) return;
+    el.innerHTML = '';
+    data.clusters.forEach(function(cl) {
+      var item = document.createElement('div');
+      item.className = 'legend-item';
+      item.title = 'Jump to representative image';
+      item.onclick = function() {
+        window.open('/assets/' + cl.representative_asset_id, '_blank');
+      };
+
+      var dot = document.createElement('span');
+      dot.className = 'legend-dot';
+      dot.style.background = clusterColorHex(cl.cluster_id);
+
+      item.appendChild(dot);
+
+      if (cl.representative_asset_id) {
+        var img = document.createElement('img');
+        img.className = 'legend-thumb';
+        img.src = '/thumbs/' + cl.representative_asset_id;
+        img.alt = '';
+        item.appendChild(img);
+      }
+
+      var label = document.createElement('span');
+      label.textContent = 'Cluster\u00a0' + cl.cluster_id + '\u00a0(' + cl.size + ')';
+      item.appendChild(label);
+
+      el.appendChild(item);
+    });
+  }
+
+  // ── Raycaster hover ──────────────────────────────────────────────────────
+  var raycaster = null;
+  var mouse = null;
+  var hoveredIdx = -1;
+
+  function initRaycaster() {
+    raycaster = new THREE.Raycaster();
+    raycaster.params.Points.threshold = 0.18;
+    mouse = new THREE.Vector2();
+
+    var canvas = document.getElementById('viz-canvas');
+    if (!canvas) return;
+
+    canvas.addEventListener('mousemove', function(e) {
+      if (!pointCloud) return;
+      var rect = canvas.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      var hits = raycaster.intersectObject(pointCloud);
+      var tooltip = document.getElementById('viz-tooltip');
+      if (!tooltip) return;
+
+      if (hits.length > 0) {
+        var idx = hits[0].index;
+        if (idx !== hoveredIdx) {
+          hoveredIdx = idx;
+          var aid = assetIds[idx];
+          var pt = vizData.points[idx];
+          tooltip.innerHTML = '<img src="/thumbs/' + aid + '" onerror="this.style.display=\'none\'">'
+            + '<div>Cluster\u00a0' + pt.cluster_id + '</div>'
+            + '<div style="color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">'
+            + escHtml(pt.relpath.split('/').pop()) + '</div>';
+        }
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX - canvas.getBoundingClientRect().left + 12) + 'px';
+        tooltip.style.top  = (e.clientY - canvas.getBoundingClientRect().top  - 10) + 'px';
+      } else {
+        hoveredIdx = -1;
+        tooltip.style.display = 'none';
+      }
+    });
+
+    canvas.addEventListener('mouseleave', function() {
+      hoveredIdx = -1;
+      var tooltip = document.getElementById('viz-tooltip');
+      if (tooltip) tooltip.style.display = 'none';
+    });
+
+    canvas.addEventListener('click', function(e) {
+      if (!pointCloud) return;
+      var rect = canvas.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      var hits = raycaster.intersectObject(pointCloud);
+      if (hits.length > 0) {
+        var aid = assetIds[hits[0].index];
+        window.open('/assets/' + aid, '_blank');
+      }
+    });
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Overlay helpers ──────────────────────────────────────────────────────
+  function showOverlay(html) {
+    var el = document.getElementById('viz-overlay');
+    if (el) { el.innerHTML = html; el.style.display = 'flex'; }
+  }
+  function hideOverlay() {
+    var el = document.getElementById('viz-overlay');
+    if (el) el.style.display = 'none';
+  }
+
+  // ── Main entry point ─────────────────────────────────────────────────────
+  window.loadViz = function(forceRefresh) {
+    var btn = document.getElementById('btn-build-viz');
+    var info = document.getElementById('viz-info-text');
+    if (btn) btn.disabled = true;
+    if (info) info.textContent = '';
+
+    showOverlay('<div class="viz-spinner"></div><span>Computing\u2026 this may take a minute.</span>');
+
+    if (!initialized) {
+      initThree();
+      initRaycaster();
+    }
+
+    var url = '/api/clip/embedding-map' + (forceRefresh ? '?refresh=true' : '');
+    fetch(url)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        vizData = data;
+        if (!data.total || data.total === 0) {
+          showOverlay('<span>No CLIP embeddings found. Run the <strong>Embed</strong> job first.</span>');
+          if (info) info.textContent = '';
+          if (btn) btn.disabled = false;
+          return;
+        }
+        buildPointCloud(data);
+        buildLegend(data);
+        hideOverlay();
+        if (info) info.textContent =
+          data.total + ' images · ' + data.clusters.length + ' clusters';
+        if (btn) btn.disabled = false;
+      })
+      .catch(function(err) {
+        showOverlay('<span style="color:#f87171">Error: ' + escHtml(String(err)) + '</span>');
+        if (btn) btn.disabled = false;
+        if (info) info.textContent = '';
+      });
+  };
+
   // ── User tag management ──────────────────────────────────────────────────
 
   function setTagFeedback(msg, cls) {
