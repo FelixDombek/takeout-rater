@@ -42,14 +42,20 @@ _PCA_COMPONENTS = 50
 _UMAP_COMPONENTS = 3
 _UMAP_METRIC = "cosine"
 _MIN_UMAP_N = 15  # UMAP needs at least this many samples to be meaningful
+_MIN_CLUSTERS = 2  # always create at least 2 clusters when n ≥ 2
+_MAX_CLUSTERS = 12  # cap to keep the legend readable
 
 
 def _n_clusters(n: int) -> int:
-    """Return a sensible number of KMeans clusters for *n* points."""
+    """Return a sensible number of KMeans clusters for *n* points.
+
+    Uses the common heuristic ``k ≈ √(n/2)``, capped at ``_MAX_CLUSTERS`` to
+    keep the legend readable and at ``n`` so KMeans never asks for more
+    clusters than there are data points.
+    """
     if n < 2:
         return 1
-    # Use ~sqrt(n/2) capped at 12, but never more than n itself
-    return min(12, max(2, int(math.sqrt(n / 2))), n)
+    return min(_MAX_CLUSTERS, max(_MIN_CLUSTERS, int(math.sqrt(n / 2))), n)
 
 
 def build_embedding_map(
