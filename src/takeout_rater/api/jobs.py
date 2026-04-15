@@ -61,7 +61,8 @@ class JobProgress:
         error: Human-readable error message, or ``None`` on success.
         message: Short human-readable status line (updated during the run).
         processed: General-purpose "items processed so far" counter.  For
-            ``"index"`` this is the unified 0–100 percentage; for ``"score"``
+            ``"index"`` this is the number of folders scanned during scan phase,
+            then resets to asset count during processing phase; for ``"score"``
             it is the number of assets scored; for ``"rescan"`` it is assets
             rescanned.
         total: Total items to process (0 until the count is known).
@@ -217,8 +218,15 @@ def _start_index_job(app: object, library_root: Path) -> None:
         from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
 
         def _cb(p: IndexProgress) -> None:
-            progress.total = 100
-            progress.processed = int(p.pct)
+            # Scan phase: count folders
+            # Processing phase: count assets (reset at transition)
+            if p.phase == "scanning":
+                progress.total = p.total_dirs
+                progress.processed = p.dirs_scanned
+            else:
+                progress.total = p.found
+                progress.processed = p.indexed
+            
             progress.current_item = p.current_dir
             if p.phase == "scanning" and p.total_dirs > 0:
                 msg = (
@@ -238,8 +246,8 @@ def _start_index_job(app: object, library_root: Path) -> None:
         worker_conn = _open(library_root)
         try:
             result = run_index(library_root, worker_conn, on_progress=_cb)
-            progress.total = 100
-            progress.processed = 100
+            progress.total = result.found
+            progress.processed = result.indexed
             progress.current_item = ""
             if result.error:
                 progress.error = result.error
