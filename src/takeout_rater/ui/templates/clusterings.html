@@ -11,92 +11,6 @@
     margin-bottom: 1.25rem;
     flex-wrap: wrap;
   }
-  .btn-danger {
-    background: #dc3545;
-    color: #fff;
-    border-color: #dc3545;
-  }
-  .btn-danger:hover { background: #b02a37; border-color: #b02a37; }
-
-  .empty-state {
-    text-align: center;
-    padding: 4rem 1rem;
-    color: #888;
-  }
-  .empty-state h2 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-
-  /* ── Job cards ─────────────────────────────────────────────────────────── */
-  .job-cards { margin-bottom: 1.5rem; }
-  .job-card {
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    padding: 1.1rem 1.4rem;
-    margin-bottom: 1rem;
-    box-shadow: 0 1px 4px rgba(0,0,0,.06);
-  }
-  .job-card-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.6rem;
-  }
-  .job-card-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0;
-    flex: 1;
-  }
-  .job-card p.desc {
-    color: #555;
-    font-size: 0.875rem;
-    margin-bottom: 0.9rem;
-    line-height: 1.5;
-  }
-  .job-options {
-    display: flex;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-    align-items: center;
-    margin-bottom: 0.8rem;
-  }
-  .job-options label { font-size: 0.85rem; color: #444; }
-  .job-options select, .job-options input[type=number] {
-    padding: 0.3rem 0.5rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    background: #fff;
-  }
-  .job-status {
-    font-size: 0.85rem;
-    margin-top: 0.5rem;
-    min-height: 1.3em;
-    color: #444;
-  }
-  .job-status.ok    { color: #1e7e34; }
-  .job-status.error { color: #c0392b; }
-  .job-status.info  { color: #1a5cdb; }
-  .job-current-item {
-    font-size: 0.75rem;
-    color: #888;
-    margin-top: 0.2rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: monospace;
-    min-height: 1em;
-  }
-  .btn-run { white-space: nowrap; }
-  .badge-running {
-    display: inline-block;
-    background: #dbeafe;
-    color: #1e40af;
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 999px;
-    font-weight: 600;
-  }
 
   /* ── Runs list ─────────────────────────────────────────────────────────── */
   .runs-list { display: flex; flex-direction: column; gap: 1rem; }
@@ -386,36 +300,6 @@
   var _jobStats = {};
   var _wasRunning = {};  // tracks jobs that were running so reload only fires on transition
 
-  function setStatus(jobType, msg, cls) {
-    var el = document.getElementById('status-' + jobType);
-    if (!el) return;
-    el.textContent = msg;
-    el.className = 'job-status' + (cls ? ' ' + cls : '');
-  }
-
-  function setProgress(jobType, pct) {
-    setProgressBar('prog-wrap-' + jobType, 'prog-bar-' + jobType, pct);
-  }
-
-  function setCurrentItem(jobType, text) {
-    var el = document.getElementById('current-item-' + jobType);
-    if (!el) return;
-    el.textContent = text || '';
-  }
-
-  function setBadge(jobType, show) {
-    var badge = document.getElementById('badge-' + jobType);
-    if (!badge) return;
-    badge.style.display = show ? 'inline-block' : 'none';
-  }
-
-  function setBtn(jobType, disabled) {
-    var btn = document.getElementById('btn-' + jobType);
-    if (!btn) return;
-    btn.disabled = disabled;
-  }
-
-
   function applyJobState(data) {
     var jt = data.job_type;
     var pct = null;
@@ -423,24 +307,24 @@
       pct = Math.round((data.processed / data.total) * 100);
     }
 
-    setBadge(jt, data.running);
-    setBtn(jt, data.running);
+    setJobBadge(jt, data.running);
+    setJobBtn(jt, data.running);
 
     if (data.running) {
       _wasRunning[jt] = true;
       _jobStats[jt] = updateJobEtaStats(_jobStats[jt], data.processed);
-      setCurrentItem(jt, data.current_item || '');
+      setJobCurrentItem(jt, data.current_item || '');
     } else {
       delete _jobStats[jt];
-      setCurrentItem(jt, '');
+      setJobCurrentItem(jt, '');
     }
 
     if (data.error) {
-      setStatus(jt, '\u2717 ' + data.error, 'error');
-      setProgress(jt, null);
+      setJobStatus(jt, '\u2717 ' + data.error, 'error');
+      setJobProgress(jt, null);
     } else if (data.done) {
-      setStatus(jt, '\u2713 ' + data.message, 'ok');
-      setProgress(jt, 100);
+      setJobStatus(jt, '\u2713 ' + data.message, 'ok');
+      setJobProgress(jt, 100);
       if (jt === 'cluster' && _wasRunning[jt]) {
         // Only reload when we witnessed the job transition from running to done
         // in this page session.  Without this guard the page would reload
@@ -448,16 +332,16 @@
         delete _wasRunning[jt];
         setTimeout(function() { window.location.reload(); }, 1200);
       } else {
-        setTimeout(function() { setProgress(jt, null); }, 3000);
+        setTimeout(function() { setJobProgress(jt, null); }, 3000);
       }
     } else if (data.running) {
       var statusMsg = data.message || 'Running\u2026';
       statusMsg = appendJobEtaToMessage(
         statusMsg, data.processed, data.total, _jobStats[jt]);
-      setStatus(jt, statusMsg, 'info');
-      setProgress(jt, pct !== null ? pct : 0);
+      setJobStatus(jt, statusMsg, 'info');
+      setJobProgress(jt, pct !== null ? pct : 0);
     } else if (data.message) {
-      setStatus(jt, data.message, '');
+      setJobStatus(jt, data.message, '');
     }
 
     if (!data.running) {
@@ -543,11 +427,11 @@
       }
     }
 
-    setBtn(jobType, true);
-    setBadge(jobType, false);
-    setStatus(jobType, 'Starting\u2026', 'info');
-    setProgress(jobType, 0);
-    setCurrentItem(jobType, '');
+    setJobBtn(jobType, true);
+    setJobBadge(jobType, false);
+    setJobStatus(jobType, 'Starting\u2026', 'info');
+    setJobProgress(jobType, 0);
+    setJobCurrentItem(jobType, '');
     delete _jobStats[jobType];
     delete _wasRunning[jobType];
 
@@ -565,13 +449,13 @@
         return r.json();
       })
       .then(function() {
-        setBadge(jobType, true);
+        setJobBadge(jobType, true);
         startPolling(jobType);
       })
       .catch(function(err) {
-        setStatus(jobType, '\u2717 ' + err.message, 'error');
-        setProgress(jobType, null);
-        setBtn(jobType, false);
+        setJobStatus(jobType, '\u2717 ' + err.message, 'error');
+        setJobProgress(jobType, null);
+        setJobBtn(jobType, false);
       });
   };
 

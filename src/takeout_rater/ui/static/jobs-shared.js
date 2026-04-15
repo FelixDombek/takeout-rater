@@ -90,8 +90,53 @@
     }
   }
 
-  global.formatJobEta       = formatJobEta;
+  /**
+   * Job-card UI helpers.  The element-ID conventions match the job card
+   * component used across /jobs, /clusterings, /faces and /scoring:
+   *   status-{jobType}        — status text element (.job-status)
+   *   prog-wrap-{jobType}     — progress-bar wrapper
+   *   prog-bar-{jobType}      — progress-bar fill
+   *   current-item-{jobType}  — current-item text (.job-current-item)
+   *   badge-{jobType}         — running badge
+   *   btn-{jobType}           — action button
+   */
+
+  function setJobStatus(jobType, msg, cls) {
+    var el = document.getElementById('status-' + jobType);
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'job-status' + (cls ? ' ' + cls : '');
+  }
+
+  function setJobProgress(jobType, pct) {
+    setProgressBar('prog-wrap-' + jobType, 'prog-bar-' + jobType, pct);
+  }
+
+  function setJobCurrentItem(jobType, text) {
+    var el = document.getElementById('current-item-' + jobType);
+    if (!el) return;
+    el.textContent = text || '';
+  }
+
+  function setJobBadge(jobType, show) {
+    var badge = document.getElementById('badge-' + jobType);
+    if (!badge) return;
+    badge.style.display = show ? 'inline-block' : 'none';
+  }
+
+  function setJobBtn(jobType, disabled) {
+    var btn = document.getElementById('btn-' + jobType);
+    if (!btn) return;
+    btn.disabled = disabled;
+  }
+
+  global.formatJobEta          = formatJobEta;
   global.appendJobEtaToMessage = appendJobEtaToMessage;
-  global.updateJobEtaStats  = updateJobEtaStats;
-  global.setProgressBar     = setProgressBar;
+  global.updateJobEtaStats     = updateJobEtaStats;
+  global.setProgressBar        = setProgressBar;
+  global.setJobStatus          = setJobStatus;
+  global.setJobProgress        = setJobProgress;
+  global.setJobCurrentItem     = setJobCurrentItem;
+  global.setJobBadge           = setJobBadge;
+  global.setJobBtn             = setJobBtn;
 }(window));

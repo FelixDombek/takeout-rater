@@ -3,7 +3,6 @@
 {% block title %}Scoring – takeout-rater{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="/static/jobs-shared.css">
 <style>
   .scoring-page { max-width: 860px; margin: 0 auto; }
   .scoring-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
@@ -67,15 +66,7 @@
     border-radius: 999px;
     font-weight: 600;
   }
-  .badge-running {
-    display: inline-block;
-    background: #dbeafe;
-    color: #1e40af;
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 999px;
-    font-weight: 600;
-  }
+  /* .badge-running is defined in jobs-shared.css */
 
   .scorer-desc {
     color: #555;
@@ -168,27 +159,7 @@
     margin-bottom: 0.75rem;
   }
   .scorer-options label { font-size: 0.8rem; color: #555; }
-
-  .scorer-status {
-    font-size: 0.8rem;
-    margin-top: 0.35rem;
-    min-height: 1.2em;
-    color: #444;
-  }
-  .scorer-status.ok    { color: #1e7e34; }
-  .scorer-status.error { color: #c0392b; }
-  .scorer-status.info  { color: #1a5cdb; }
-
-  .scorer-current-item {
-    font-size: 0.72rem;
-    color: #888;
-    margin-top: 0.15rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: monospace;
-    min-height: 1em;
-  }
+  /* .job-status and .job-current-item are defined in jobs-shared.css */
 
   .btn-cancel {
     background: #fef2f2;
@@ -257,7 +228,7 @@
     <div id="global-progress-wrap" class="progress-bar-wrap" style="margin-top:0.6rem;">
       <div id="global-progress-bar" class="progress-bar" style="width:0%"></div>
     </div>
-    <div id="global-running-status" class="scorer-status info" style="display:none;"></div>
+    <div id="global-running-status" class="job-status info" style="display:none;"></div>
   </div>
 
   <!-- ── Scorer list (populated by JS) ──────────────────────────────────── -->
@@ -447,13 +418,13 @@
 
     // Current item
     var ci = document.createElement('div');
-    ci.className = 'scorer-current-item';
+    ci.className = 'job-current-item';
     ci.id = 'current-item-' + s.id;
     card.appendChild(ci);
 
     // Status line
     var st = document.createElement('div');
-    st.className = 'scorer-status';
+    st.className = 'job-status';
     st.id = 'status-' + s.id;
     card.appendChild(st);
 
@@ -469,13 +440,6 @@
       .then(function (r) { return r.json(); })
       .then(function (data) { applyState(data); })
       .catch(function () { /* ignore transient errors */ });
-  }
-
-  function _formatEta(seconds) {
-    if (seconds < 60) return seconds + 's';
-    var m = Math.floor(seconds / 60);
-    var s = seconds % 60;
-    return m + 'm\u202f' + (s < 10 ? '0' : '') + s + 's';
   }
 
   function applyState(data) {
@@ -584,10 +548,10 @@
             var rate = doneInSession / elapsed;
             var eta = Math.round((data.total - data.processed) / rate);
             statusMsg += '\u2002\u00b7\u2002' + rate.toFixed(1) + '/s';
-            if (eta > 0) statusMsg += '\u2002\u00b7\u2002ETA\u202f' + _formatEta(eta);
+            if (eta > 0) statusMsg += '\u2002\u00b7\u2002ETA\u202f' + formatJobEta(eta);
           }
         }
-        if (statusEl) { statusEl.textContent = statusMsg; statusEl.className = 'scorer-status info'; }
+        if (statusEl) { statusEl.textContent = statusMsg; statusEl.className = 'job-status info'; }
         if (pbWrap && pb) {
           pbWrap.className = 'progress-bar-wrap visible';
           pb.style.width = (pct !== null ? Math.min(100, pct) : 0) + '%';
