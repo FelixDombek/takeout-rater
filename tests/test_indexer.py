@@ -253,15 +253,15 @@ def test_run_index_is_idempotent(library_root: Path) -> None:
 # ── run_index progress fields ─────────────────────────────────────────────────
 
 
-def test_run_index_final_progress_phase_is_thumbnailing(library_root: Path) -> None:
-    """The final IndexProgress must have phase='thumbnailing' (not 'scanning')."""
+def test_run_index_final_progress_phase_is_processing(library_root: Path) -> None:
+    """The final IndexProgress must have phase='processing' (not 'scanning')."""
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
     conn = open_library_db(library_root)
     progress = run_index(library_root, conn)
     conn.close()
 
-    assert progress.phase == "thumbnailing"
+    assert progress.phase == "processing"
 
 
 def test_run_index_final_progress_dirs_scanned(library_root: Path) -> None:
@@ -296,23 +296,23 @@ def test_run_index_on_progress_called_during_scanning(library_root: Path) -> Non
     assert len(scanning_calls) > 0, "on_progress was never called with phase='scanning'"
 
 
-def test_run_index_on_progress_called_during_thumbnailing(library_root: Path) -> None:
-    """on_progress must be invoked while thumbnailing (phase='thumbnailing')."""
+def test_run_index_on_progress_called_during_processing(library_root: Path) -> None:
+    """on_progress must be invoked while processing (phase='processing')."""
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
-    thumbnailing_calls: list[object] = []
+    processing_calls: list[object] = []
 
     def _cb(p: object) -> None:
         from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
 
-        if isinstance(p, IndexProgress) and p.phase == "thumbnailing" and not p.done:
-            thumbnailing_calls.append(p)
+        if isinstance(p, IndexProgress) and p.phase == "processing" and not p.done:
+            processing_calls.append(p)
 
     conn = open_library_db(library_root)
     run_index(library_root, conn, on_progress=_cb)
     conn.close()
 
-    assert len(thumbnailing_calls) > 0, "on_progress was never called with phase='thumbnailing'"
+    assert len(processing_calls) > 0, "on_progress was never called with phase='processing'"
 
 
 # ── SHA-256 computation during indexing ──────────────────────────────────────

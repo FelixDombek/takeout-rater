@@ -3,6 +3,7 @@
 {% block title %}Setup – takeout-rater{% endblock %}
 
 {% block head %}
+<link rel="stylesheet" href="/static/jobs-shared.css">
 <style>
   .setup-card {
     max-width: 600px;
@@ -48,22 +49,6 @@
   #status-msg.ok    { background: #e6f4ea; color: #1e7e34; display: block; }
   #status-msg.error { background: #fde8e8; color: #c0392b; display: block; }
   #status-msg.info  { background: #e8f0fe; color: #1a5cdb; display: block; }
-
-  .progress-bar-wrap {
-    height: 8px;
-    background: #e0e0e0;
-    border-radius: 4px;
-    margin-top: 0.6rem;
-    display: none;
-  }
-  .progress-bar-wrap.visible { display: block; }
-  .progress-bar {
-    height: 100%;
-    background: #1a5cdb;
-    border-radius: 4px;
-    width: 0%;
-    transition: width 0.4s ease;
-  }
 
   .change-section {
     margin-top: 2rem;

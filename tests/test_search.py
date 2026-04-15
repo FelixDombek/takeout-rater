@@ -358,11 +358,13 @@ class TestClipEmbeddingsMigration:
 
 
 class TestJobsPageEmbedCard:
-    def test_clip_page_contains_embed_card(self, client_with_db: TestClient) -> None:
+    def test_clip_page_mentions_automatic_embeddings(self, client_with_db: TestClient) -> None:
+        """CLIP page should mention that embeddings are computed automatically."""
         resp = client_with_db.get("/clip")
         assert resp.status_code == 200
-        assert b"CLIP Embeddings" in resp.content
-        assert b"btn-embed" in resp.content
+        assert b"automatically" in resp.content.lower()
+        # Embed button should NOT be present anymore
+        assert b"btn-embed" not in resp.content
 
     def test_jobs_page_does_not_contain_embed_card(self, client_with_db: TestClient) -> None:
         resp = client_with_db.get("/jobs")

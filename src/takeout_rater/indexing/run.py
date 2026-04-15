@@ -128,7 +128,7 @@ def run_index(
     """
     import threading  # noqa: PLC0415
 
-    from takeout_rater.db.connection import get_connection, library_state_dir  # noqa: PLC0415
+    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
     from takeout_rater.db.queries import lookup_sha256, upsert_asset  # noqa: PLC0415
     from takeout_rater.indexing.scanner import (  # noqa: PLC0415
         GOOGLE_PHOTOS_DIR_NAMES,
@@ -240,7 +240,7 @@ def run_index(
         # Each worker opens its own DB connection inside the lock to avoid
         # sharing connections across threads.
         with _claim_lock:
-            wconn = get_connection(library_root)
+            wconn = open_library_db(library_root)
             existing = lookup_sha256(wconn, sha256) if sha256 else None
             is_new = existing is None
 
@@ -279,16 +279,13 @@ def run_index(
             try:
                 from PIL import Image  # noqa: PLC0415
                 import io  # noqa: PLC0415
+                from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
 
                 img = Image.open(io.BytesIO(file_bytes))
                 dhash_hex = compute_dhash_from_image(img)
                 # Store in DB (each worker gets its own connection)
-                wconn2 = get_connection(library_root)
-                wconn2.execute(
-                    "INSERT OR REPLACE INTO phash (asset_id, algo, hash) VALUES (?, ?, ?)",
-                    (asset_id, DHASH_ALGO, dhash_hex),
-                )
-                wconn2.commit()
+                wconn2 = open_library_db(library_root)
+                upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
                 wconn2.close()
             except (ImportError, OSError):
                 pass
@@ -303,7 +300,7 @@ def run_index(
                 model, preprocess, device = ensure_clip_model()
                 embedding = generate_embedding(asset_file.abspath, model, preprocess, device)  # type: ignore[union-attr]
                 if embedding is not None:
-                    wconn3 = get_connection(library_root)
+                    wconn3 = open_library_db(library_root)
                     wconn3.execute(
                         "INSERT OR REPLACE INTO clip_embeddings (asset_id, embedding) VALUES (?, ?)",
                         (asset_id, embedding),
