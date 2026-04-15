@@ -828,6 +828,7 @@ class SortCriterion:
     metric_key: str
     min_score: float | None = None
     max_score: float | None = None
+    descending: bool = True
 
 
 def list_assets_multi_sort(
@@ -868,7 +869,8 @@ def list_assets_multi_sort(
         " AND s1.metric_key = ?"
     ]
     join_params: list[Any] = [c0.scorer_id, c0.variant_id, c0.metric_key]
-    order_cols = ["s1.value DESC"]
+    order0 = "DESC" if c0.descending else "ASC"
+    order_cols = [f"s1.value {order0}"]
 
     for i, c in enumerate(criteria[1:], start=2):
         alias = f"s{i}"
@@ -881,7 +883,8 @@ def list_assets_multi_sort(
             f" AND {alias}.metric_key = ?"
         )
         join_params.extend([c.scorer_id, c.variant_id, c.metric_key])
-        order_cols.append(f"{alias}.value DESC NULLS LAST")
+        order_i = "DESC" if c.descending else "ASC"
+        order_cols.append(f"{alias}.value {order_i} NULLS LAST")
 
     conditions: list[str] = []
     where_params: list[Any] = []
