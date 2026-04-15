@@ -226,18 +226,9 @@ def _start_index_job(app: object, library_root: Path) -> None:
                     + (f"\u2002\u2013\u2002{p.current_dir}" if p.current_dir else "")
                     + "\u2026"
                 )
-            elif p.phase == "thumbnailing":
-                if p.thumbs_total > 0 and p.indexed < p.thumbs_total:
-                    # Pass A: sha256 + sidecar in progress
-                    msg = (
-                        f"Reading files\u2026 {p.indexed}\u202f/\u202f{p.thumbs_total}"
-                    )
-                elif p.thumbs_total > 0:
-                    # Pass B: thumbnail generation in progress
-                    done_b = p.thumbs_ok + p.thumbs_skip
-                    msg = (
-                        f"Generating thumbnails\u2026 {done_b}\u202f/\u202f{p.thumbs_total}"
-                    )
+            elif p.phase == "processing":
+                if p.found > 0:
+                    msg = f"Processing\u2026 {p.indexed}\u202f/\u202f{p.found}"
                 else:
                     msg = "Processing\u2026"
             else:
@@ -587,40 +578,8 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
             else:
                 # ── pHash clustering ─────────────────────────────────────────
                 from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
-                from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
 
-                # Phase 1: Ensure all assets have a current dhash16 hash
-                progress.message = "Computing perceptual hashes…"
-                progress.processed = 0
-                progress.total = 0
-                progress.current_item = ""
-
-                _id_to_relpath: dict[int, str] = {
-                    row[0]: row[1]
-                    for row in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
-                }
-
-                def _phash_progress(done: int, total: int) -> None:
-                    progress.processed = done
-                    progress.total = total
-                    progress.message = f"Computing perceptual hashes… {done}\u202f/\u202f{total}"
-
-                def _phash_item(asset_id: int, done: int, total: int) -> None:
-                    progress.current_item = _id_to_relpath.get(asset_id, "")
-
-                compute_phash_all(
-                    worker_conn,
-                    thumbs_dir,
-                    on_progress=_phash_progress,
-                    on_item=_phash_item,
-                    cancel_check=progress.cancel_event.is_set,
-                )
-
-                progress.current_item = ""
-                progress.processed = 0
-                progress.total = 0
-
-                # Phase 2: Build clusters
+                # Build clusters (phash is computed during indexing now)
                 progress.message = "Building clusters…"
 
                 def _cb(processed: int, total: int) -> None:

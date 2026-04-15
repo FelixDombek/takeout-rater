@@ -189,7 +189,7 @@
           meta.remove();
 
           if (noEmbed === 'true') {
-            statusEl.innerHTML = '⚠️ No CLIP embeddings computed yet. <a href="/clip">Go to CLIP</a> to run the Embed job first.';
+            statusEl.innerHTML = '⚠️ No CLIP embeddings computed yet. Re-run the indexer to compute embeddings.';
             statusEl.className = 'search-status';
           } else if (totalResults) {
             var shown = resultsEl.querySelectorAll('.card').length;

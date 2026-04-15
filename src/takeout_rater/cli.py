@@ -223,12 +223,9 @@ def _cmd_index(args: argparse.Namespace) -> int:
                 end="",
                 flush=True,
             )
-        elif p.phase == "thumbnailing" and p.thumbs_total > 0:
-            done_a = p.indexed
-            done_b = p.thumbs_ok + p.thumbs_skip
+        elif p.phase == "processing" and p.found > 0:
             print(
-                f"\rProcessing… {done_a}/{p.thumbs_total} sha256  "
-                f"  {done_b}/{p.thumbs_total} thumbnails",
+                f"\rProcessing… {p.indexed}/{p.found} assets",
                 end="",
                 flush=True,
             )
@@ -246,7 +243,6 @@ def _cmd_index(args: argparse.Namespace) -> int:
         return 1
 
     print(f"Indexed {result.indexed} photo(s).")
-    print(f"Thumbnails: {result.thumbs_ok} generated, {result.thumbs_skip} skipped.")
     print(f"Library: {library_root / 'takeout-rater'}")
     return 0
 
