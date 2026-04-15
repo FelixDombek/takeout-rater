@@ -225,15 +225,19 @@ def browse_assets(
     sort_by: str | None = None,
     min_score: str | None = None,
     max_score: str | None = None,
+    sort_desc: str = "1",
     sort_by_2: str | None = None,
     min_score_2: str | None = None,
     max_score_2: str | None = None,
+    sort_desc_2: str = "1",
     sort_by_3: str | None = None,
     min_score_3: str | None = None,
     max_score_3: str | None = None,
+    sort_desc_3: str = "1",
     sort_by_4: str | None = None,
     min_score_4: str | None = None,
     max_score_4: str | None = None,
+    sort_desc_4: str = "1",
     dedupe: str = "1",
     partial: str = "0",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
@@ -247,9 +251,11 @@ def browse_assets(
       (e.g. ``"blur:default:sharpness"``).  Only scored assets are shown.
     - ``min_score`` / ``max_score``: Inclusive score range for the primary
       sort metric.  Blank or non-numeric values are silently ignored.
+    - ``sort_desc``: ``"1"`` (default) to sort descending; ``"0"`` for ascending.
     - ``sort_by_2`` … ``sort_by_4``: Optional secondary / tertiary / quaternary
       sort metrics, each in ``"scorer_id:variant_id:metric_key"`` form.  Each can
-      have its own ``min_score_N`` / ``max_score_N`` range filter.
+      have its own ``min_score_N`` / ``max_score_N`` range filter and
+      ``sort_desc_N`` direction flag.
       Secondary+ criteria use LEFT JOINs: assets without a secondary score still
       appear, sorted last.
     - ``dedupe``: ``"1"`` (default) to hide exact duplicate files (same SHA-256
@@ -269,28 +275,32 @@ def browse_assets(
     # Score map: asset_id → score value (populated when sorting by score)
     score_map: dict[int, float] = {}
 
+    # Parse descending flags; default to True (descending) when not explicitly "0".
+    eff_desc = sort_desc != "0"
+
     # Score range is only meaningful when sorting by score; parse safely to float.
     eff_min = _parse_score(min_score) if sort_parsed else None
     eff_max = _parse_score(max_score) if sort_parsed else None
 
     # Build additional sort criteria (levels 2–4).
     extra_raw = [
-        (sort_by_2, min_score_2, max_score_2),
-        (sort_by_3, min_score_3, max_score_3),
-        (sort_by_4, min_score_4, max_score_4),
+        (sort_by_2, min_score_2, max_score_2, sort_desc_2),
+        (sort_by_3, min_score_3, max_score_3, sort_desc_3),
+        (sort_by_4, min_score_4, max_score_4, sort_desc_4),
     ]
-    extra_criteria: list[tuple[str, str | None, str | None]] = []
-    # canonical forms for template use
-    canonical_extra: list[tuple[str, float | None, float | None]] = []
-    for sb, mn, mx in extra_raw:
+    extra_criteria: list[tuple[str, str | None, str | None, bool]] = []
+    # canonical forms for template use: (sort_by, min, max, descending)
+    canonical_extra: list[tuple[str, float | None, float | None, bool]] = []
+    for sb, mn, mx, sd in extra_raw:
         parsed = _parse_sort_by(sb)
         if parsed is None:
             break  # stop at the first empty/invalid level
         sid, vid, mkey = parsed
         eff_mn = _parse_score(mn)
         eff_mx = _parse_score(mx)
-        extra_criteria.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx))
-        canonical_extra.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx))
+        eff_sd = sd != "0"
+        extra_criteria.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx, eff_sd))
+        canonical_extra.append((f"{sid}:{vid}:{mkey}", eff_mn, eff_mx, eff_sd))
 
     # Determine whether we are in multi-sort mode.
     use_multi_sort = sort_parsed is not None and len(extra_criteria) > 0
@@ -300,10 +310,12 @@ def browse_assets(
         canonical_sort_by = f"{scorer_id}:{variant_id}:{metric_key}"
 
         if use_multi_sort:
-            criteria = [SortCriterion(scorer_id, variant_id, metric_key, eff_min, eff_max)]
-            for sb_canon, eff_mn, eff_mx in extra_criteria:
+            criteria = [
+                SortCriterion(scorer_id, variant_id, metric_key, eff_min, eff_max, eff_desc)
+            ]
+            for sb_canon, eff_mn, eff_mx, eff_sd in extra_criteria:
                 s_id, v_id, m_key = sb_canon.split(":")
-                criteria.append(SortCriterion(s_id, v_id, m_key, eff_mn, eff_mx))
+                criteria.append(SortCriterion(s_id, v_id, m_key, eff_mn, eff_mx, eff_sd))
 
             asset_score_pairs = list_assets_multi_sort(
                 conn,
@@ -323,6 +335,7 @@ def browse_assets(
                 variant_id=variant_id,
                 limit=_PAGE_SIZE,
                 offset=offset,
+                descending=eff_desc,
                 favorited=fav_filter,
                 min_score=eff_min,
                 max_score=eff_max,
@@ -407,11 +420,12 @@ def browse_assets(
             "total_indexed": total_indexed,
             "favorited": favorited,
             "sort_by": canonical_sort_by,
+            "sort_desc": eff_desc,
             "sort_options": sort_options,
             "score_map": score_map,
             "min_score": eff_min,
             "max_score": eff_max,
-            # Extra sort criteria passed as a list of (sort_by, min, max) tuples
+            # Extra sort criteria passed as a list of (sort_by, min, max, descending) tuples
             # so the template can render them without index-specific variable names.
             "extra_sort_criteria": canonical_extra,
             "presets": presets,
