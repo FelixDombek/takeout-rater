@@ -1863,6 +1863,29 @@ def get_clip_embedding_for_asset(conn: sqlite3.Connection, asset_id: int) -> byt
     return row[0] if row else None
 
 
+def load_clip_embeddings_with_relpaths(
+    conn: sqlite3.Connection,
+) -> list[tuple[int, bytes, str]]:
+    """Load all CLIP embeddings joined with asset relative paths.
+
+    Returns a list of ``(asset_id, embedding_blob, relpath)`` tuples ordered
+    by ``asset_id``.  Only assets with a stored embedding are included.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of ``(asset_id, embedding_blob, relpath)`` tuples.
+    """
+    rows = conn.execute(
+        "SELECT ce.asset_id, ce.embedding, a.relpath"
+        " FROM clip_embeddings ce"
+        " JOIN assets a ON a.id = ce.asset_id"
+        " ORDER BY ce.asset_id"
+    ).fetchall()
+    return [(row[0], row[1], row[2]) for row in rows]
+
+
 # ---------------------------------------------------------------------------
 # CLIP user tags
 # ---------------------------------------------------------------------------
