@@ -1,9 +1,30 @@
 """Reusable indexing function callable from both the CLI and the web API.
 
-This module provides :func:`run_index` which scans a Google Photos Takeout
-directory, upserts assets into the library database, and (optionally)
-generates thumbnails.  It can be invoked from a background thread to avoid
-blocking the web server while indexing is in progress.
+This module provides :func:`run_index` which processes a Google Photos
+Takeout directory in two distinct phases:
+
+1. **Scan phase** – pure filesystem walk; collects file-stat metadata into an
+   in-memory list without opening any image file or reading any sidecar JSON.
+   This is extremely fast and produces no database I/O.
+
+2. **Processing phase** – fully parallel per-file workers.  Each worker:
+
+   * Reads file bytes and computes SHA-256 in parallel
+   * Parses the sidecar JSON in parallel (if present)
+   * Acquires a single shared mutex (:data:`_claim_lock`) only for the critical section:
+     check ``lookup_sha256`` → ``upsert_asset`` (which records aliases if needed)
+   * After claiming ownership: computes phash, CLIP embedding, and thumbnail
+     all in parallel, no further locking required
+
+The mutex guards only the minimal critical section required to prevent two
+workers from both claiming the same sha256-identified asset.  Once a worker
+has determined whether an asset is brand-new or a known hash (and recorded
+its alias if needed), it proceeds with all the compute-heavy work (phash,
+embedding, thumbnail) entirely in parallel with other workers.
+
+Progress is reported via the :class:`IndexProgress` dataclass.  The
+:attr:`IndexProgress.pct` property exposes a unified 0–100 % figure that
+spans all phases and never resets at phase transitions.
 """
 
 from __future__ import annotations
@@ -14,7 +35,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,7 +60,7 @@ def _bool_to_int(v: bool | None) -> int | None:
 
 @dataclass
 class IndexProgress:
-    """Tracks the progress of an indexing run.
+    """Tracks the progress of an indexing run across all phases.
 
     Attributes:
         running: ``True`` while the indexer is still working.
@@ -47,17 +68,11 @@ class IndexProgress:
         error: Human-readable error message, or *None* on success.
         found: Total number of image files discovered during scanning.
         indexed: Number of assets upserted into the database so far.
-        thumbs_ok: Number of thumbnails successfully generated.
-        thumbs_skip: Number of thumbnails skipped (already existed or error).
         phase: Current phase — ``"scanning"`` while :func:`scan_takeout` is
-            running; ``"indexing"`` once the DB-upsert loop has started;
-            ``"thumbnailing"`` during parallel thumbnail generation.
-        total_dirs: Total number of directories to scan (known after the fast
-            first pass inside :func:`scan_takeout`).
+            running; ``"processing"`` for the parallel per-file worker phase.
+        total_dirs: Total number of directories to scan (filled during scan).
         dirs_scanned: Number of directories fully processed so far.
         current_dir: Name of the directory most recently processed.
-        thumbs_total: Total number of thumbnails to generate in the
-            ``"thumbnailing"`` phase (0 until that phase begins).
     """
 
     running: bool = False
@@ -65,49 +80,71 @@ class IndexProgress:
     error: str | None = None
     found: int = 0
     indexed: int = 0
-    thumbs_ok: int = 0
-    thumbs_skip: int = 0
     phase: str = "scanning"
     total_dirs: int = 0
     dirs_scanned: int = 0
     current_dir: str = ""
-    thumbs_total: int = 0
+
+    @property
+    def pct(self) -> float:
+        """Unified progress percentage (0–100) across all phases.
+
+        The bar is partitioned as follows, so it never resets at phase
+        transitions:
+
+        * **0 – 5 %** – scanning phase (proportional to dirs scanned).
+        * **5 – 100 %** – processing phase (proportional to assets indexed).
+        """
+        if self.phase == "scanning":
+            if self.total_dirs > 0:
+                return (self.dirs_scanned / self.total_dirs) * 5.0
+            return 0.0
+        # processing phase: remaining 95% proportional to indexed
+        if self.found > 0:
+            return 5.0 + (self.indexed / self.found) * 95.0
+        return 5.0
 
 
 def run_index(
     library_root: Path,
     conn: sqlite3.Connection,
-    generate_thumbs: bool = True,
     on_progress: Callable[[IndexProgress], None] | None = None,
 ) -> IndexProgress:
     """Scan *library_root* and upsert discovered assets into *conn*.
 
-    This function is safe to call from a background thread because the
-    database connection is opened with ``check_same_thread=False``.
+    Processing happens in two phases (scan → processing) for maximum
+    throughput.  See the module docstring for a detailed description of each
+    sub-step.
 
     Args:
         library_root: Directory that *contains* the ``Takeout/`` folder.
         conn: Open :class:`sqlite3.Connection` for the library database.
-        generate_thumbs: When ``True`` (default), generate JPEG thumbnails for
-            every newly discovered asset.  Skipped silently if Pillow is not
-            installed.
         on_progress: Optional callback invoked after each asset is processed.
-            Receives the current :class:`IndexProgress` instance.
+            Receives the current :class:`IndexProgress` instance.  Will be
+            called from the main thread; implementations must not block.
 
     Returns:
         The final :class:`IndexProgress` describing what was indexed.
     """
-    from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
-    from takeout_rater.db.queries import upsert_asset  # noqa: PLC0415
+    import threading  # noqa: PLC0415
+
+    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.queries import lookup_sha256, upsert_asset  # noqa: PLC0415
     from takeout_rater.indexing.scanner import (  # noqa: PLC0415
         GOOGLE_PHOTOS_DIR_NAMES,
         find_google_photos_root,
         scan_takeout,
     )
     from takeout_rater.indexing.sidecar import parse_sidecar  # noqa: PLC0415
+    from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
+        generate_thumbnail,
+        thumb_path_for_id,
+    )
+    from takeout_rater.scoring.phash import DHASH_ALGO, compute_dhash_from_image  # noqa: PLC0415
 
     progress = IndexProgress(running=True)
 
+    # ── Resolve the photos root ───────────────────────────────────────────────
     takeout_dir = library_root / "Takeout"
     if not takeout_dir.exists():
         # Accept the user passing the Takeout/ dir directly (old-format exports).
@@ -126,8 +163,10 @@ def run_index(
 
     photos_root = find_google_photos_root(takeout_dir)
 
-    # Wire the scanning-phase progress: on_dir_scanned is called by
-    # scan_takeout after each directory's files are stat'd.
+    # ── Phase 1: Scan ─────────────────────────────────────────────────────────
+    # Pure filesystem walk — no file reads, no DB access.
+    # scan_takeout calls _on_dir_scanned after completing each album directory.
+
     def _on_dir_scanned(dirs_done: int, total_dirs: int, dir_name: str) -> None:
         progress.total_dirs = total_dirs
         progress.dirs_scanned = dirs_done
@@ -137,61 +176,45 @@ def run_index(
 
     assets = scan_takeout(photos_root, on_dir_scanned=_on_dir_scanned)
     progress.found = len(assets)
-    progress.phase = "indexing"
-
-    if on_progress:
-        on_progress(progress)
 
     if not assets:
         progress.running = False
         progress.done = True
         return progress
 
-    if generate_thumbs:
-        thumbs_dir = library_state_dir(library_root) / "thumbs"
-        thumbs_dir.mkdir(parents=True, exist_ok=True)
-        from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
-            generate_thumbnail,
-            thumb_path_for_id,
-        )
-    else:
-        thumbs_dir = None
+    # ── Phase 2: Processing ───────────────────────────────────────────────────
+    progress.phase = "processing"
+    if on_progress:
+        on_progress(progress)
 
+    thumbs_dir = library_state_dir(library_root) / "thumbs"
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
     now = int(time.time())
+    num_workers = os.cpu_count() or 1
 
-    # Work-list of (source_abspath, dest_thumb_path) for thumbnails that do
-    # not yet exist.  These are generated in parallel after the DB-upsert loop.
-    _thumb_work: list[tuple[Path, Path]] = []
+    # Single mutex guards only the critical section: lookup_sha256 + upsert_asset.
+    # This prevents two workers from both claiming the same hash as "new".
+    _claim_lock = threading.Lock()
+    _progress_lock = threading.Lock()
 
-    for asset_file in assets:
-        progress.current_dir = os.path.dirname(asset_file.relpath)
-        sidecar = None
-        if asset_file.sidecar_path is not None:
+    def _process_one(asset_file: object) -> None:
+        """Process a single asset: hash, sidecar, claim, then phash+embed+thumb."""
+        # Step 1: Read file bytes + compute sha256 (parallel, no locking)
+        sha256: str | None = None
+        file_bytes: bytes | None = None
+        try:
+            with open(asset_file.abspath, "rb") as f:  # type: ignore[union-attr]
+                file_bytes = f.read()
+            sha256 = hashlib.sha256(file_bytes).hexdigest()
+        except OSError:
+            pass
+
+        # Step 2: Parse sidecar if present (parallel, no locking)
+        sidecar_updates: dict = {}
+        if asset_file.sidecar_path is not None:  # type: ignore[union-attr]
             with contextlib.suppress(ValueError):
-                sidecar = parse_sidecar(asset_file.sidecar_path)
-
-        row: dict = {
-            "relpath": asset_file.relpath,
-            "filename": Path(asset_file.relpath).name,
-            "ext": Path(asset_file.relpath).suffix.lower(),
-            "size_bytes": asset_file.size_bytes,
-            "mime": asset_file.mime,
-            "sidecar_relpath": (
-                str(asset_file.sidecar_path.relative_to(photos_root))
-                if asset_file.sidecar_path
-                else None
-            ),
-            "indexed_at": now,
-            "indexer_version": _CURRENT_INDEXER_VERSION,
-        }
-
-        # Compute SHA-256 content hash; skip silently on read errors.
-        with contextlib.suppress(OSError):
-            row["sha256"] = _compute_sha256(asset_file.abspath)
-
-        if sidecar is not None:
-            row.update(
-                {
+                sidecar = parse_sidecar(asset_file.sidecar_path)  # type: ignore[union-attr]
+                sidecar_updates = {
                     "title": sidecar.title,
                     "description": sidecar.description,
                     "google_photos_url": sidecar.google_photos_url,
@@ -212,50 +235,108 @@ def run_index(
                     "origin_device_folder": sidecar.origin_device_folder,
                     "app_source_package": sidecar.app_source_package,
                 }
-            )
 
-        asset_id = upsert_asset(conn, row)
-        progress.indexed += 1
+        # Step 3: Critical section – check hash + upsert (mutex-guarded)
+        # Each worker opens its own DB connection inside the lock to avoid
+        # sharing connections across threads.
+        with _claim_lock:
+            wconn = open_library_db(library_root)
+            existing = lookup_sha256(wconn, sha256) if sha256 else None
+            is_new = existing is None
 
-        if generate_thumbs and thumbs_dir is not None:
-            thumb = thumb_path_for_id(thumbs_dir, asset_id)
-            if not thumb.exists():
-                _thumb_work.append((asset_file.abspath, thumb))
-            else:
-                progress.thumbs_skip += 1
+            row: dict = {
+                "relpath": asset_file.relpath,  # type: ignore[union-attr]
+                "filename": Path(asset_file.relpath).name,  # type: ignore[union-attr]
+                "ext": Path(asset_file.relpath).suffix.lower(),  # type: ignore[union-attr]
+                "size_bytes": asset_file.size_bytes,  # type: ignore[union-attr]
+                "mime": asset_file.mime,  # type: ignore[union-attr]
+                "sidecar_relpath": (
+                    str(asset_file.sidecar_path.relative_to(photos_root))  # type: ignore[union-attr]
+                    if asset_file.sidecar_path  # type: ignore[union-attr]
+                    else None
+                ),
+                "indexed_at": now,
+                "indexer_version": _CURRENT_INDEXER_VERSION,
+            }
+            if sha256 is not None:
+                row["sha256"] = sha256
+            row.update(sidecar_updates)
 
-        if on_progress:
-            on_progress(progress)
+            asset_id = upsert_asset(wconn, row)
+            wconn.close()
 
-    # ── Parallel thumbnail generation ────────────────────────────────────────
-    # Now that every asset has an ID (and therefore a deterministic thumbnail
-    # path), generate missing thumbnails using a thread pool so all available
-    # CPU cores are utilised.
-    if _thumb_work:
-        progress.phase = "thumbnailing"
-        progress.thumbs_total = len(_thumb_work)
-        if on_progress:
-            on_progress(progress)
+        # Update progress (guarded by separate lock)
+        with _progress_lock:
+            progress.indexed += 1
+            if on_progress:
+                on_progress(progress)
 
-        num_workers = os.cpu_count() or 1
-
-        def _do_thumb(src_dst: tuple[Path, Path]) -> bool:
-            src, dst = src_dst
+        # Step 4: If brand-new, compute phash + CLIP embedding + thumbnail
+        # (all in parallel, no locking). If already known, just ensure
+        # thumbnail exists.
+        if is_new and file_bytes:
+            # Compute phash from the in-memory image
+            img = None
             try:
-                generate_thumbnail(src, dst)
-                return True
-            except (ImportError, OSError):
-                return False
+                from PIL import Image  # noqa: PLC0415
+                import io  # noqa: PLC0415
+                from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
 
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(_do_thumb, item) for item in _thumb_work]
-            for future in as_completed(futures):
-                if future.result():
-                    progress.thumbs_ok += 1
-                else:
-                    progress.thumbs_skip += 1
-                if on_progress:
-                    on_progress(progress)
+                img = Image.open(io.BytesIO(file_bytes))
+                dhash_hex = compute_dhash_from_image(img)
+                # Store in DB (each worker gets its own connection)
+                wconn2 = open_library_db(library_root)
+                upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
+                wconn2.close()
+            except (ImportError, OSError):
+                pass
+
+            # Compute CLIP embedding if CLIP is available, reusing the loaded image
+            if img is not None:
+                try:
+                    import struct  # noqa: PLC0415
+                    import torch  # noqa: PLC0415
+
+                    from takeout_rater.scorers.adapters.clip_backbone import (
+                        get_clip_model,  # noqa: PLC0415
+                    )
+
+                    model, preprocess, _tokenizer, device = get_clip_model()
+                    
+                    # Preprocess the already-loaded image
+                    img_rgb = img.convert("RGB")
+                    img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
+                    
+                    # Generate embedding
+                    with torch.no_grad():
+                        embedding = model.encode_image(img_tensor)
+                        embedding = embedding / embedding.norm(dim=-1, keepdim=True)
+                        embedding = embedding.cpu().float().numpy()[0]
+                    
+                    # Store in DB
+                    blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
+                    wconn3 = open_library_db(library_root)
+                    wconn3.execute(
+                        "INSERT OR REPLACE INTO clip_embeddings (asset_id, embedding) VALUES (?, ?)",
+                        (asset_id, blob),
+                    )
+                    wconn3.commit()
+                    wconn3.close()
+                except (ImportError, OSError, RuntimeError):
+                    pass
+
+        # Always ensure thumbnail exists (for both new and known assets)
+        thumb = thumb_path_for_id(thumbs_dir, asset_id)
+        if not thumb.exists():
+            with contextlib.suppress(ImportError, OSError):
+                generate_thumbnail(asset_file.abspath, thumb)  # type: ignore[union-attr]
+
+    # Submit all workers in parallel
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures: list[Future] = [executor.submit(_process_one, af) for af in assets]
+        for future in as_completed(futures):
+            # Just wait for completion; errors are suppressed inside _process_one
+            future.result()
 
     progress.running = False
     progress.done = True

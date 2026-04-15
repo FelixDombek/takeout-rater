@@ -85,15 +85,6 @@ def test_index_command_generates_thumbnails(library_root: Path) -> None:
     assert len(thumb_files) >= 1
 
 
-def test_index_command_no_thumbs_flag(library_root: Path) -> None:
-    rc = main(["index", "--no-thumbs", str(library_root)])
-    assert rc == 0
-    thumbs_dir = library_root / "takeout-rater" / "thumbs"
-    # Directory is created but no files inside
-    thumb_files = list(thumbs_dir.rglob("*.jpg")) if thumbs_dir.exists() else []
-    assert len(thumb_files) == 0
-
-
 # ── index command: error cases ────────────────────────────────────────────────
 
 
@@ -137,7 +128,7 @@ def library_root_google_photos_subdir(tmp_path: Path) -> Path:
 def test_index_google_photos_subdir_returns_zero(
     library_root_google_photos_subdir: Path,
 ) -> None:
-    rc = main(["index", "--no-thumbs", str(library_root_google_photos_subdir)])
+    rc = main(["index", str(library_root_google_photos_subdir)])
     assert rc == 0
 
 
@@ -145,7 +136,7 @@ def test_index_google_photos_subdir_indexes_only_photos(
     library_root_google_photos_subdir: Path,
 ) -> None:
     """Only the image inside Google Photos/ should be indexed; Drive image must not be."""
-    main(["index", "--no-thumbs", str(library_root_google_photos_subdir)])
+    main(["index", str(library_root_google_photos_subdir)])
     conn = open_library_db(library_root_google_photos_subdir)
     rows = list_assets(conn, limit=100)
     conn.close()
@@ -161,7 +152,7 @@ def test_index_google_photos_subdir_relpath_excludes_google_photos_prefix(
     library_root_google_photos_subdir: Path,
 ) -> None:
     """relpaths must be relative to 'Google Photos/', not to 'Takeout/'."""
-    main(["index", "--no-thumbs", str(library_root_google_photos_subdir)])
+    main(["index", str(library_root_google_photos_subdir)])
     conn = open_library_db(library_root_google_photos_subdir)
     row = get_asset_by_relpath(conn, "Photos from 2023/img.jpg")
     conn.close()
@@ -182,14 +173,14 @@ def library_root_google_fotos_subdir(tmp_path: Path) -> Path:
 def test_index_google_fotos_subdir_returns_zero(
     library_root_google_fotos_subdir: Path,
 ) -> None:
-    rc = main(["index", "--no-thumbs", str(library_root_google_fotos_subdir)])
+    rc = main(["index", str(library_root_google_fotos_subdir)])
     assert rc == 0
 
 
 def test_index_google_fotos_subdir_indexes_photo(
     library_root_google_fotos_subdir: Path,
 ) -> None:
-    main(["index", "--no-thumbs", str(library_root_google_fotos_subdir)])
+    main(["index", str(library_root_google_fotos_subdir)])
     conn = open_library_db(library_root_google_fotos_subdir)
     rows = list_assets(conn, limit=100)
     conn.close()
@@ -205,7 +196,7 @@ def test_run_index_returns_progress_with_indexed_count(library_root: Path) -> No
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
     conn = open_library_db(library_root)
-    progress = run_index(library_root, conn, generate_thumbs=False)
+    progress = run_index(library_root, conn)
     conn.close()
 
     assert progress.done is True
@@ -220,7 +211,7 @@ def test_run_index_populates_db(library_root: Path) -> None:
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
     conn = open_library_db(library_root)
-    run_index(library_root, conn, generate_thumbs=False)
+    run_index(library_root, conn)
     total = count_assets(conn)
     conn.close()
 
@@ -232,7 +223,7 @@ def test_run_index_missing_takeout_returns_error(tmp_path: Path) -> None:
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
     conn = open_library_db(tmp_path)
-    progress = run_index(tmp_path, conn, generate_thumbs=False)
+    progress = run_index(tmp_path, conn)
     conn.close()
 
     assert progress.done is True
@@ -246,8 +237,8 @@ def test_run_index_is_idempotent(library_root: Path) -> None:
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
     conn = open_library_db(library_root)
-    run_index(library_root, conn, generate_thumbs=False)
-    run_index(library_root, conn, generate_thumbs=False)
+    run_index(library_root, conn)
+    run_index(library_root, conn)
     total = count_assets(conn)
     conn.close()
 
@@ -262,15 +253,15 @@ def test_run_index_is_idempotent(library_root: Path) -> None:
 # ── run_index progress fields ─────────────────────────────────────────────────
 
 
-def test_run_index_final_progress_phase_is_indexing(library_root: Path) -> None:
-    """The final IndexProgress must have phase='indexing' (not 'scanning')."""
+def test_run_index_final_progress_phase_is_processing(library_root: Path) -> None:
+    """The final IndexProgress must have phase='processing' (not 'scanning')."""
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
     conn = open_library_db(library_root)
-    progress = run_index(library_root, conn, generate_thumbs=False)
+    progress = run_index(library_root, conn)
     conn.close()
 
-    assert progress.phase == "indexing"
+    assert progress.phase == "processing"
 
 
 def test_run_index_final_progress_dirs_scanned(library_root: Path) -> None:
@@ -278,7 +269,7 @@ def test_run_index_final_progress_dirs_scanned(library_root: Path) -> None:
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
     conn = open_library_db(library_root)
-    progress = run_index(library_root, conn, generate_thumbs=False)
+    progress = run_index(library_root, conn)
     conn.close()
 
     assert progress.dirs_scanned > 0
@@ -299,29 +290,29 @@ def test_run_index_on_progress_called_during_scanning(library_root: Path) -> Non
             scanning_calls.append(p)
 
     conn = open_library_db(library_root)
-    run_index(library_root, conn, generate_thumbs=False, on_progress=_cb)
+    run_index(library_root, conn, on_progress=_cb)
     conn.close()
 
     assert len(scanning_calls) > 0, "on_progress was never called with phase='scanning'"
 
 
-def test_run_index_on_progress_called_during_indexing(library_root: Path) -> None:
-    """on_progress must be invoked while indexing (phase='indexing')."""
+def test_run_index_on_progress_called_during_processing(library_root: Path) -> None:
+    """on_progress must be invoked while processing (phase='processing')."""
     from takeout_rater.indexing.run import run_index  # noqa: E402
 
-    indexing_calls: list[object] = []
+    processing_calls: list[object] = []
 
     def _cb(p: object) -> None:
         from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
 
-        if isinstance(p, IndexProgress) and p.phase == "indexing" and not p.done:
-            indexing_calls.append(p)
+        if isinstance(p, IndexProgress) and p.phase == "processing" and not p.done:
+            processing_calls.append(p)
 
     conn = open_library_db(library_root)
-    run_index(library_root, conn, generate_thumbs=False, on_progress=_cb)
+    run_index(library_root, conn, on_progress=_cb)
     conn.close()
 
-    assert len(indexing_calls) > 0, "on_progress was never called with phase='indexing'"
+    assert len(processing_calls) > 0, "on_progress was never called with phase='processing'"
 
 
 # ── SHA-256 computation during indexing ──────────────────────────────────────
@@ -329,7 +320,7 @@ def test_run_index_on_progress_called_during_indexing(library_root: Path) -> Non
 
 def test_index_command_computes_sha256(library_root: Path) -> None:
     """Assets indexed via the CLI should have a sha256 hash set."""
-    main(["index", "--no-thumbs", str(library_root)])
+    main(["index", str(library_root)])
     conn = open_library_db(library_root)
     rows = list_assets(conn=conn, limit=1000)
     conn.close()
@@ -340,7 +331,7 @@ def test_index_command_computes_sha256(library_root: Path) -> None:
 
 def test_index_command_sha256_is_valid_hex(library_root: Path) -> None:
     """SHA-256 values stored during indexing must be 64-character hex strings."""
-    main(["index", "--no-thumbs", str(library_root)])
+    main(["index", str(library_root)])
     conn = open_library_db(library_root)
     rows = list_assets(conn=conn, limit=1000)
     conn.close()
@@ -363,7 +354,7 @@ def test_index_command_identical_files_deduplicated(tmp_path: Path) -> None:
     (takeout / "copy1.jpg").write_bytes(content)
     (takeout / "copy2.jpg").write_bytes(content)
 
-    main(["index", "--no-thumbs", str(tmp_path)])
+    main(["index", str(tmp_path)])
     conn = open_library_db(tmp_path)
     rows = list_assets(conn=conn, limit=1000)
     # Only one assets row created; the duplicate is in asset_paths.

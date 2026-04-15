@@ -20,7 +20,6 @@ POST /api/jobs/index/start       – start initial indexing (or re-index)
 POST /api/jobs/score/start       – start scoring (optional scorer_id body field)
 POST /api/jobs/cluster/start     – start clustering
 POST /api/jobs/export/start      – start best-of-cluster export
-POST /api/jobs/rehash/start      – start SHA-256 rehash
 POST /api/jobs/rescan/start      – start library rescan (update indexer_version)
 """
 
@@ -45,7 +44,6 @@ _JOB_TYPES = (
     "score",
     "cluster",
     "export",
-    "rehash",
     "rescan",
     "embed",
     "detect_faces",
@@ -62,21 +60,21 @@ class JobProgress:
         done: ``True`` once the job has finished (success or error).
         error: Human-readable error message, or ``None`` on success.
         message: Short human-readable status line (updated during the run).
-        processed: General-purpose "items processed so far" counter.  For the
-            ``"score"`` job this is the number of assets scored; for
-            ``"index"`` / ``"rescan"`` / ``"rehash"`` jobs it is the number of
-            assets indexed / rescanned / rehashed respectively.
+        processed: General-purpose "items processed so far" counter.  For
+            ``"index"`` this is the number of folders scanned during scan phase,
+            then resets to asset count during processing phase; for ``"score"``
+            it is the number of assets scored; for ``"rescan"`` it is assets
+            rescanned.
         total: Total items to process (0 until the count is known).
         current_item: Current item being processed (e.g., directory path for
-            ``"index"`` / ``"rescan"``, file path for ``"rehash"``).  Empty
-            string if unavailable or not applicable for the job type.
+            ``"index"`` / ``"rescan"``).  Empty string if unavailable.
         current_scorer_id: For the ``"score"`` job, the scorer currently being
             run.  Empty string when no specific scorer is active.
         current_variant_id: For the ``"score"`` job, the variant of the scorer
             currently being run.  Empty string when no variant is active or the
             scorer does not use variants.
         job_type: One of ``"index"``, ``"score"``, ``"cluster"``,
-            ``"export"``, ``"rehash"``, ``"rescan"``.
+            ``"export"``, ``"rescan"``.
         cancel_event: Set this event to request cancellation of the running
             job.  The worker checks it between batches and exits early.
     """
@@ -220,8 +218,15 @@ def _start_index_job(app: object, library_root: Path) -> None:
         from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
 
         def _cb(p: IndexProgress) -> None:
-            progress.total = p.found
-            progress.processed = p.indexed
+            # Scan phase: count folders
+            # Processing phase: count assets (reset at transition)
+            if p.phase == "scanning":
+                progress.total = p.total_dirs
+                progress.processed = p.dirs_scanned
+            else:
+                progress.total = p.found
+                progress.processed = p.indexed
+            
             progress.current_item = p.current_dir
             if p.phase == "scanning" and p.total_dirs > 0:
                 msg = (
@@ -229,15 +234,11 @@ def _start_index_job(app: object, library_root: Path) -> None:
                     + (f"\u2002\u2013\u2002{p.current_dir}" if p.current_dir else "")
                     + "\u2026"
                 )
-            elif p.phase == "indexing" and p.found > 0:
-                msg = f"Indexing\u2026 {p.indexed}\u202f/\u202f{p.found} photos" + (
-                    f"\u2002\u2013\u2002{p.current_dir}"
-                    if p.current_dir and p.current_dir != "."
-                    else ""
-                )
-            elif p.phase == "thumbnailing" and p.thumbs_total > 0:
-                done = p.thumbs_ok + p.thumbs_skip
-                msg = f"Thumbnailing\u2026 {done}\u202f/\u202f{p.thumbs_total}"
+            elif p.phase == "processing":
+                if p.found > 0:
+                    msg = f"Processing\u2026 {p.indexed}\u202f/\u202f{p.found}"
+                else:
+                    msg = "Processing\u2026"
             else:
                 msg = "Scanning for photos\u2026"
             progress.message = msg
@@ -585,40 +586,8 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
             else:
                 # ── pHash clustering ─────────────────────────────────────────
                 from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
-                from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
 
-                # Phase 1: Ensure all assets have a current dhash16 hash
-                progress.message = "Computing perceptual hashes…"
-                progress.processed = 0
-                progress.total = 0
-                progress.current_item = ""
-
-                _id_to_relpath: dict[int, str] = {
-                    row[0]: row[1]
-                    for row in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
-                }
-
-                def _phash_progress(done: int, total: int) -> None:
-                    progress.processed = done
-                    progress.total = total
-                    progress.message = f"Computing perceptual hashes… {done}\u202f/\u202f{total}"
-
-                def _phash_item(asset_id: int, done: int, total: int) -> None:
-                    progress.current_item = _id_to_relpath.get(asset_id, "")
-
-                compute_phash_all(
-                    worker_conn,
-                    thumbs_dir,
-                    on_progress=_phash_progress,
-                    on_item=_phash_item,
-                    cancel_check=progress.cancel_event.is_set,
-                )
-
-                progress.current_item = ""
-                progress.processed = 0
-                progress.total = 0
-
-                # Phase 2: Build clusters
+                # Build clusters (phash is computed during indexing now)
                 progress.message = "Building clusters…"
 
                 def _cb(processed: int, total: int) -> None:
@@ -793,106 +762,6 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
             worker_conn.close()
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-export")
-    thread.start()
-
-    return JSONResponse({"status": "started"})
-
-
-# ---------------------------------------------------------------------------
-# POST /api/jobs/rehash/start
-# ---------------------------------------------------------------------------
-
-
-class _RehashStartBody(BaseModel):
-    rehash_all: bool = False
-
-
-@router.post("/api/jobs/rehash/start")
-def start_rehash_job(body: _RehashStartBody, request: Request) -> JSONResponse:
-    """Start a background SHA-256 rehash run.
-
-    Returns ``409`` if a rehash job is already running.
-    """
-    _require_library_root(request)
-    jobs = _get_jobs(request.app)
-
-    existing = jobs.get("rehash")
-    if existing is not None and existing.running:
-        raise HTTPException(status_code=409, detail="A rehash job is already running.")
-
-    library_root: Path = request.app.state.library_root
-    rehash_all = body.rehash_all
-    progress = JobProgress(job_type="rehash", running=True, message="Starting…")
-    jobs["rehash"] = progress
-
-    def _worker() -> None:
-        import hashlib  # noqa: PLC0415
-
-        from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
-        from takeout_rater.indexing.scanner import find_google_photos_root  # noqa: PLC0415
-
-        worker_conn = open_library_db(library_root)
-        try:
-            takeout_root = find_google_photos_root(library_root / "Takeout")
-
-            if rehash_all:
-                cur = worker_conn.execute("SELECT id, relpath FROM assets ORDER BY id")
-            else:
-                cur = worker_conn.execute(
-                    "SELECT id, relpath FROM assets WHERE sha256 IS NULL ORDER BY id"
-                )
-            rows = cur.fetchall()
-            total = len(rows)
-            progress.total = total
-            progress.message = f"Rehashing {total} asset(s)…"
-
-            hashed = 0
-            skipped = 0
-            for asset_id, relpath in rows:
-                src = takeout_root / relpath
-                progress.current_item = relpath
-                if not src.exists():
-                    skipped += 1
-                    progress.processed = hashed
-                    progress.message = f"Rehashing {hashed + skipped}\u202f/\u202f{total}\u2026"
-                    continue
-                h = hashlib.sha256()
-                try:
-                    with open(src, "rb") as f:
-                        for chunk in iter(lambda: f.read(65536), b""):
-                            h.update(chunk)
-                    digest = h.hexdigest()
-                    worker_conn.execute(
-                        "UPDATE assets SET sha256 = ? WHERE id = ?", (digest, asset_id)
-                    )
-                    hashed += 1
-                except OSError:
-                    skipped += 1
-                    continue
-
-                progress.processed = hashed
-                progress.message = f"Rehashing {hashed + skipped}\u202f/\u202f{total}\u2026"
-                if hashed % 100 == 0:
-                    worker_conn.commit()
-
-            worker_conn.commit()
-            progress.processed = hashed
-            progress.current_item = ""
-            progress.message = f"Rehash complete — {hashed} hash(es) computed" + (
-                f" ({skipped} skipped)" if skipped else ""
-            )
-            progress.running = False
-            progress.done = True
-        except Exception as exc:  # noqa: BLE001
-            progress.error = str(exc)
-            progress.message = f"Error: {exc}"
-            progress.current_item = ""
-            progress.running = False
-            progress.done = True
-        finally:
-            worker_conn.close()
-
-    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-rehash")
     thread.start()
 
     return JSONResponse({"status": "started"})

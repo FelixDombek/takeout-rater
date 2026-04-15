@@ -221,6 +221,26 @@ def get_asset_by_relpath(conn: sqlite3.Connection, relpath: str) -> AssetRow | N
     return None
 
 
+def lookup_sha256(conn: sqlite3.Connection, sha256: str) -> tuple[int, bool] | None:
+    """Check if an asset with the given SHA-256 hash already exists.
+
+    Args:
+        conn: Open database connection.
+        sha256: The hex-encoded SHA-256 content hash.
+
+    Returns:
+        A tuple ``(asset_id, has_sidecar)`` if an asset with this hash exists,
+        or ``None`` if no match is found. ``has_sidecar`` is ``True`` if the
+        canonical asset row has a non-NULL ``sidecar_relpath``.
+    """
+    row = conn.execute(
+        "SELECT id, sidecar_relpath FROM assets WHERE sha256 = ? LIMIT 1", (sha256,)
+    ).fetchone()
+    if row:
+        return (row[0], row[1] is not None)
+    return None
+
+
 def list_assets(
     conn: sqlite3.Connection,
     *,
@@ -326,9 +346,6 @@ def asset_relpath_to_path(asset: AssetRow, takeout_root: Path) -> Path:
 
 def list_asset_ids_without_sha256(conn: sqlite3.Connection) -> list[int]:
     """Return IDs of assets that do not yet have a stored SHA-256 hash.
-
-    Used by the ``rehash`` CLI command to find assets that need their content
-    hash computed without re-scanning the full Takeout directory.
 
     Args:
         conn: Open database connection.

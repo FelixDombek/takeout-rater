@@ -1,0 +1,17 @@
+/* Shared progress-bar styles used by jobs.html, scoring.html, and setup.html */
+
+.progress-bar-wrap {
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  margin-top: 0.6rem;
+  display: none;
+}
+.progress-bar-wrap.visible { display: block; }
+.progress-bar {
+  height: 100%;
+  background: #1a5cdb;
+  border-radius: 4px;
+  width: 0%;
+  transition: width 0.4s ease;
+}

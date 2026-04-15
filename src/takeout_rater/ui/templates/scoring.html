@@ -3,6 +3,7 @@
 {% block title %}Scoring – takeout-rater{% endblock %}
 
 {% block head %}
+<link rel="stylesheet" href="/static/jobs-shared.css">
 <style>
   .scoring-page { max-width: 860px; margin: 0 auto; }
   .scoring-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
@@ -167,22 +168,6 @@
     margin-bottom: 0.75rem;
   }
   .scorer-options label { font-size: 0.8rem; color: #555; }
-
-  .progress-bar-wrap {
-    height: 5px;
-    background: #e0e0e0;
-    border-radius: 3px;
-    margin-top: 0.35rem;
-    display: none;
-  }
-  .progress-bar-wrap.visible { display: block; }
-  .progress-bar {
-    height: 100%;
-    background: #1a5cdb;
-    border-radius: 3px;
-    width: 0%;
-    transition: width 0.3s ease;
-  }
 
   .scorer-status {
     font-size: 0.8rem;
