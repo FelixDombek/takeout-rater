@@ -15,8 +15,9 @@
     >
     <div class="card-thumb-placeholder" style="display:none">🖼</div>
     <div class="card-body">
-      {{ item.asset.filename }}{% if item.asset.favorited %}<span class="fav-badge">⭐</span>{% endif %}
+      {% if item.asset.favorited %}<span class="fav-badge">⭐</span>{% endif %}
       <span class="score-badge" title="Similarity">{{ "%.2f"|format(item.score) }}</span>
+      {{ item.asset.filename }}
     </div>
   </a>
 </div>
