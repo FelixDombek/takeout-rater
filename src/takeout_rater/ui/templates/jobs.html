@@ -63,21 +63,6 @@
   .job-status.error { color: #c0392b; }
   .job-status.info  { color: #1a5cdb; }
 
-  .progress-bar-wrap {
-    height: 6px;
-    background: #e0e0e0;
-    border-radius: 3px;
-    margin-top: 0.5rem;
-    display: none;
-  }
-  .progress-bar-wrap.visible { display: block; }
-  .progress-bar {
-    height: 100%;
-    background: #1a5cdb;
-    border-radius: 3px;
-    width: 0%;
-    transition: width 0.3s ease;
-  }
 
   .job-current-item {
     font-size: 0.75rem;
@@ -194,15 +179,7 @@
   }
 
   function setProgress(jobType, pct) {
-    var wrap = document.getElementById('prog-wrap-' + jobType);
-    var bar  = document.getElementById('prog-bar-'  + jobType);
-    if (!wrap || !bar) return;
-    if (pct === null) {
-      wrap.className = 'progress-bar-wrap';
-    } else {
-      wrap.className = 'progress-bar-wrap visible';
-      bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
-    }
+    setProgressBar('prog-wrap-' + jobType, 'prog-bar-' + jobType, pct);
   }
 
   function setCurrentItem(jobType, text) {
@@ -223,12 +200,6 @@
     btn.disabled = disabled;
   }
 
-  function _formatEta(seconds) {
-    if (seconds < 60) return seconds + 's';
-    var m = Math.floor(seconds / 60);
-    var s = seconds % 60;
-    return m + 'm\u202f' + (s < 10 ? '0' : '') + s + 's';
-  }
 
   function applyJobState(data) {
     var jt = data.job_type;
@@ -246,10 +217,7 @@
       // and per-scorer phase resets (which reset processed back to 0) from
       // the rate calculation, preventing wildly inflated ETA estimates at
       // the start of each scoring phase.
-      var stats = _jobStats[jt];
-      if (!stats || data.processed <= stats.startProcessed) {
-        _jobStats[jt] = { startTime: Date.now(), startProcessed: data.processed };
-      }
+      _jobStats[jt] = updateJobEtaStats(_jobStats[jt], data.processed);
       setCurrentItem(jt, data.current_item || '');
     } else {
       delete _jobStats[jt];
@@ -265,19 +233,8 @@
       setTimeout(function() { setProgress(jt, null); }, 3000);
     } else if (data.running) {
       var statusMsg = data.message || 'Running\u2026';
-      var stats = _jobStats[jt];
-      if (data.total > 0 && stats) {
-        var elapsed = (Date.now() - stats.startTime) / 1000;
-        var doneInSession = data.processed - stats.startProcessed;
-        if (elapsed >= 1 && doneInSession > 0) {
-          var rate = doneInSession / elapsed;
-          var eta = Math.round((data.total - data.processed) / rate);
-          statusMsg += '\u2002·\u2002' + rate.toFixed(1) + '/s';
-          if (eta > 0) {
-            statusMsg += '\u2002·\u2002ETA\u202f' + _formatEta(eta);
-          }
-        }
-      }
+      statusMsg = appendJobEtaToMessage(
+        statusMsg, data.processed, data.total, _jobStats[jt]);
       setStatus(jt, statusMsg, 'info');
       setProgress(jt, pct !== null ? pct : 0);
     } else if (data.message) {

@@ -51,21 +51,6 @@
   .job-status.ok    { color: #1e7e34; }
   .job-status.error { color: #c0392b; }
   .job-status.info  { color: #1a5cdb; }
-  .progress-bar-wrap {
-    height: 6px;
-    background: #e0e0e0;
-    border-radius: 3px;
-    margin-top: 0.5rem;
-    display: none;
-  }
-  .progress-bar-wrap.visible { display: block; }
-  .progress-bar {
-    height: 100%;
-    background: #1a5cdb;
-    border-radius: 3px;
-    width: 0%;
-    transition: width 0.3s ease;
-  }
   .job-current-item {
     font-size: 0.75rem;
     color: #888;
@@ -226,15 +211,7 @@
   }
 
   function setProgress(pct) {
-    var wrap = document.getElementById('prog-wrap-embed');
-    var bar  = document.getElementById('prog-bar-embed');
-    if (!wrap || !bar) return;
-    if (pct === null) {
-      wrap.className = 'progress-bar-wrap';
-    } else {
-      wrap.className = 'progress-bar-wrap visible';
-      bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
-    }
+    setProgressBar('prog-wrap-embed', 'prog-bar-embed', pct);
   }
 
   function setCurrentItem(text) {
@@ -255,12 +232,6 @@
     btn.disabled = disabled;
   }
 
-  function _formatEta(seconds) {
-    if (seconds < 60) return seconds + 's';
-    var m = Math.floor(seconds / 60);
-    var s = seconds % 60;
-    return m + 'm\u202f' + (s < 10 ? '0' : '') + s + 's';
-  }
 
   function applyJobState(data) {
     if (!data || data.job_type !== 'embed') return;
@@ -273,9 +244,7 @@
     setBtn(data.running);
 
     if (data.running) {
-      if (!_jobStats || data.processed <= _jobStats.startProcessed) {
-        _jobStats = { startTime: Date.now(), startProcessed: data.processed };
-      }
+      _jobStats = updateJobEtaStats(_jobStats, data.processed);
       setCurrentItem(data.current_item || '');
     } else {
       _jobStats = null;
@@ -292,14 +261,8 @@
     } else if (data.running) {
       var statusMsg = data.message || 'Running\u2026';
       if (data.total > 0 && _jobStats) {
-        var elapsed = (Date.now() - _jobStats.startTime) / 1000;
-        var doneInSession = data.processed - _jobStats.startProcessed;
-        if (elapsed >= 1 && doneInSession > 0) {
-          var rate = doneInSession / elapsed;
-          var eta = Math.round((data.total - data.processed) / rate);
-          statusMsg += '\u2002\u00b7\u2002' + rate.toFixed(1) + '/s';
-          if (eta > 0) statusMsg += '\u2002\u00b7\u2002ETA\u202f' + _formatEta(eta);
-        }
+        statusMsg = appendJobEtaToMessage(
+          statusMsg, data.processed, data.total, _jobStats);
       }
       setStatus(statusMsg, 'info');
       setProgress(pct !== null ? pct : 0);

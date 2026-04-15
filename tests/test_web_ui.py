@@ -940,7 +940,7 @@ def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> 
 
     # Run the real indexer — this is the full run_index pipeline.
     conn = open_library_db(tmp_path)
-    run_index(tmp_path, conn, generate_thumbs=False)
+    run_index(tmp_path, conn)
 
     # create_app must resolve the correct photos_root so file reads succeed.
     app = create_app(tmp_path, conn)
