@@ -16,10 +16,11 @@
     >
     <div class="card-thumb-placeholder" style="display:none">🖼</div>
     <div class="card-body">
-      {{ asset.filename }}{% if asset.favorited %}<span class="fav-badge">⭐</span>{% endif %}
+      <span class="fav-badge">⭐</span>{% endif %}
       {% if score_map and asset.id in score_map %}
       <span class="score-badge">{{ "%.1f"|format(score_map[asset.id]) }}</span>
       {% endif %}
+      {{ asset.filename }}{% if asset.favorited %}
     </div>
   </a>
 </div>
