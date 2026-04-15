@@ -276,6 +276,7 @@ def run_index(
         # thumbnail exists.
         if is_new and file_bytes:
             # Compute phash from the in-memory image
+            img = None
             try:
                 from PIL import Image  # noqa: PLC0415
                 import io  # noqa: PLC0415
@@ -290,25 +291,39 @@ def run_index(
             except (ImportError, OSError):
                 pass
 
-            # Compute CLIP embedding if CLIP is available
-            try:
-                from takeout_rater.scoring.adapters.clip_embeddings import (  # noqa: PLC0415
-                    ensure_clip_model,
-                    generate_embedding,
-                )
+            # Compute CLIP embedding if CLIP is available, reusing the loaded image
+            if img is not None:
+                try:
+                    import struct  # noqa: PLC0415
+                    import torch  # noqa: PLC0415
 
-                model, preprocess, device = ensure_clip_model()
-                embedding = generate_embedding(asset_file.abspath, model, preprocess, device)  # type: ignore[union-attr]
-                if embedding is not None:
+                    from takeout_rater.scorers.adapters.clip_backbone import (
+                        get_clip_model,  # noqa: PLC0415
+                    )
+
+                    model, preprocess, _tokenizer, device = get_clip_model()
+                    
+                    # Preprocess the already-loaded image
+                    img_rgb = img.convert("RGB")
+                    img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
+                    
+                    # Generate embedding
+                    with torch.no_grad():
+                        embedding = model.encode_image(img_tensor)
+                        embedding = embedding / embedding.norm(dim=-1, keepdim=True)
+                        embedding = embedding.cpu().float().numpy()[0]
+                    
+                    # Store in DB
+                    blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
                     wconn3 = open_library_db(library_root)
                     wconn3.execute(
                         "INSERT OR REPLACE INTO clip_embeddings (asset_id, embedding) VALUES (?, ?)",
-                        (asset_id, embedding),
+                        (asset_id, blob),
                     )
                     wconn3.commit()
                     wconn3.close()
-            except (ImportError, OSError, RuntimeError):
-                pass
+                except (ImportError, OSError, RuntimeError):
+                    pass
 
         # Always ensure thumbnail exists (for both new and known assets)
         thumb = thumb_path_for_id(thumbs_dir, asset_id)
