@@ -143,7 +143,7 @@ def test_download_mlp_weights_uses_fallback(monkeypatch, tmp_path: Path) -> None
 
 
 def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
-    """_ensure_loaded must pass quick_gelu=True via the shared clip_backbone."""
+    """_ensure_loaded must pass force_quick_gelu=True via the shared clip_backbone."""
     import torch  # noqa: PLC0415
 
     import takeout_rater.scorers.adapters.clip_backbone as backbone  # noqa: PLC0415
@@ -192,7 +192,7 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
     scorer._ensure_loaded()
 
     assert len(create_calls) == 1
-    assert create_calls[0].get("quick_gelu") is True
+    assert create_calls[0].get("force_quick_gelu") is True
 
     # Clean up singleton state so other tests are not affected
     monkeypatch.setattr(backbone, "_clip_model", None)
