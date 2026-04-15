@@ -241,6 +241,43 @@ def test_build_clusters_progress_callback() -> None:
     assert calls[-1][0] == calls[-1][1]
 
 
+def test_build_clusters_post_progress_callback() -> None:
+    """on_post_progress is called after each multi-member component is post-processed."""
+    conn = _open_in_memory()
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
+
+    calls: list[tuple[int, int]] = []
+    build_clusters(conn, threshold=5, on_post_progress=lambda d, t: calls.append((d, t)))
+    assert len(calls) > 0
+    # Last call should signal completion
+    assert calls[-1][0] == calls[-1][1]
+
+
+def test_build_clusters_save_progress_callback() -> None:
+    """on_save_progress is called after each cluster is written to the DB."""
+    conn = _open_in_memory()
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
+
+    calls: list[tuple[int, int]] = []
+    build_clusters(conn, threshold=5, on_save_progress=lambda d, t: calls.append((d, t)))
+    assert len(calls) > 0
+    # Last call should signal completion
+    assert calls[-1][0] == calls[-1][1]
+
+
+def test_build_clusters_post_progress_not_called_when_no_clusters() -> None:
+    """on_post_progress is not called when there are no multi-member components."""
+    conn = _open_in_memory()
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "ffffffffffffffff")  # very different
+
+    calls: list[tuple[int, int]] = []
+    build_clusters(conn, threshold=5, on_post_progress=lambda d, t: calls.append((d, t)))
+    assert calls == []
+
+
 def test_build_clusters_min_size_filters_small_groups() -> None:
     """With min_cluster_size=3, pairs are not stored."""
     conn = _open_in_memory()

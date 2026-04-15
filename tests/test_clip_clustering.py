@@ -403,6 +403,60 @@ def test_build_clip_progress_callback() -> None:
     assert calls[-1][0] == calls[-1][1]
 
 
+def test_build_clip_post_progress_callback() -> None:
+    """on_post_progress is called after each multi-member component is post-processed."""
+    conn = _open_in_memory()
+    blob = _make_embedding(0)
+    _add_asset_with_embedding(conn, "p/a.jpg", blob)
+    _add_asset_with_embedding(conn, "p/b.jpg", blob)
+
+    calls: list[tuple[int, int]] = []
+    build_clip_clusters(
+        conn,
+        metric="cosine",
+        threshold=0.90,
+        on_post_progress=lambda d, t: calls.append((d, t)),
+    )
+    assert len(calls) > 0
+    assert calls[-1][0] == calls[-1][1]
+
+
+def test_build_clip_save_progress_callback() -> None:
+    """on_save_progress is called after each cluster is written to the DB."""
+    conn = _open_in_memory()
+    blob = _make_embedding(0)
+    _add_asset_with_embedding(conn, "p/a.jpg", blob)
+    _add_asset_with_embedding(conn, "p/b.jpg", blob)
+
+    calls: list[tuple[int, int]] = []
+    build_clip_clusters(
+        conn,
+        metric="cosine",
+        threshold=0.90,
+        on_save_progress=lambda d, t: calls.append((d, t)),
+    )
+    assert len(calls) > 0
+    assert calls[-1][0] == calls[-1][1]
+
+
+def test_build_clip_post_progress_not_called_when_no_clusters() -> None:
+    """on_post_progress is not called when there are no multi-member components."""
+    conn = _open_in_memory()
+    blob0 = _make_embedding(0)
+    blob100 = _make_embedding(100)
+    _add_asset_with_embedding(conn, "p/a.jpg", blob0)
+    _add_asset_with_embedding(conn, "p/b.jpg", blob100)
+
+    calls: list[tuple[int, int]] = []
+    build_clip_clusters(
+        conn,
+        metric="cosine",
+        threshold=0.9999,
+        on_post_progress=lambda d, t: calls.append((d, t)),
+    )
+    assert calls == []
+
+
 def test_build_clip_invalid_metric_raises() -> None:
     conn = _open_in_memory()
     with pytest.raises(ValueError, match="Unsupported metric"):

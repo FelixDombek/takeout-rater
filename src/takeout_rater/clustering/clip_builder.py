@@ -275,6 +275,8 @@ def build_clip_clusters(
     min_cluster_size: int = 2,
     single_linkage: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
+    on_post_progress: Callable[[int, int], None] | None = None,
+    on_save_progress: Callable[[int, int], None] | None = None,
 ) -> int:
     """Build CLIP-embedding clusters and persist them to the DB.
 
@@ -303,7 +305,15 @@ def build_clip_clusters(
             in a cluster must satisfy the threshold — this is complete-linkage
             and prevents spurious "chaining" of dissimilar images.
         on_progress: Optional callback called periodically with
-            ``(processed_so_far, total)`` integers.
+            ``(processed_so_far, total)`` integers during the pairwise
+            similarity pass.
+        on_post_progress: Optional callback called with
+            ``(processed_components, total_components)`` after each
+            multi-member connected component has been post-processed
+            (complete-linkage splitting).
+        on_save_progress: Optional callback called with
+            ``(saved_so_far, total_to_save)`` after each cluster is written
+            to the database.
 
     Returns:
         Number of clusters persisted to the DB, or 0 if no embeddings were
@@ -369,11 +379,12 @@ def build_clip_clusters(
         if on_progress:
             on_progress(i_end, n)
 
-    # Collect components and apply linkage post-processing
+    # Collect multi-member components and apply linkage post-processing.
+    multi_member_components = [members for members in uf.components().values() if len(members) >= 2]
+    total_components = len(multi_member_components)
+
     final_clusters: list[list[int]] = []
-    for members in uf.components().values():
-        if len(members) < 2:
-            continue
+    for comp_idx, members in enumerate(multi_member_components):
         if single_linkage:
             if len(members) >= min_cluster_size:
                 final_clusters.append(members)
@@ -383,12 +394,15 @@ def build_clip_clusters(
             ):
                 if len(sub) >= min_cluster_size:
                     final_clusters.append(sub)
+        if on_post_progress:
+            on_post_progress(comp_idx + 1, total_components)
 
     if not final_clusters:
         return 0
 
     run_id = insert_clustering_run(conn, _METHOD, params_json)
 
+    total_to_save = len(final_clusters)
     n_persisted = 0
     for members in sorted(final_clusters, key=lambda m: min(m)):
         rep_id = _find_representative(members, emb_matrix, aid_to_idx)
@@ -406,5 +420,7 @@ def build_clip_clusters(
 
         bulk_insert_cluster_members(conn, cluster_id, rows_to_insert)
         n_persisted += 1
+        if on_save_progress:
+            on_save_progress(n_persisted, total_to_save)
 
     return n_persisted
