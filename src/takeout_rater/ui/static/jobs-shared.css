@@ -1,5 +1,6 @@
-/* Shared progress-bar styles used by jobs.html, scoring.html, and setup.html */
+/* Shared styles used by jobs.html, scoring.html, setup.html, clusterings.html, faces.html */
 
+/* ── Progress bar ────────────────────────────────────────────────────── */
 .progress-bar-wrap {
   height: 8px;
   background: #e0e0e0;
@@ -15,3 +16,83 @@
   width: 0%;
   transition: width 0.4s ease;
 }
+
+/* ── Job-card component ──────────────────────────────────────────────── */
+.job-cards { margin-bottom: 1.5rem; }
+.job-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.job-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+.job-card-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+.job-card p.desc {
+  color: #555;
+  font-size: 0.875rem;
+  margin-bottom: 0.9rem;
+  line-height: 1.5;
+}
+.job-options {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+.job-options label { font-size: 0.85rem; color: #444; }
+.job-options select, .job-options input[type=number] {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  background: #fff;
+}
+.job-status {
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  min-height: 1.3em;
+  color: #444;
+}
+.job-status.ok    { color: #1e7e34; }
+.job-status.error { color: #c0392b; }
+.job-status.info  { color: #1a5cdb; }
+.job-current-item {
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 0.2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  min-height: 1em;
+}
+.btn-run { white-space: nowrap; }
+.badge-running {
+  display: inline-block;
+  background: #dbeafe;
+  color: #1e40af;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+/* ── Utilities ───────────────────────────────────────────────────────── */
+.btn-danger { background: #dc3545; color: #fff; border-color: #dc3545; }
+.btn-danger:hover { background: #b02a37; border-color: #b02a37; }
+
+.empty-state { text-align: center; padding: 3rem 1rem; color: #888; }
+.empty-state h2 { font-size: 1.3rem; margin-bottom: 0.5rem; }
