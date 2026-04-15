@@ -54,6 +54,10 @@ def open_db(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # Retry for up to 30 seconds when another connection holds the write lock.
+    # The default (0 ms) causes immediate OperationalError under concurrent
+    # writers, which can crash background worker threads.
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 

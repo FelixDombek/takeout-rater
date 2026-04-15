@@ -13,14 +13,16 @@ Takeout directory in two distinct phases:
    * Parses the sidecar JSON in parallel (if present)
    * Acquires a single shared mutex (:data:`_claim_lock`) only for the critical section:
      check ``lookup_sha256`` → ``upsert_asset`` (which records aliases if needed)
-   * After claiming ownership: computes phash, CLIP embedding, and thumbnail
-     all in parallel, no further locking required
+   * After claiming ownership: computes phash, then CLIP embedding (serialised
+     via a per-run lock to prevent PyTorch deadlocks), and thumbnail in
+     parallel with other workers' non-CLIP steps
 
 The mutex guards only the minimal critical section required to prevent two
-workers from both claiming the same sha256-identified asset.  Once a worker
-has determined whether an asset is brand-new or a known hash (and recorded
-its alias if needed), it proceeds with all the compute-heavy work (phash,
-embedding, thumbnail) entirely in parallel with other workers.
+workers from both claiming the same sha256-identified asset.  CLIP inference
+is additionally serialised (one worker at a time) to avoid a PyTorch
+thread-pool deadlock that occurs when multiple Python threads call
+``encode_image()`` concurrently.  All other per-asset work (SHA-256, sidecar
+parsing, phash, thumbnails) proceeds fully in parallel.
 
 Progress is reported via the :class:`IndexProgress` dataclass.  The
 :attr:`IndexProgress.pct` property exposes a unified 0–100 % figure that
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import sqlite3
 import time
@@ -40,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from takeout_rater.db.queries import CURRENT_INDEXER_VERSION as _CURRENT_INDEXER_VERSION
+
+_log = logging.getLogger(__name__)
 
 
 def _compute_sha256(path: Path) -> str:
@@ -131,7 +136,11 @@ def run_index(
     """
     import threading  # noqa: PLC0415
 
-    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import (  # noqa: PLC0415
+        library_db_path,
+        library_state_dir,
+        open_db,
+    )
     from takeout_rater.db.queries import lookup_sha256, upsert_asset  # noqa: PLC0415
     from takeout_rater.indexing.scanner import (  # noqa: PLC0415
         GOOGLE_PHOTOS_DIR_NAMES,
@@ -231,16 +240,31 @@ def run_index(
 
     thumbs_dir = library_state_dir(library_root) / "thumbs"
     thumbs_dir.mkdir(parents=True, exist_ok=True)
+    db_path = library_db_path(library_root)
     now = int(time.time())
     num_workers = os.cpu_count() or 1
 
-    # Single mutex guards only the critical section: lookup_sha256 + upsert_asset.
+    # _claim_lock guards the critical section: lookup_sha256 + upsert_asset.
     # This prevents two workers from both claiming the same hash as "new".
     _claim_lock = threading.Lock()
     _progress_lock = threading.Lock()
+    # _clip_lock serialises CLIP inference to ONE worker at a time.
+    # PyTorch's internal C++ thread pool can deadlock when multiple Python
+    # threads all call encode_image() simultaneously (especially on CPU with
+    # MKL/OpenBLAS).  Serialising inference avoids that deadlock entirely while
+    # still allowing all other per-asset work (SHA-256, sidecar, phash,
+    # thumbnails) to proceed in parallel.
+    _clip_lock = threading.Lock()
 
     def _process_one(asset_file: object) -> None:
         """Process a single asset: hash, sidecar, claim, then phash+embed+thumb."""
+        relpath: str = asset_file.relpath  # type: ignore[union-attr]
+        try:
+            _process_one_inner(asset_file, relpath)
+        except Exception:
+            _log.exception("Unexpected error processing asset %r – skipping", relpath)
+
+    def _process_one_inner(asset_file: object, relpath: str) -> None:  # noqa: PLR0912,PLR0915
         # Step 1: Read file bytes + compute sha256 (parallel, no locking)
         sha256: str | None = None
         file_bytes: bytes | None = None
@@ -249,7 +273,7 @@ def run_index(
                 file_bytes = f.read()
             sha256 = hashlib.sha256(file_bytes).hexdigest()
         except OSError:
-            pass
+            _log.debug("Could not read file %r – skipping SHA-256", relpath)
 
         # Step 2: Parse sidecar if present (parallel, no locking)
         sidecar_updates: dict = {}
@@ -278,34 +302,41 @@ def run_index(
                     "app_source_package": sidecar.app_source_package,
                 }
 
-        # Step 3: Critical section – check hash + upsert (mutex-guarded)
-        # Each worker opens its own DB connection inside the lock to avoid
-        # sharing connections across threads.
+        # Step 3: Critical section – check hash + upsert (mutex-guarded).
+        # Use open_db (no migrations) since the DB is already initialised.
+        # Each iteration opens and immediately closes a short-lived connection
+        # so that no connection is shared across threads.
+        is_new: bool = False
+        asset_id: int = 0
+        _log.debug("Claiming asset %r (sha256=%s)", relpath, sha256 and sha256[:8])
         with _claim_lock:
-            wconn = open_library_db(library_root)
-            existing = lookup_sha256(wconn, sha256) if sha256 else None
-            is_new = existing is None
+            wconn = open_db(db_path)
+            try:
+                existing = lookup_sha256(wconn, sha256) if sha256 else None
+                is_new = existing is None
 
-            row: dict = {
-                "relpath": asset_file.relpath,  # type: ignore[union-attr]
-                "filename": Path(asset_file.relpath).name,  # type: ignore[union-attr]
-                "ext": Path(asset_file.relpath).suffix.lower(),  # type: ignore[union-attr]
-                "size_bytes": asset_file.size_bytes,  # type: ignore[union-attr]
-                "mime": asset_file.mime,  # type: ignore[union-attr]
-                "sidecar_relpath": (
-                    str(asset_file.sidecar_path.relative_to(photos_root))  # type: ignore[union-attr]
-                    if asset_file.sidecar_path  # type: ignore[union-attr]
-                    else None
-                ),
-                "indexed_at": now,
-                "indexer_version": _CURRENT_INDEXER_VERSION,
-            }
-            if sha256 is not None:
-                row["sha256"] = sha256
-            row.update(sidecar_updates)
+                row: dict = {
+                    "relpath": relpath,
+                    "filename": Path(relpath).name,
+                    "ext": Path(relpath).suffix.lower(),
+                    "size_bytes": asset_file.size_bytes,  # type: ignore[union-attr]
+                    "mime": asset_file.mime,  # type: ignore[union-attr]
+                    "sidecar_relpath": (
+                        str(asset_file.sidecar_path.relative_to(photos_root))  # type: ignore[union-attr]
+                        if asset_file.sidecar_path  # type: ignore[union-attr]
+                        else None
+                    ),
+                    "indexed_at": now,
+                    "indexer_version": _CURRENT_INDEXER_VERSION,
+                }
+                if sha256 is not None:
+                    row["sha256"] = sha256
+                row.update(sidecar_updates)
 
-            asset_id = upsert_asset(wconn, row)
-            wconn.close()
+                asset_id = upsert_asset(wconn, row)
+            finally:
+                wconn.close()
+        _log.debug("Claimed asset %r → id=%d is_new=%s", relpath, asset_id, is_new)
 
         # Update progress (guarded by separate lock)
         with _progress_lock:
@@ -313,9 +344,8 @@ def run_index(
             if on_progress:
                 on_progress(progress)
 
-        # Step 4: If brand-new, compute phash + CLIP embedding + thumbnail
-        # (all in parallel, no locking). If already known, just ensure
-        # thumbnail exists.
+        # Step 4: If brand-new, compute phash + CLIP embedding.
+        # If already known, skip the expensive compute steps.
         if is_new and file_bytes:
             # Compute phash from the in-memory image
             img = None
@@ -328,18 +358,23 @@ def run_index(
 
                 img = Image.open(io.BytesIO(file_bytes))
                 dhash_hex = compute_dhash_from_image(img)
-                # Store in DB (each worker gets its own connection)
-                wconn2 = open_library_db(library_root)
-                upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
-                wconn2.close()
-            except (ImportError, OSError):
-                pass
+                # Store in DB (open_db: no migrations, busy_timeout already set)
+                wconn2 = open_db(db_path)
+                try:
+                    upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
+                finally:
+                    wconn2.close()
+            except ImportError:
+                pass  # PIL or phash not available — expected in minimal installs
+            except Exception:
+                _log.warning("phash failed for %r", relpath, exc_info=True)
 
             # Compute CLIP embedding if warm-up confirmed the model loaded.
-            # Checking _clip_warmup_ok here ensures workers never contend for
-            # the model-loading lock; get_clip_model() returns the cached
-            # singleton immediately once the event is set.
+            # _clip_lock serialises inference to one worker at a time to prevent
+            # PyTorch's internal thread pool from deadlocking under concurrent
+            # calls from multiple Python threads.
             if img is not None and _clip_warmup_ok.is_set():
+                _log.debug("CLIP inference start for %r", relpath)
                 try:
                     import struct  # noqa: PLC0415
 
@@ -352,32 +387,40 @@ def run_index(
                     model, preprocess, _tokenizer, device = get_clip_model()
                     img_rgb = img.convert("RGB")
                     img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
-                    with torch.no_grad():
+                    with _clip_lock, torch.no_grad():
                         embedding = model.encode_image(img_tensor)
                         embedding = embedding / embedding.norm(dim=-1, keepdim=True)
                         embedding = embedding.cpu().float().numpy()[0]
                     blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
-                    wconn3 = open_library_db(library_root)
-                    wconn3.execute(
-                        "INSERT OR REPLACE INTO clip_embeddings (asset_id, embedding) VALUES (?, ?)",
-                        (asset_id, blob),
-                    )
-                    wconn3.commit()
-                    wconn3.close()
-                except (ImportError, OSError, RuntimeError):
-                    pass
+                    wconn3 = open_db(db_path)
+                    try:
+                        wconn3.execute(
+                            "INSERT OR REPLACE INTO clip_embeddings"
+                            " (asset_id, embedding) VALUES (?, ?)",
+                            (asset_id, blob),
+                        )
+                        wconn3.commit()
+                    finally:
+                        wconn3.close()
+                    _log.debug("CLIP inference done for %r", relpath)
+                except ImportError:
+                    pass  # torch / open_clip not available — expected in minimal installs
+                except Exception:
+                    _log.warning("CLIP embedding failed for %r", relpath, exc_info=True)
 
         # Always ensure thumbnail exists (for both new and known assets)
         thumb = thumb_path_for_id(thumbs_dir, asset_id)
         if not thumb.exists():
+            _log.debug("Generating thumbnail for %r (id=%d)", relpath, asset_id)
             with contextlib.suppress(ImportError, OSError):
                 generate_thumbnail(asset_file.abspath, thumb)  # type: ignore[union-attr]
 
-    # Submit all workers in parallel
+    # Submit all workers in parallel; _process_one swallows every exception
+    # internally (logging it) so future.result() never re-raises and the
+    # executor always shuts down cleanly.
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures: list[Future] = [executor.submit(_process_one, af) for af in assets]
         for future in as_completed(futures):
-            # Just wait for completion; errors are suppressed inside _process_one
             future.result()
 
     progress.running = False
