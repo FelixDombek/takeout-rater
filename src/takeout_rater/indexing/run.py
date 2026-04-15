@@ -93,12 +93,15 @@ class IndexProgress:
         transitions:
 
         * **0 – 5 %** – scanning phase (proportional to dirs scanned).
+        * **5 %** – loading_models phase (held at 5 % while models warm up).
         * **5 – 100 %** – processing phase (proportional to assets indexed).
         """
         if self.phase == "scanning":
             if self.total_dirs > 0:
                 return (self.dirs_scanned / self.total_dirs) * 5.0
             return 0.0
+        if self.phase == "loading_models":
+            return 5.0
         # processing phase: remaining 95% proportional to indexed
         if self.found > 0:
             return 5.0 + (self.indexed / self.found) * 95.0
@@ -163,9 +166,30 @@ def run_index(
 
     photos_root = find_google_photos_root(takeout_dir)
 
-    # ── Phase 1: Scan ─────────────────────────────────────────────────────────
-    # Pure filesystem walk — no file reads, no DB access.
-    # scan_takeout calls _on_dir_scanned after completing each album directory.
+    # ── Phase 1: Scan + concurrent model pre-load ─────────────────────────────
+    # The filesystem walk is pure I/O — no file reads, no DB access.
+    # We kick off a background thread to download/warm the CLIP backbone at
+    # the same time so that model loading (which can take several minutes on a
+    # first run) overlaps with the scan rather than blocking the processing
+    # phase.  Workers will call get_clip_model() too, but because the singleton
+    # lock is already held by the warm-up thread (or the model is already
+    # loaded), they will either find it ready immediately or wait only for the
+    # remainder of the download — not trigger a fresh download themselves.
+
+    def _warmup_clip() -> None:
+        try:
+            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+                get_clip_model,
+                is_available,
+            )
+
+            if is_available():
+                get_clip_model()
+        except Exception:  # noqa: BLE001
+            pass
+
+    _warmup_thread = threading.Thread(target=_warmup_clip, daemon=True, name="clip-warmup")
+    _warmup_thread.start()
 
     def _on_dir_scanned(dirs_done: int, total_dirs: int, dir_name: str) -> None:
         progress.total_dirs = total_dirs
@@ -178,9 +202,20 @@ def run_index(
     progress.found = len(assets)
 
     if not assets:
+        _warmup_thread.join()
         progress.running = False
         progress.done = True
         return progress
+
+    # ── Phase 1b: Wait for model warm-up if still loading ─────────────────────
+    # If the scan finished before the model loaded, block here briefly so that
+    # workers never see a cold model.  The UI shows "Loading CLIP model…"
+    # during this window.
+    if _warmup_thread.is_alive():
+        progress.phase = "loading_models"
+        if on_progress:
+            on_progress(progress)
+        _warmup_thread.join()
 
     # ── Phase 2: Processing ───────────────────────────────────────────────────
     progress.phase = "processing"
