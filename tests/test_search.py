@@ -300,7 +300,7 @@ class TestClipBackbone:
         backbone.get_clip_model()
 
         assert len(create_calls) == 1
-        assert create_calls[0].get("quick_gelu") is True
+        assert create_calls[0].get("force_quick_gelu") is True
 
         # Clean up singleton state so other tests are not affected
         monkeypatch.setattr(backbone, "_clip_model", None)
