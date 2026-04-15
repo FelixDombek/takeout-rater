@@ -226,7 +226,7 @@ def _start_index_job(app: object, library_root: Path) -> None:
             else:
                 progress.total = p.found
                 progress.processed = p.indexed
-            
+
             progress.current_item = p.current_dir
             if p.phase == "scanning" and p.total_dirs > 0:
                 msg = (
@@ -234,6 +234,8 @@ def _start_index_job(app: object, library_root: Path) -> None:
                     + (f"\u2002\u2013\u2002{p.current_dir}" if p.current_dir else "")
                     + "\u2026"
                 )
+            elif p.phase == "loading_models":
+                msg = "Loading CLIP model\u2026"
             elif p.phase == "processing":
                 if p.found > 0:
                     msg = f"Processing\u2026 {p.indexed}\u202f/\u202f{p.found}"
@@ -537,12 +539,10 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
     def _worker() -> None:
         from takeout_rater.db.connection import (
-            library_state_dir,  # noqa: PLC0415
             open_library_db,  # noqa: PLC0415
         )
 
         worker_conn = open_library_db(library_root)
-        thumbs_dir = library_state_dir(library_root) / "thumbs"
         try:
             if method == "clip":
                 # ── CLIP embedding clustering ────────────────────────────────
