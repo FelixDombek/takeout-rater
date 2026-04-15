@@ -95,4 +95,4 @@
 .btn-danger:hover { background: #b02a37; border-color: #b02a37; }
 
 .empty-state { text-align: center; padding: 3rem 1rem; color: #888; }
-.empty-state h2 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+.empty-state h2 { font-size: 1.3rem; margin-bottom: 0.5rem; color: #666; }
