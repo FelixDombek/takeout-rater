@@ -231,14 +231,6 @@
   var _jobStats = {};
   var _wasRunning = {};
 
-  // Aliases to shared job-card helpers from jobs-shared.js
-  var setStatus      = setJobStatus;
-  var setProgress    = setJobProgress;
-  var setCurrentItem = setJobCurrentItem;
-  var setBadge       = setJobBadge;
-  var setBtn         = setJobBtn;
-
-
   function applyJobState(data) {
     var jt = data.job_type;
     var pct = null;
@@ -246,38 +238,38 @@
       pct = Math.round((data.processed / data.total) * 100);
     }
 
-    setBadge(jt, data.running);
-    setBtn(jt, data.running);
+    setJobBadge(jt, data.running);
+    setJobBtn(jt, data.running);
 
     if (data.running) {
       _wasRunning[jt] = true;
       _jobStats[jt] = updateJobEtaStats(_jobStats[jt], data.processed);
-      setCurrentItem(jt, data.current_item || '');
+      setJobCurrentItem(jt, data.current_item || '');
     } else {
       delete _jobStats[jt];
-      setCurrentItem(jt, '');
+      setJobCurrentItem(jt, '');
     }
 
     if (data.error) {
-      setStatus(jt, '\u2717 ' + data.error, 'error');
-      setProgress(jt, null);
+      setJobStatus(jt, '\u2717 ' + data.error, 'error');
+      setJobProgress(jt, null);
     } else if (data.done) {
-      setStatus(jt, '\u2713 ' + data.message, 'ok');
-      setProgress(jt, 100);
+      setJobStatus(jt, '\u2713 ' + data.message, 'ok');
+      setJobProgress(jt, 100);
       if (jt === 'cluster_faces' && _wasRunning[jt]) {
         delete _wasRunning[jt];
         setTimeout(function() { window.location.reload(); }, 1200);
       } else {
-        setTimeout(function() { setProgress(jt, null); }, 3000);
+        setTimeout(function() { setJobProgress(jt, null); }, 3000);
       }
     } else if (data.running) {
       var statusMsg = data.message || 'Running\u2026';
       statusMsg = appendJobEtaToMessage(
         statusMsg, data.processed, data.total, _jobStats[jt]);
-      setStatus(jt, statusMsg, 'info');
-      setProgress(jt, pct !== null ? pct : 0);
+      setJobStatus(jt, statusMsg, 'info');
+      setJobProgress(jt, pct !== null ? pct : 0);
     } else if (data.message) {
-      setStatus(jt, data.message, '');
+      setJobStatus(jt, data.message, '');
     }
 
     if (!data.running) {
@@ -324,11 +316,11 @@
       body.min_samples = parseInt(document.getElementById('face-min-samples').value) || 2;
     }
 
-    setBtn(jobType, true);
-    setBadge(jobType, false);
-    setStatus(jobType, 'Starting\u2026', 'info');
-    setProgress(jobType, 0);
-    setCurrentItem(jobType, '');
+    setJobBtn(jobType, true);
+    setJobBadge(jobType, false);
+    setJobStatus(jobType, 'Starting\u2026', 'info');
+    setJobProgress(jobType, 0);
+    setJobCurrentItem(jobType, '');
     delete _jobStats[jobType];
 
     fetch('/api/jobs/' + jobType + '/start', {
@@ -345,13 +337,13 @@
         return r.json();
       })
       .then(function() {
-        setBadge(jobType, true);
+        setJobBadge(jobType, true);
         startPolling(jobType);
       })
       .catch(function(err) {
-        setStatus(jobType, '\u2717 ' + err.message, 'error');
-        setProgress(jobType, null);
-        setBtn(jobType, false);
+        setJobStatus(jobType, '\u2717 ' + err.message, 'error');
+        setJobProgress(jobType, null);
+        setJobBtn(jobType, false);
       });
   };
 })();

@@ -90,14 +90,6 @@
   var _pollers = {};  // job_type -> interval handle
   var _jobStats = {}; // job_type -> {startTime, startProcessed}
 
-  // Aliases to shared job-card helpers from jobs-shared.js
-  var setStatus      = setJobStatus;
-  var setProgress    = setJobProgress;
-  var setCurrentItem = setJobCurrentItem;
-  var setBadge       = setJobBadge;
-  var setBtn         = setJobBtn;
-
-
   function applyJobState(data) {
     var jt = data.job_type;
     var pct = null;
@@ -105,8 +97,8 @@
       pct = Math.round((data.processed / data.total) * 100);
     }
 
-    setBadge(jt, data.running);
-    setBtn(jt, data.running);
+    setJobBadge(jt, data.running);
+    setJobBtn(jt, data.running);
 
     if (data.running) {
       // Re-anchor the throughput baseline whenever no new items have been
@@ -115,27 +107,27 @@
       // the rate calculation, preventing wildly inflated ETA estimates at
       // the start of each scoring phase.
       _jobStats[jt] = updateJobEtaStats(_jobStats[jt], data.processed);
-      setCurrentItem(jt, data.current_item || '');
+      setJobCurrentItem(jt, data.current_item || '');
     } else {
       delete _jobStats[jt];
-      setCurrentItem(jt, '');
+      setJobCurrentItem(jt, '');
     }
 
     if (data.error) {
-      setStatus(jt, '✗ ' + data.error, 'error');
-      setProgress(jt, null);
+      setJobStatus(jt, '✗ ' + data.error, 'error');
+      setJobProgress(jt, null);
     } else if (data.done) {
-      setStatus(jt, '✓ ' + data.message, 'ok');
-      setProgress(jt, 100);
-      setTimeout(function() { setProgress(jt, null); }, 3000);
+      setJobStatus(jt, '✓ ' + data.message, 'ok');
+      setJobProgress(jt, 100);
+      setTimeout(function() { setJobProgress(jt, null); }, 3000);
     } else if (data.running) {
       var statusMsg = data.message || 'Running\u2026';
       statusMsg = appendJobEtaToMessage(
         statusMsg, data.processed, data.total, _jobStats[jt]);
-      setStatus(jt, statusMsg, 'info');
-      setProgress(jt, pct !== null ? pct : 0);
+      setJobStatus(jt, statusMsg, 'info');
+      setJobProgress(jt, pct !== null ? pct : 0);
     } else if (data.message) {
-      setStatus(jt, data.message, '');
+      setJobStatus(jt, data.message, '');
     }
 
     if (!data.running) {
@@ -184,11 +176,11 @@
       body.mode = document.getElementById('rescan-mode').value;
     }
 
-    setBtn(jobType, true);
-    setBadge(jobType, false);
-    setStatus(jobType, 'Starting\u2026', 'info');
-    setProgress(jobType, 0);
-    setCurrentItem(jobType, '');
+    setJobBtn(jobType, true);
+    setJobBadge(jobType, false);
+    setJobStatus(jobType, 'Starting\u2026', 'info');
+    setJobProgress(jobType, 0);
+    setJobCurrentItem(jobType, '');
     // Reset throughput stats so ETA is computed from this launch.
     delete _jobStats[jobType];
 
@@ -206,13 +198,13 @@
         return r.json();
       })
       .then(function() {
-        setBadge(jobType, true);
+        setJobBadge(jobType, true);
         startPolling(jobType);
       })
       .catch(function(err) {
-        setStatus(jobType, '✗ ' + err.message, 'error');
-        setProgress(jobType, null);
-        setBtn(jobType, false);
+        setJobStatus(jobType, '✗ ' + err.message, 'error');
+        setJobProgress(jobType, null);
+        setJobBtn(jobType, false);
       });
   };
 })();
