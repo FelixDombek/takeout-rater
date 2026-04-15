@@ -134,7 +134,6 @@
       <div class="member-thumb-placeholder" style="display:none">🖼</div>
       <div class="member-body">
         {% if is_rep %}<span class="rep-badge">REP</span>{% endif %}
-        {{ asset.filename }}
         {% if cluster_method == "clip_embedding" %}
           {% set clip_metric = cluster_params.get("metric", "cosine") %}
           {% if distance is not none %}
@@ -152,6 +151,7 @@
           <span class="member-phash" title="pHash: {{ phash_hex }}">{{ phash_hex }}</span>
           {% endif %}
         {% endif %}
+        {{ asset.filename }}
       </div>
     </a>
   </div>
