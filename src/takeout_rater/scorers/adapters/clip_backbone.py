@@ -65,7 +65,7 @@ def get_clip_model() -> tuple[Any, Any, Any, Any]:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         model, _, preprocess = open_clip.create_model_and_transforms(
-            CLIP_MODEL_NAME, pretrained=CLIP_PRETRAINED, quick_gelu=True
+            CLIP_MODEL_NAME, pretrained=CLIP_PRETRAINED, force_quick_gelu=True
         )
         model.eval()
         model.to(device)

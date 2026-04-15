@@ -247,13 +247,20 @@ def _start_index_job(app: object, library_root: Path) -> None:
 
         worker_conn = _open(library_root)
         try:
-            result = run_index(library_root, worker_conn, on_progress=_cb)
+            result = run_index(
+                library_root,
+                worker_conn,
+                on_progress=_cb,
+                cancel_check=progress.cancel_event.is_set,
+            )
             progress.total = result.found
             progress.processed = result.indexed
             progress.current_item = ""
             if result.error:
                 progress.error = result.error
                 progress.message = f"Error: {result.error}"
+            elif result.cancelled:
+                progress.message = f"Indexing cancelled — {result.indexed} photo(s) processed."
             else:
                 progress.message = f"Indexed {result.indexed} photo(s)."
             progress.running = False
@@ -298,6 +305,25 @@ def start_index_job(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# POST /api/jobs/index/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/index/cancel")
+def cancel_index_job(request: Request) -> JSONResponse:
+    """Request cancellation of the currently running index job.
+
+    Sets the cancel event on the running job so workers skip remaining
+    assets.  Returns ``404`` if no index job is running.
+    """
+    jobs = _get_jobs(request.app)
+    p = jobs.get("index")
+    if p is None or not p.running:
+        raise HTTPException(status_code=404, detail="No index job is currently running.")
+    p.cancel_event.set()
+    return JSONResponse({"status": "cancelling"})
+
+
 # GET /api/jobs/scorers
 # ---------------------------------------------------------------------------
 

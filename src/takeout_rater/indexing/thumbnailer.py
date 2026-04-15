@@ -37,6 +37,49 @@ def thumb_path_for_id(thumbs_dir: Path, asset_id: int) -> Path:
     return thumbs_dir / bucket / f"{asset_id}.jpg"
 
 
+def generate_thumbnail_from_image(img: object, output_path: Path) -> object:
+    """Generate a ≤512 px JPEG thumbnail from an already-open PIL Image.
+
+    Applies EXIF orientation, converts to RGB, resizes to at most
+    :data:`THUMB_MAX_PX` in each dimension, saves the result to
+    *output_path*, and returns the thumbnail as a new PIL Image object.
+    The caller can then use the returned image for further processing
+    (e.g. phash or CLIP embedding) without re-reading the file.
+
+    Args:
+        img: An already-open ``PIL.Image.Image`` instance.
+        output_path: Destination path for the thumbnail JPEG.
+            Parent directories are created automatically.
+
+    Returns:
+        The thumbnail as a ``PIL.Image.Image`` (RGB mode, ≤512 px).
+
+    Raises:
+        ImportError: If Pillow is not installed.
+        OSError: If the thumbnail cannot be written.
+    """
+    try:
+        from PIL import ImageOps  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "Pillow is required for thumbnail generation. Install it with: pip install Pillow>=10.0"
+        ) from exc
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Apply EXIF orientation on the source image (mutates a copy).
+    img = ImageOps.exif_transpose(img) or img  # type: ignore[arg-type]
+    if img.mode not in ("RGB", "L"):  # type: ignore[union-attr]
+        img = img.convert("RGB")  # type: ignore[union-attr]
+    thumb = img.copy()  # type: ignore[union-attr]
+    thumb.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX))
+    # Ensure RGB before saving as JPEG (L mode is fine, but be safe).
+    if thumb.mode not in ("RGB", "L"):
+        thumb = thumb.convert("RGB")
+    thumb.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+    return thumb
+
+
 def generate_thumbnail(image_path: Path, output_path: Path) -> None:
     """Generate a ≤512 px JPEG thumbnail and write it to *output_path*.
 

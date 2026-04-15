@@ -7,6 +7,8 @@
   .jobs-page { max-width: 780px; margin: 0 auto; }
   .jobs-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   .jobs-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+  .btn-cancel { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+  .btn-cancel:hover { background: #fee2e2; }
 </style>
 {% endblock %}
 
@@ -50,6 +52,7 @@
       <h2>📁 Re-index library</h2>
       <span class="badge-running" id="badge-index" style="display:none;">Running…</span>
       <button class="btn btn-primary btn-run" id="btn-index" onclick="startJob('index')">Run Index</button>
+      <button class="btn btn-cancel" id="btn-cancel-index" style="display:none;" onclick="cancelJob('index')">✕ Cancel</button>
     </div>
     <p class="desc">
       Scan the Takeout folder and <strong>discover new photos</strong> to add to the library.
@@ -99,6 +102,12 @@
 
     setJobBadge(jt, data.running);
     setJobBtn(jt, data.running);
+
+    // Show cancel button (and hide run button) while index is running.
+    if (jt === 'index') {
+      var cancelBtn = document.getElementById('btn-cancel-index');
+      if (cancelBtn) cancelBtn.style.display = data.running ? '' : 'none';
+    }
 
     if (data.running) {
       // Re-anchor the throughput baseline whenever no new items have been
@@ -206,6 +215,12 @@
         setJobProgress(jobType, null);
         setJobBtn(jobType, false);
       });
+  };
+  // ── Job cancellation ─────────────────────────────────────────────────────
+
+  window.cancelJob = function(jobType) {
+    fetch('/api/jobs/' + jobType + '/cancel', { method: 'POST' })
+      .catch(function(err) { showError('Cancel failed: ' + err.message); });
   };
 })();
 </script>

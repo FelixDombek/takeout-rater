@@ -82,6 +82,7 @@ class IndexProgress:
 
     running: bool = False
     done: bool = False
+    cancelled: bool = False
     error: str | None = None
     found: int = 0
     indexed: int = 0
@@ -117,6 +118,7 @@ def run_index(
     library_root: Path,
     conn: sqlite3.Connection,
     on_progress: Callable[[IndexProgress], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> IndexProgress:
     """Scan *library_root* and upsert discovered assets into *conn*.
 
@@ -130,6 +132,10 @@ def run_index(
         on_progress: Optional callback invoked after each asset is processed.
             Receives the current :class:`IndexProgress` instance.  Will be
             called from the main thread; implementations must not block.
+        cancel_check: Optional callable that returns ``True`` when the run
+            should be aborted.  Checked before each asset is processed; when
+            it returns ``True`` the worker skips the remaining work and the
+            run finishes early.
 
     Returns:
         The final :class:`IndexProgress` describing what was indexed.
@@ -150,6 +156,7 @@ def run_index(
     from takeout_rater.indexing.sidecar import parse_sidecar  # noqa: PLC0415
     from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
         generate_thumbnail,
+        generate_thumbnail_from_image,
         thumb_path_for_id,
     )
     from takeout_rater.scoring.phash import DHASH_ALGO, compute_dhash_from_image  # noqa: PLC0415
@@ -257,7 +264,9 @@ def run_index(
     _clip_lock = threading.Lock()
 
     def _process_one(asset_file: object) -> None:
-        """Process a single asset: hash, sidecar, claim, then phash+embed+thumb."""
+        """Process a single asset: hash, sidecar, claim, then thumb+phash+embed."""
+        if cancel_check is not None and cancel_check():
+            return
         relpath: str = asset_file.relpath  # type: ignore[union-attr]
         try:
             _process_one_inner(asset_file, relpath)
@@ -344,76 +353,101 @@ def run_index(
             if on_progress:
                 on_progress(progress)
 
-        # Step 4: If brand-new, compute phash + CLIP embedding.
-        # If already known, skip the expensive compute steps.
-        if is_new and file_bytes:
-            # Compute phash from the in-memory image
-            img = None
-            try:
-                import io  # noqa: PLC0415
-
-                from PIL import Image  # noqa: PLC0415
-
-                from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
-
-                img = Image.open(io.BytesIO(file_bytes))
-                dhash_hex = compute_dhash_from_image(img)
-                # Store in DB (open_db: no migrations, busy_timeout already set)
-                wconn2 = open_db(db_path)
-                try:
-                    upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
-                finally:
-                    wconn2.close()
-            except ImportError:
-                pass  # PIL or phash not available — expected in minimal installs
-            except Exception:
-                _log.warning("phash failed for %r", relpath, exc_info=True)
-
-            # Compute CLIP embedding if warm-up confirmed the model loaded.
-            # _clip_lock serialises inference to one worker at a time to prevent
-            # PyTorch's internal thread pool from deadlocking under concurrent
-            # calls from multiple Python threads.
-            if img is not None and _clip_warmup_ok.is_set():
-                _log.debug("CLIP inference start for %r", relpath)
-                try:
-                    import struct  # noqa: PLC0415
-
-                    import torch  # noqa: PLC0415
-
-                    from takeout_rater.scorers.adapters.clip_backbone import (
-                        get_clip_model,  # noqa: PLC0415
-                    )
-
-                    model, preprocess, _tokenizer, device = get_clip_model()
-                    img_rgb = img.convert("RGB")
-                    img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
-                    with _clip_lock, torch.no_grad():
-                        embedding = model.encode_image(img_tensor)
-                        embedding = embedding / embedding.norm(dim=-1, keepdim=True)
-                        embedding = embedding.cpu().float().numpy()[0]
-                    blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
-                    wconn3 = open_db(db_path)
-                    try:
-                        wconn3.execute(
-                            "INSERT OR REPLACE INTO clip_embeddings"
-                            " (asset_id, embedding) VALUES (?, ?)",
-                            (asset_id, blob),
-                        )
-                        wconn3.commit()
-                    finally:
-                        wconn3.close()
-                    _log.debug("CLIP inference done for %r", relpath)
-                except ImportError:
-                    pass  # torch / open_clip not available — expected in minimal installs
-                except Exception:
-                    _log.warning("CLIP embedding failed for %r", relpath, exc_info=True)
-
-        # Always ensure thumbnail exists (for both new and known assets)
+        # Step 4: Thumbnail first, then phash + CLIP on the thumbnail image.
+        #
+        # Thumbnail generation is always attempted (for both new and known
+        # assets).  When the thumbnail is generated from in-memory bytes we
+        # get back a small PIL Image that is immediately reused for phash and
+        # CLIP — avoiding a second round-trip to disk for new assets.
         thumb = thumb_path_for_id(thumbs_dir, asset_id)
+        thumb_img = None  # PIL thumbnail image, reused for phash + CLIP
+
         if not thumb.exists():
-            _log.debug("Generating thumbnail for %r (id=%d)", relpath, asset_id)
-            with contextlib.suppress(ImportError, OSError):
-                generate_thumbnail(asset_file.abspath, thumb)  # type: ignore[union-attr]
+            if file_bytes:
+                try:
+                    import io  # noqa: PLC0415
+
+                    from PIL import Image  # noqa: PLC0415
+
+                    full_img = Image.open(io.BytesIO(file_bytes))
+                    thumb_img = generate_thumbnail_from_image(full_img, thumb)
+                except ImportError:
+                    pass  # Pillow not available
+                except Exception:
+                    _log.debug("Thumbnail generation failed for %r", relpath, exc_info=True)
+                    with contextlib.suppress(OSError):
+                        thumb.unlink(missing_ok=True)
+            else:
+                # No in-memory bytes; fall back to reading from disk.
+                with contextlib.suppress(ImportError, OSError):
+                    generate_thumbnail(asset_file.abspath, thumb)  # type: ignore[union-attr]
+
+        # For new assets: compute phash + CLIP using the thumbnail image.
+        # If the thumbnail was already on disk (rare re-index case), load it.
+        if is_new:
+            if thumb_img is None and thumb.exists():
+                try:
+                    import io  # noqa: PLC0415
+
+                    from PIL import Image  # noqa: PLC0415
+
+                    thumb_img = Image.open(io.BytesIO(thumb.read_bytes()))
+                except ImportError:
+                    pass
+                except Exception:
+                    _log.debug("Could not load thumbnail for phash/CLIP %r", relpath, exc_info=True)
+
+            if thumb_img is not None:
+                # Compute phash from thumbnail.
+                try:
+                    from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
+
+                    dhash_hex = compute_dhash_from_image(thumb_img)
+                    wconn2 = open_db(db_path)
+                    try:
+                        upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
+                    finally:
+                        wconn2.close()
+                except ImportError:
+                    pass
+                except Exception:
+                    _log.warning("phash failed for %r", relpath, exc_info=True)
+
+                # Compute CLIP embedding from thumbnail.
+                if _clip_warmup_ok.is_set():
+                    _log.debug("CLIP inference start for %r", relpath)
+                    try:
+                        import struct  # noqa: PLC0415
+
+                        import torch  # noqa: PLC0415
+
+                        from takeout_rater.scorers.adapters.clip_backbone import (
+                            get_clip_model,  # noqa: PLC0415
+                        )
+
+                        model, preprocess, _tokenizer, device = get_clip_model()
+                        img_rgb = thumb_img.convert("RGB")
+                        img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
+                        with _clip_lock, torch.no_grad():
+                            embedding = model.encode_image(img_tensor)
+                            embedding = embedding / embedding.norm(dim=-1, keepdim=True)
+                            embedding = embedding.cpu().float().numpy()[0]
+                        blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
+                        wconn3 = open_db(db_path)
+                        try:
+                            wconn3.execute(
+                                "INSERT OR REPLACE INTO clip_embeddings"
+                                " (asset_id, embedding, computed_at) VALUES (?, ?, ?)",
+                                (asset_id, blob, now),
+                            )
+                            wconn3.commit()
+                        finally:
+                            wconn3.close()
+                        _log.debug("CLIP inference done for %r", relpath)
+                    except ImportError:
+                        pass  # torch / open_clip not available
+                    except Exception:
+                        _log.warning("CLIP embedding failed for %r", relpath, exc_info=True)
 
     # Submit all workers in parallel; _process_one swallows every exception
     # internally (logging it) so future.result() never re-raises and the
@@ -425,4 +459,6 @@ def run_index(
 
     progress.running = False
     progress.done = True
+    if cancel_check is not None and cancel_check():
+        progress.cancelled = True
     return progress
