@@ -159,7 +159,10 @@ def run_index(
         generate_thumbnail_from_image,
         thumb_path_for_id,
     )
-    from takeout_rater.scoring.phash import DHASH_ALGO, compute_dhash_from_image  # noqa: PLC0415
+    from takeout_rater.scoring.phash import (
+        DHASH_ALGO,
+        compute_dhash_from_image,
+    )  # noqa: PLC0415
 
     progress = IndexProgress(running=True)
 
@@ -211,7 +214,9 @@ def run_index(
         except Exception:  # noqa: BLE001
             pass
 
-    _warmup_thread = threading.Thread(target=_warmup_clip, daemon=True, name="clip-warmup")
+    _warmup_thread = threading.Thread(
+        target=_warmup_clip, daemon=True, name="clip-warmup"
+    )
     _warmup_thread.start()
 
     def _on_dir_scanned(dirs_done: int, total_dirs: int, dir_name: str) -> None:
@@ -287,7 +292,9 @@ def run_index(
         except Exception:
             _log.exception("Unexpected error processing asset %r – skipping", relpath)
 
-    def _process_one_inner(asset_file: object, relpath: str) -> None:  # noqa: PLR0912,PLR0915
+    def _process_one_inner(
+        asset_file: object, relpath: str
+    ) -> None:  # noqa: PLR0912,PLR0915
         # Step 1: Read file bytes + compute sha256 (parallel, no locking)
         sha256: str | None = None
         file_bytes: bytes | None = None
@@ -400,7 +407,9 @@ def run_index(
                 except ImportError:
                     pass  # Pillow not available
                 except Exception:
-                    _log.debug("Thumbnail generation failed for %r", relpath, exc_info=True)
+                    _log.debug(
+                        "Thumbnail generation failed for %r", relpath, exc_info=True
+                    )
                     with contextlib.suppress(OSError):
                         thumb.unlink(missing_ok=True)
             else:
@@ -428,13 +437,19 @@ def run_index(
                 except ImportError:
                     pass
                 except Exception:
-                    _log.debug("Could not load thumbnail for phash/CLIP %r", relpath, exc_info=True)
+                    _log.debug(
+                        "Could not load thumbnail for phash/CLIP %r",
+                        relpath,
+                        exc_info=True,
+                    )
 
             if thumb_img is not None:
                 if needs_phash:
                     # Compute phash from thumbnail.
                     try:
-                        from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
+                        from takeout_rater.db.queries import (
+                            upsert_phash,
+                        )  # noqa: PLC0415
 
                         dhash_hex = compute_dhash_from_image(thumb_img)
                         wconn2 = open_db(db_path)
@@ -481,7 +496,9 @@ def run_index(
                     except ImportError:
                         pass  # torch / open_clip not available
                     except Exception:
-                        _log.warning("CLIP embedding failed for %r", relpath, exc_info=True)
+                        _log.warning(
+                            "CLIP embedding failed for %r", relpath, exc_info=True
+                        )
 
     # Submit all workers in parallel; _process_one swallows every exception
     # internally (logging it) so future.result() never re-raises and the

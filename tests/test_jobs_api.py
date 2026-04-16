@@ -104,8 +104,12 @@ def test_list_scorers_returns_200(client_no_db: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("job_type", ["index", "score", "cluster", "export", "rescan", "embed"])
-def test_start_job_without_db_returns_503(client_no_db: TestClient, job_type: str) -> None:
+@pytest.mark.parametrize(
+    "job_type", ["index", "score", "cluster", "export", "rescan", "embed"]
+)
+def test_start_job_without_db_returns_503(
+    client_no_db: TestClient, job_type: str
+) -> None:
     resp = client_no_db.post(f"/api/jobs/{job_type}/start", json={})
     assert resp.status_code == 503
 
@@ -503,7 +507,8 @@ def test_list_asset_ids_needing_rescan_missing_only(tmp_path: Path) -> None:
         },
     )  # type: ignore[call-arg]
     conn.execute(
-        "UPDATE assets SET indexer_version = ? WHERE id = ?", (CURRENT_INDEXER_VERSION, id_current)
+        "UPDATE assets SET indexer_version = ? WHERE id = ?",
+        (CURRENT_INDEXER_VERSION, id_current),
     )
     conn.commit()
     # Asset with indexer_version = 0 (old version)
@@ -562,7 +567,8 @@ def test_list_asset_ids_needing_rescan_full(tmp_path: Path) -> None:
         },
     )  # type: ignore[call-arg]
     conn.execute(
-        "UPDATE assets SET indexer_version = ? WHERE id = ?", (CURRENT_INDEXER_VERSION, id2)
+        "UPDATE assets SET indexer_version = ? WHERE id = ?",
+        (CURRENT_INDEXER_VERSION, id2),
     )
     conn.commit()
 
@@ -581,7 +587,10 @@ def test_rescan_worker_sets_indexer_version(tmp_path: Path) -> None:
     import time  # noqa: E402
 
     from takeout_rater.db.connection import open_library_db  # noqa: E402
-    from takeout_rater.db.queries import CURRENT_INDEXER_VERSION, upsert_asset  # noqa: E402
+    from takeout_rater.db.queries import (
+        CURRENT_INDEXER_VERSION,
+        upsert_asset,
+    )  # noqa: E402
     from takeout_rater.ui.app import create_app  # noqa: E402
 
     conn = open_library_db(tmp_path)
