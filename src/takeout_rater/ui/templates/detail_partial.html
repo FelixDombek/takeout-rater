@@ -29,17 +29,16 @@
     <tr><td>Google Photos</td><td><a href="{{ asset.google_photos_url }}" target="_blank" rel="noopener">Open ↗</a></td></tr>
     {% endif %}
     <tr><td>Asset ID</td><td>{{ asset.id }}</td></tr>
-    <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
+    <tr>
+      <td>Path{{ 's' if alias_paths else '' }}</td>
+      <td>
+        <small>{{ asset.relpath }}</small>
+        {% for alias in alias_paths %}
+        <br><small>{{ alias }}</small>
+        {% endfor %}
+      </td>
+    </tr>
   </table>
-
-  {% if alias_paths %}
-  <h3 class="lb-detail-section">Also stored at</h3>
-  <ul class="lb-dup-list">
-    {% for alias in alias_paths %}
-    <li><small>{{ alias }}</small></li>
-    {% endfor %}
-  </ul>
-  {% endif %}
 
   {# ── Info tabs: SCORES / JSON / EXIF / pHash / CLIP ─────────────────── #}
   <div class="lb-info-tabs">

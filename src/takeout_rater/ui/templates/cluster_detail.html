@@ -95,7 +95,11 @@
     vertical-align: middle;
   }
   .back-link { margin-bottom: 1rem; display: inline-block; }
+
+  /* Highlight active card when lightbox is open */
+  .member-card.card--active { box-shadow: 0 0 0 3px #7ec8e3, 0 4px 10px rgba(0,0,0,.2); }
 </style>
+<link rel="stylesheet" href="/static/lightbox.css">
 {% endblock %}
 
 {% block content %}
@@ -120,10 +124,13 @@
   {% endif %}
 </div>
 
-<div class="member-grid">
+<div class="member-grid" id="member-grid">
   {% for asset, distance, is_rep in members %}
-  <div class="member-card{% if is_rep %} is-rep{% endif %}">
-    <a href="/assets/{{ asset.id }}">
+  <div class="member-card{% if is_rep %} is-rep{% endif %}"
+       data-lb-id="{{ asset.id }}"
+       data-lb-src="/thumbs/{{ asset.id }}"
+       data-lb-title="{{ asset.title or asset.filename }}">
+    <a href="/assets/{{ asset.id }}" onclick="return false;" tabindex="-1" aria-hidden="true">
       <img
         class="member-thumb"
         src="/thumbs/{{ asset.id }}"
@@ -157,4 +164,32 @@
   </div>
   {% endfor %}
 </div>
+
+{# ── Lightbox overlay ────────────────────────────────────────────────────── #}
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" aria-hidden="true">
+  <div class="lb-container">
+    <div class="lb-img-col">
+      <button id="lb-close" class="lb-close" aria-label="Close viewer">✕</button>
+      <button id="lb-prev" class="lb-prev" aria-label="Previous image">‹</button>
+      <button id="lb-next" class="lb-next" aria-label="Next image">›</button>
+      <img id="lb-img" src="" alt="" tabindex="0">
+      <div class="lb-footer">
+        <span id="lb-title"></span>
+        <span id="lb-counter"></span>
+        <a id="lb-link" href="" class="btn lb-detail-btn">Open page →</a>
+      </div>
+    </div>
+    <div class="lb-details-col" id="lb-details">
+      <div class="lb-details-loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/lightbox.js"></script>
+<script>
+SharedLightbox.init({
+  gridEl: document.getElementById('member-grid'),
+  cardSelector: '.member-card[data-lb-id]',
+});
+</script>
 {% endblock %}
