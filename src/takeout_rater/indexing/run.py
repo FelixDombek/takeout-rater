@@ -214,9 +214,7 @@ def run_index(
         except Exception:  # noqa: BLE001
             pass
 
-    _warmup_thread = threading.Thread(
-        target=_warmup_clip, daemon=True, name="clip-warmup"
-    )
+    _warmup_thread = threading.Thread(target=_warmup_clip, daemon=True, name="clip-warmup")
     _warmup_thread.start()
 
     def _on_dir_scanned(dirs_done: int, total_dirs: int, dir_name: str) -> None:
@@ -292,9 +290,7 @@ def run_index(
         except Exception:
             _log.exception("Unexpected error processing asset %r – skipping", relpath)
 
-    def _process_one_inner(
-        asset_file: object, relpath: str
-    ) -> None:  # noqa: PLR0912,PLR0915
+    def _process_one_inner(asset_file: object, relpath: str) -> None:  # noqa: PLR0912,PLR0915
         # Step 1: Read file bytes + compute sha256 (parallel, no locking)
         sha256: str | None = None
         file_bytes: bytes | None = None
@@ -407,9 +403,7 @@ def run_index(
                 except ImportError:
                     pass  # Pillow not available
                 except Exception:
-                    _log.debug(
-                        "Thumbnail generation failed for %r", relpath, exc_info=True
-                    )
+                    _log.debug("Thumbnail generation failed for %r", relpath, exc_info=True)
                     with contextlib.suppress(OSError):
                         thumb.unlink(missing_ok=True)
             else:
@@ -496,9 +490,7 @@ def run_index(
                     except ImportError:
                         pass  # torch / open_clip not available
                     except Exception:
-                        _log.warning(
-                            "CLIP embedding failed for %r", relpath, exc_info=True
-                        )
+                        _log.warning("CLIP embedding failed for %r", relpath, exc_info=True)
 
     # Submit all workers in parallel; _process_one swallows every exception
     # internally (logging it) so future.result() never re-raises and the

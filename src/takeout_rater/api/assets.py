@@ -745,9 +745,10 @@ def get_similar_assets(
     if not results:
         # Distinguish "no data" from "no matches above threshold"
         if method == "phash":
-            no_data = conn.execute(
-                "SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)
-            ).fetchone() is None
+            no_data = (
+                conn.execute("SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)).fetchone()
+                is None
+            )
             if no_data:
                 return JSONResponse({**base, "results": [], "error": "no_phash"})
         else:

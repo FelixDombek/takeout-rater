@@ -1319,7 +1319,9 @@ def test_similar_assets_euclidean_metric(tmp_path: Path) -> None:
     close = base + rng.standard_normal(DIM).astype(np.float32) * 0.01
     close /= np.linalg.norm(close)
 
-    bulk_upsert_clip_embeddings(conn, [(id1, struct.pack(f"{DIM}f", *base)), (id2, struct.pack(f"{DIM}f", *close))])
+    bulk_upsert_clip_embeddings(
+        conn, [(id1, struct.pack(f"{DIM}f", *base)), (id2, struct.pack(f"{DIM}f", *close))]
+    )
 
     app = create_app(tmp_path, conn)
     from fastapi.testclient import TestClient as TC  # noqa: PLC0415

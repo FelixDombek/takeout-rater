@@ -344,4 +344,3 @@ def _find_similar_phash(
     # Sort best-first: lower Hamming distance = more similar
     results.sort(key=lambda r: r["score"])
     return results
-
