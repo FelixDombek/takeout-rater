@@ -164,14 +164,25 @@
     gap: 0.5rem;
     pointer-events: none;
   }
-  #viz-overlay .viz-spinner {
-    width: 28px; height: 28px;
-    border: 3px solid #444;
-    border-top-color: #7c9cff;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  #viz-overlay .viz-progress-bar-wrap {
+    width: 200px;
+    height: 6px;
+    background: #2a2a3a;
+    border-radius: 3px;
+    overflow: hidden;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  #viz-overlay .viz-progress-bar {
+    height: 100%;
+    width: 40%;
+    background: #7c9cff;
+    border-radius: 3px;
+    animation: viz-bar-slide 1.4s ease-in-out infinite;
+  }
+  @keyframes viz-bar-slide {
+    0%   { transform: translateX(-100%); }
+    50%  { transform: translateX(150%); }
+    100% { transform: translateX(150%); }
+  }
 
   /* Cluster legend */
   #viz-legend {
@@ -519,7 +530,7 @@
     if (info) info.textContent = '';
 
     showOverlay(
-      '<div class="viz-spinner"></div>' +
+      '<div class="viz-progress-bar-wrap"><div class="viz-progress-bar"></div></div>' +
       '<span>Computing\u2026 this may take a minute.</span>' +
       '<span style="font-size:0.75rem;color:#777">Elapsed: <span id="viz-elapsed">0s</span></span>'
     );
