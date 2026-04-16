@@ -753,7 +753,7 @@ function loadClipWords(panel) {
       sorted.sort(function (a, b) {
         var ta = a.taken_at != null ? a.taken_at : 0;
         var tb = b.taken_at != null ? b.taken_at : 0;
-        return ta - tb;
+        return tb - ta;
       });
     }
     // else keep similarity-descending order (already sorted by backend)

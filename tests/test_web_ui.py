@@ -1314,7 +1314,7 @@ def test_similar_assets_threshold_filters_results(tmp_path: Path) -> None:
     client = TC(app)
 
     # Very high threshold — should exclude the moderately similar asset
-    resp = client.get(f"/api/assets/{id1}/similar?threshold=0.9999")
+    resp = client.get(f"/api/assets/{id1}/similar?threshold=0.99")
     assert resp.status_code == 200
     data = resp.json()
     assert data["results"] == []
