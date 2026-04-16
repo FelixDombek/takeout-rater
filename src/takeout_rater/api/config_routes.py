@@ -122,6 +122,9 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     """
     from fastapi import HTTPException
 
+    # Both paths are user-supplied but validated (exist, are directories) and
+    # fully resolved to absolute paths before use.  The app intentionally allows
+    # the user to choose any local directory for their photo library and DB state.
     p = Path(body.path).expanduser().resolve()
     if not p.exists():
         raise HTTPException(status_code=400, detail=f"Path does not exist: {p}")

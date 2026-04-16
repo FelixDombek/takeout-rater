@@ -210,6 +210,10 @@ def run_index(
     progress.found = len(assets)
 
     if not assets:
+        # No assets to index; the warmup thread is a daemon and will be cleaned
+        # up by the process, but attempt a very short join in case it already
+        # finished to avoid leaving unnecessary background work.
+        _warmup_thread.join(timeout=0.5)
         progress.running = False
         progress.done = True
         return progress
