@@ -729,9 +729,12 @@ var _mltPanel = SimilarityPanel.init({ assetId: {{ asset.id }} });
       refStatus.textContent = 'Please drop or select an image file.';
       return;
     }
-    // Show preview
-    var url = URL.createObjectURL(file);
-    previewImg.src = url;
+    // Show preview via FileReader (data: URL — no blob URL XSS concern)
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      previewImg.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
     previewLabel.textContent = file.name + (file.size ? ' (' + (file.size / 1024).toFixed(0) + ' KB)' : '');
     previewWrap.classList.add('visible');
     dropZone.style.display = 'none';
