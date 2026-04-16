@@ -59,8 +59,8 @@ def browse_albums(
 @router.get("/albums/{album_id}", response_class=HTMLResponse)
 def album_detail(
     album_id: int,
+    request: Request,
     page: int = 1,
-    request: Request = None,  # type: ignore[assignment]
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
     """Render the detail page for a single album, with paginated photo grid and lightbox."""
