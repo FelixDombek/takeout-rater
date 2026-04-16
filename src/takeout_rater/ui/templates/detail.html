@@ -187,6 +187,118 @@
     border: 1px solid #bbf7d0;
   }
   .clip-tag.user-tag:hover { background: #dcfce7; }
+
+  /* ── More like this panel ───────────────────────────────────────────── */
+  .more-like-this {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e0e0e0;
+  }
+  .more-like-this h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+  }
+  .mlt-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 1.5rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+  }
+  .mlt-slider-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .mlt-slider-group label { color: #555; white-space: nowrap; }
+  .mlt-slider-group input[type=range] { width: 130px; cursor: pointer; }
+  .mlt-slider-val {
+    min-width: 2.5em;
+    font-variant-numeric: tabular-nums;
+    color: #1a5cdb;
+    font-weight: 600;
+  }
+  .mlt-sort-group {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .mlt-sort-group label { color: #555; }
+  .mlt-sort-btn {
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 0.25rem 0.65rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    color: #374151;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .mlt-sort-btn:hover { background: #e5e7eb; }
+  .mlt-sort-btn.active {
+    background: #1a5cdb;
+    border-color: #1a5cdb;
+    color: #fff;
+  }
+  .mlt-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .mlt-card {
+    background: #fff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    transition: box-shadow 0.15s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .mlt-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .mlt-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #e0e0e0;
+  }
+  .mlt-thumb-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 2rem;
+  }
+  .mlt-body {
+    padding: 0.3rem 0.45rem;
+    font-size: 0.72rem;
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mlt-sim {
+    display: inline-block;
+    background: #e8f0fe;
+    color: #1a5cdb;
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    margin-right: 3px;
+  }
+  .mlt-status {
+    font-size: 0.85rem;
+    color: #888;
+    margin: 0.5rem 0;
+  }
+  .mlt-status.mlt-error { color: #c0392b; }
 </style>
 {% endblock %}
 
@@ -341,6 +453,25 @@ Bright pixel = left neighbour was brighter; dark pixel = right neighbour was bri
     <p class="clip-empty" style="color:#999; font-size:0.85rem; margin:0.5rem 0;">Run the Embed job on the <a href="/clip">CLIP page</a> to generate CLIP tags.</p>
   </div>
 </div>{# /info-tabs #}
+
+{# ── More like this panel ──────────────────────────────────────────────────── #}
+<div class="more-like-this" id="mlt-panel" data-asset-id="{{ asset.id }}">
+  <h2>More like this</h2>
+  <div class="mlt-controls">
+    <div class="mlt-slider-group">
+      <label for="mlt-threshold">Similarity threshold:</label>
+      <input type="range" id="mlt-threshold" min="0.50" max="0.99" step="0.01" value="0.85">
+      <span class="mlt-slider-val" id="mlt-threshold-val">0.85</span>
+    </div>
+    <div class="mlt-sort-group">
+      <label>Sort by:</label>
+      <button class="mlt-sort-btn active" id="mlt-sort-sim" onclick="mltSetSort('similarity')">Similarity</button>
+      <button class="mlt-sort-btn" id="mlt-sort-time" onclick="mltSetSort('time')">Time</button>
+    </div>
+  </div>
+  <p class="mlt-status" id="mlt-status">Loading…</p>
+  <div class="mlt-grid" id="mlt-grid"></div>
+</div>
 
 <script>
 (function () {
@@ -576,5 +707,132 @@ function loadClipWords(panel) {
   }
 })();
 {% endif %}
+
+// ── More like this ─────────────────────────────────────────────────────────
+(function () {
+  var panel = document.getElementById('mlt-panel');
+  if (!panel) return;
+  var assetId = panel.dataset.assetId;
+  var grid    = document.getElementById('mlt-grid');
+  var status  = document.getElementById('mlt-status');
+  var slider  = document.getElementById('mlt-threshold');
+  var sliderVal = document.getElementById('mlt-threshold-val');
+
+  var currentSort = 'similarity';
+  var currentResults = [];
+  var debounceTimer = null;
+
+  // Keep the displayed value in sync with the slider
+  slider.addEventListener('input', function () {
+    sliderVal.textContent = parseFloat(slider.value).toFixed(2);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(loadSimilar, 400);
+  });
+
+  window.mltSetSort = function (sortKey) {
+    currentSort = sortKey;
+    document.getElementById('mlt-sort-sim').classList.toggle('active', sortKey === 'similarity');
+    document.getElementById('mlt-sort-time').classList.toggle('active', sortKey === 'time');
+    renderResults();
+  };
+
+  function formatDate(ts) {
+    if (!ts) return '';
+    var d = new Date(ts * 1000);
+    return d.getFullYear() + '-'
+      + String(d.getMonth() + 1).padStart(2, '0') + '-'
+      + String(d.getDate()).padStart(2, '0');
+  }
+
+  function renderResults() {
+    grid.innerHTML = '';
+    if (!currentResults.length) return;
+
+    var sorted = currentResults.slice();
+    if (currentSort === 'time') {
+      sorted.sort(function (a, b) {
+        var ta = a.taken_at != null ? a.taken_at : 0;
+        var tb = b.taken_at != null ? b.taken_at : 0;
+        return ta - tb;
+      });
+    }
+    // else keep similarity-descending order (already sorted by backend)
+
+    sorted.forEach(function (item) {
+      var card = document.createElement('a');
+      card.className = 'mlt-card';
+      card.href = '/assets/' + item.asset_id;
+
+      var img = document.createElement('img');
+      img.className = 'mlt-thumb';
+      img.src = '/thumbs/' + item.asset_id;
+      img.alt = item.filename || '';
+      img.loading = 'lazy';
+      var placeholder = document.createElement('div');
+      placeholder.className = 'mlt-thumb-placeholder';
+      placeholder.style.display = 'none';
+      placeholder.textContent = '🖼';
+      img.onerror = function () {
+        img.style.display = 'none';
+        placeholder.style.display = 'flex';
+      };
+
+      var body = document.createElement('div');
+      body.className = 'mlt-body';
+      var simBadge = document.createElement('span');
+      simBadge.className = 'mlt-sim';
+      simBadge.title = 'Cosine similarity';
+      simBadge.textContent = item.similarity.toFixed(3);
+      body.appendChild(simBadge);
+
+      var dateStr = formatDate(item.taken_at);
+      if (dateStr) {
+        var dateSpan = document.createElement('span');
+        dateSpan.title = item.filename || '';
+        dateSpan.textContent = dateStr;
+        body.appendChild(dateSpan);
+      } else {
+        body.appendChild(document.createTextNode(item.filename || ''));
+      }
+
+      card.appendChild(img);
+      card.appendChild(placeholder);
+      card.appendChild(body);
+      grid.appendChild(card);
+    });
+  }
+
+  function loadSimilar() {
+    var threshold = parseFloat(slider.value).toFixed(2);
+    status.textContent = 'Loading…';
+    status.className = 'mlt-status';
+    grid.innerHTML = '';
+
+    fetch('/api/assets/' + assetId + '/similar?threshold=' + threshold)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error === 'no_embedding') {
+          status.textContent = 'No CLIP embedding found. Run the Embed job on the CLIP page first.';
+          status.className = 'mlt-status';
+          return;
+        }
+        currentResults = data.results || [];
+        if (!currentResults.length) {
+          status.textContent = 'No similar photos found at this threshold. Try lowering it.';
+          status.className = 'mlt-status';
+        } else {
+          status.textContent = currentResults.length + ' similar photo' + (currentResults.length === 1 ? '' : 's') + ' found.';
+          status.className = 'mlt-status';
+          renderResults();
+        }
+      })
+      .catch(function () {
+        status.textContent = 'Failed to load similar photos.';
+        status.className = 'mlt-status mlt-error';
+      });
+  }
+
+  loadSimilar();
+})();
 </script>
 {% endblock %}

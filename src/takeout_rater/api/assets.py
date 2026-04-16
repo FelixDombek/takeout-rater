@@ -681,6 +681,53 @@ def get_clip_words(
     return JSONResponse({"words": words})
 
 
+@router.get("/api/assets/{asset_id}/similar")
+def get_similar_assets(
+    asset_id: int,
+    request: Request,  # noqa: ARG001
+    threshold: float = 0.85,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return photos semantically similar to this asset via CLIP embeddings.
+
+    Uses nearest-neighbour cosine similarity in CLIP embedding space to find
+    photos that are visually/semantically similar to the reference asset.
+
+    Query parameters:
+    - ``threshold``: Minimum cosine similarity to include (default 0.85,
+      range 0.0–1.0).  Higher values return only very close matches.
+
+    Returns JSON::
+
+        {
+          "asset_id": <int>,
+          "results": [
+            {"asset_id": <int>, "similarity": <float>,
+             "taken_at": <int|null>, "filename": <str>},
+            ...
+          ]
+        }
+
+    When the asset has no CLIP embedding, ``results`` is empty and
+    ``"error": "no_embedding"`` is included in the response.
+    """
+    from takeout_rater.faces.similarity import find_similar_by_asset  # noqa: PLC0415
+
+    threshold = max(0.0, min(1.0, threshold))
+
+    asset = get_asset_by_id(conn, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
+
+    results = find_similar_by_asset(conn, asset_id, threshold=threshold)
+    if not results:
+        from takeout_rater.db.queries import get_clip_embedding_for_asset as _gce  # noqa: PLC0415
+
+        if _gce(conn, asset_id) is None:
+            return JSONResponse({"asset_id": asset_id, "results": [], "error": "no_embedding"})
+    return JSONResponse({"asset_id": asset_id, "results": results})
+
+
 @router.get("/thumbs/{asset_id}")
 def serve_thumbnail(
     asset_id: int,

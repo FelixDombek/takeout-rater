@@ -1,15 +1,24 @@
-"""CLIP-based similarity search for hidden-face photo suggestions.
+"""CLIP-based similarity search for photos.
 
-Given a face cluster (person group), this module computes a mean CLIP
-embedding from the assets where the person's face *is* detected and
-then searches the full ``clip_embeddings`` table for visually similar
-photos that may contain the same person with a hidden face.
+Two public functions are provided:
+
+``find_similar_photos``
+    Given a face cluster (person group), computes a mean CLIP embedding
+    from the assets where the person's face *is* detected and then
+    searches the full ``clip_embeddings`` table for visually similar
+    photos that may contain the same person with a hidden face.
+
+``find_similar_by_asset``
+    Given a single asset ID, searches the full ``clip_embeddings`` table
+    for photos that are semantically similar to that asset using cosine
+    similarity in CLIP embedding space.
 
 Usage::
 
-    from takeout_rater.faces.similarity import find_similar_photos
+    from takeout_rater.faces.similarity import find_similar_photos, find_similar_by_asset
 
     suggestions = find_similar_photos(conn, cluster_id=5, threshold=0.80, limit=50)
+    similar = find_similar_by_asset(conn, asset_id=42, threshold=0.85)
 """
 
 from __future__ import annotations
@@ -113,3 +122,80 @@ def find_similar_photos(
 
     results.sort(key=lambda r: r["similarity"], reverse=True)
     return results[:limit]
+
+
+def find_similar_by_asset(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    *,
+    threshold: float = 0.85,
+) -> list[dict]:
+    """Find photos semantically similar to a given asset via CLIP embeddings.
+
+    Looks up the stored CLIP embedding for *asset_id* and ranks all other
+    assets by cosine similarity, returning every asset whose similarity is at
+    or above *threshold*.
+
+    Args:
+        conn: Open library database connection.
+        asset_id: The reference asset to search from.
+        threshold: Minimum cosine similarity to include in results.
+            Defaults to ``0.85``.
+
+    Returns:
+        List of dicts with ``asset_id``, ``similarity``, ``taken_at``, and
+        ``filename`` keys, sorted by similarity descending.  The reference
+        asset itself is excluded from the results.  Returns an empty list if
+        the reference asset has no CLIP embedding.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    expected = _CLIP_DIM * 4
+
+    # Load the reference embedding
+    ref_row = conn.execute(
+        "SELECT embedding FROM clip_embeddings WHERE asset_id = ?",
+        (asset_id,),
+    ).fetchone()
+
+    if ref_row is None or len(ref_row[0]) != expected:
+        return []
+
+    ref_vec = np.array(struct.unpack(f"{_CLIP_DIM}f", ref_row[0]), dtype=np.float32)
+    ref_norm = float(np.linalg.norm(ref_vec))
+    if ref_norm < 1e-9:
+        return []
+    ref_vec = ref_vec / ref_norm
+
+    # Load all embeddings joined with asset metadata
+    all_rows = conn.execute(
+        "SELECT ce.asset_id, ce.embedding, a.taken_at, a.filename"
+        " FROM clip_embeddings ce"
+        " JOIN assets a ON a.id = ce.asset_id"
+        " ORDER BY ce.asset_id"
+    ).fetchall()
+
+    results: list[dict] = []
+    for aid, blob, taken_at, filename in all_rows:
+        if aid == asset_id:
+            continue
+        if len(blob) != expected:
+            continue
+        vec = np.array(struct.unpack(f"{_CLIP_DIM}f", blob), dtype=np.float32)
+        norm = float(np.linalg.norm(vec))
+        if norm < 1e-9:
+            continue
+        vec = vec / norm
+        sim = float(np.dot(vec, ref_vec))
+        if sim >= threshold:
+            results.append(
+                {
+                    "asset_id": aid,
+                    "similarity": round(sim, 4),
+                    "taken_at": taken_at,
+                    "filename": filename,
+                }
+            )
+
+    results.sort(key=lambda r: r["similarity"], reverse=True)
+    return results
