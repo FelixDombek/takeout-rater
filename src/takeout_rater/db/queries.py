@@ -1140,6 +1140,7 @@ def insert_clustering_run(
     conn: sqlite3.Connection,
     method: str,
     params_json: str | None,
+    n_skipped: int = 0,
 ) -> int:
     """Insert a new clustering_run row and return its ID.
 
@@ -1147,28 +1148,51 @@ def insert_clustering_run(
         conn: Open database connection.
         method: Algorithm identifier (e.g. ``"dhash_hamming"``).
         params_json: JSON-serialised clustering parameters, or ``None``.
+        n_skipped: Number of components/clusters that were skipped (e.g. due
+            to :class:`MemoryError` or a ``max_cluster_size`` filter).
 
     Returns:
         The integer primary key of the new ``clustering_runs`` row.
     """
     row = conn.execute(
-        "INSERT INTO clustering_runs (method, params_json, created_at) VALUES (?, ?, ?)"
+        "INSERT INTO clustering_runs (method, params_json, created_at, n_skipped)"
+        " VALUES (?, ?, ?, ?)"
         " RETURNING id",
-        (method, params_json, int(time.time())),
+        (method, params_json, int(time.time()), n_skipped),
     ).fetchone()
     conn.commit()
     return row[0]
+
+
+def update_clustering_run_n_skipped(
+    conn: sqlite3.Connection,
+    run_id: int,
+    n_skipped: int,
+) -> None:
+    """Update the *n_skipped* field on an existing clustering run.
+
+    Args:
+        conn: Open database connection.
+        run_id: The clustering run to update.
+        n_skipped: New total number of skipped components/clusters.
+    """
+    conn.execute(
+        "UPDATE clustering_runs SET n_skipped = ? WHERE id = ?",
+        (n_skipped, run_id),
+    )
+    conn.commit()
 
 
 def list_clustering_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Return all clustering runs ordered by most-recent first.
 
     Each dict contains ``run_id``, ``method``, ``params_json``, ``created_at``,
-    ``n_clusters``, and ``rep_asset_id`` (representative thumbnail from the
-    first cluster of the run, or ``None``).
+    ``n_clusters``, ``n_skipped``, and ``rep_asset_id`` (representative thumbnail
+    from the first cluster of the run, or ``None``).
     """
     rows = conn.execute(
         "SELECT r.id AS run_id, r.method, r.params_json, r.created_at,"
+        "   r.n_skipped,"
         "   COUNT(DISTINCT c.id) AS n_clusters,"
         "   cm_rep.asset_id AS rep_asset_id"
         " FROM clustering_runs r"
@@ -1186,6 +1210,7 @@ def list_clustering_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             "params_json": row["params_json"],
             "created_at": row["created_at"],
             "n_clusters": row["n_clusters"],
+            "n_skipped": row["n_skipped"],
             "rep_asset_id": row["rep_asset_id"],
         }
         for row in rows

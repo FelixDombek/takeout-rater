@@ -125,8 +125,9 @@ def test_union_find_path_compression() -> None:
 def test_build_clusters_no_phashes_returns_zero() -> None:
     conn = _open_in_memory()
     _add_asset(conn, "p/a.jpg")
-    result = build_clusters(conn)
-    assert result == 0
+    n_clusters, n_skipped = build_clusters(conn)
+    assert n_clusters == 0
+    assert n_skipped == 0
     assert count_clusters(conn) == 0
 
 
@@ -136,8 +137,9 @@ def test_build_clusters_no_duplicates_returns_zero() -> None:
     # Use maximally different hashes
     _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
     _add_asset_with_phash(conn, "p/b.jpg", "ffffffffffffffff")
-    result = build_clusters(conn, threshold=10)
-    assert result == 0
+    n_clusters, n_skipped = build_clusters(conn, threshold=10)
+    assert n_clusters == 0
+    assert n_skipped == 0
 
 
 def test_build_clusters_identical_hashes_cluster() -> None:
@@ -145,8 +147,9 @@ def test_build_clusters_identical_hashes_cluster() -> None:
     conn = _open_in_memory()
     _add_asset_with_phash(conn, "p/a.jpg", "aabbccdd11223344")
     _add_asset_with_phash(conn, "p/b.jpg", "aabbccdd11223344")
-    result = build_clusters(conn, threshold=10)
-    assert result == 1
+    n_clusters, n_skipped = build_clusters(conn, threshold=10)
+    assert n_clusters == 1
+    assert n_skipped == 0
     assert count_clusters(conn) == 1
 
 
@@ -156,8 +159,8 @@ def test_build_clusters_within_threshold_cluster() -> None:
     # Hashes that differ in only 1 bit (last bit)
     _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
     _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
-    result = build_clusters(conn, threshold=5)
-    assert result == 1
+    n_clusters, _ = build_clusters(conn, threshold=5)
+    assert n_clusters == 1
 
 
 def test_build_clusters_just_above_threshold_no_cluster() -> None:
@@ -174,8 +177,8 @@ def test_build_clusters_just_above_threshold_no_cluster() -> None:
 
     _add_asset_with_phash(conn, "p/a.jpg", h1)
     _add_asset_with_phash(conn, "p/b.jpg", h2)
-    result = build_clusters(conn, threshold=10)
-    assert result == 0
+    n_clusters, _ = build_clusters(conn, threshold=10)
+    assert n_clusters == 0
 
 
 def test_build_clusters_three_assets_two_clustered() -> None:
@@ -184,8 +187,8 @@ def test_build_clusters_three_assets_two_clustered() -> None:
     _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
     _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")  # 1 bit diff
     _add_asset_with_phash(conn, "p/c.jpg", "ffffffffffffffff")  # 64 bit diff
-    result = build_clusters(conn, threshold=5)
-    assert result == 1
+    n_clusters, _ = build_clusters(conn, threshold=5)
+    assert n_clusters == 1
     assert count_clusters(conn) == 1
 
 
@@ -284,8 +287,47 @@ def test_build_clusters_min_size_filters_small_groups() -> None:
     _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
     _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
     result = build_clusters(conn, threshold=5, min_cluster_size=3)
-    assert result == 0
+    assert result == (0, 0)
     assert count_clusters(conn) == 0
+
+
+def test_build_clusters_max_size_skips_large_component() -> None:
+    """Components larger than max_cluster_size are skipped and counted."""
+    conn = _open_in_memory()
+    # Create 3 identical hashes → they form one component of size 3
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/c.jpg", "0000000000000000")
+    # max_cluster_size=2 → component of size 3 is skipped
+    n_clusters, n_skipped = build_clusters(conn, threshold=5, max_cluster_size=2)
+    assert n_clusters == 0
+    assert n_skipped == 1
+    assert count_clusters(conn) == 0
+
+
+def test_build_clusters_max_size_allows_smaller_components() -> None:
+    """Components at or below max_cluster_size are processed normally."""
+    conn = _open_in_memory()
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "0000000000000001")
+    n_clusters, n_skipped = build_clusters(conn, threshold=5, max_cluster_size=2)
+    assert n_clusters == 1
+    assert n_skipped == 0
+
+
+def test_build_clusters_n_skipped_stored_in_db() -> None:
+    """n_skipped is persisted in the clustering_runs table."""
+    from takeout_rater.db.queries import list_clustering_runs  # noqa: PLC0415
+
+    conn = _open_in_memory()
+    # 3 identical hashes → component of size 3, skipped by max_cluster_size=2
+    _add_asset_with_phash(conn, "p/a.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/b.jpg", "0000000000000000")
+    _add_asset_with_phash(conn, "p/c.jpg", "0000000000000000")
+    build_clusters(conn, threshold=5, max_cluster_size=2)
+    runs = list_clustering_runs(conn)
+    assert len(runs) == 1
+    assert runs[0]["n_skipped"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +421,7 @@ def test_build_clusters_complete_linkage_prevents_chaining() -> None:
     # Single-linkage: {A,B,C} in one component; complete-linkage post: {A,B} + {C}
     # C is a singleton → filtered by min_cluster_size=2 → only 1 cluster stored
     result = build_clusters(conn, threshold=10)
-    assert result == 1
+    assert result == (1, 0)
     assert count_clusters(conn) == 1
 
 

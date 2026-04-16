@@ -234,8 +234,9 @@ def test_split_cl_dissimilar_splits() -> None:
 def test_build_clip_no_embeddings_returns_zero() -> None:
     conn = _open_in_memory()
     _add_asset(conn, "p/a.jpg")
-    result = build_clip_clusters(conn)
-    assert result == 0
+    n_clusters, n_skipped = build_clip_clusters(conn)
+    assert n_clusters == 0
+    assert n_skipped == 0
     assert count_clusters(conn) == 0
 
 
@@ -245,8 +246,9 @@ def test_build_clip_identical_embeddings_cluster() -> None:
     blob = _make_embedding(0)
     _add_asset_with_embedding(conn, "p/a.jpg", blob)
     _add_asset_with_embedding(conn, "p/b.jpg", blob)
-    result = build_clip_clusters(conn, metric="cosine", threshold=0.90)
-    assert result == 1
+    n_clusters, n_skipped = build_clip_clusters(conn, metric="cosine", threshold=0.90)
+    assert n_clusters == 1
+    assert n_skipped == 0
     assert count_clusters(conn) == 1
 
 
@@ -265,8 +267,8 @@ def test_build_clip_dissimilar_embeddings_no_cluster() -> None:
 
     _add_asset_with_embedding(conn, "p/a.jpg", blob0)
     _add_asset_with_embedding(conn, "p/b.jpg", blob100)
-    result = build_clip_clusters(conn, metric="cosine", threshold=0.90)
-    assert result == 0
+    n_clusters, _ = build_clip_clusters(conn, metric="cosine", threshold=0.90)
+    assert n_clusters == 0
 
 
 def test_build_clip_similar_embeddings_cluster() -> None:
@@ -283,8 +285,8 @@ def test_build_clip_similar_embeddings_cluster() -> None:
 
     _add_asset_with_embedding(conn, "p/a.jpg", blob_base)
     _add_asset_with_embedding(conn, "p/b.jpg", blob_sim)
-    result = build_clip_clusters(conn, metric="cosine", threshold=0.90)
-    assert result == 1
+    n_clusters, _ = build_clip_clusters(conn, metric="cosine", threshold=0.90)
+    assert n_clusters == 1
 
 
 def test_build_clip_euclidean_metric() -> None:
@@ -299,8 +301,8 @@ def test_build_clip_euclidean_metric() -> None:
     conn = _open_in_memory()
     _add_asset_with_embedding(conn, "p/a.jpg", blob_base)
     _add_asset_with_embedding(conn, "p/b.jpg", blob_sim)
-    result = build_clip_clusters(conn, metric="euclidean", threshold=0.45)
-    assert result == 1
+    n_clusters, _ = build_clip_clusters(conn, metric="euclidean", threshold=0.45)
+    assert n_clusters == 1
 
 
 def test_build_clip_combined_metric() -> None:
@@ -315,8 +317,8 @@ def test_build_clip_combined_metric() -> None:
     conn = _open_in_memory()
     _add_asset_with_embedding(conn, "p/a.jpg", blob_base)
     _add_asset_with_embedding(conn, "p/b.jpg", blob_sim)
-    result = build_clip_clusters(conn, metric="combined", threshold=0.46)
-    assert result == 1
+    n_clusters, _ = build_clip_clusters(conn, metric="combined", threshold=0.46)
+    assert n_clusters == 1
 
 
 def test_build_clip_min_size_filters() -> None:
@@ -326,8 +328,53 @@ def test_build_clip_min_size_filters() -> None:
     _add_asset_with_embedding(conn, "p/a.jpg", blob)
     _add_asset_with_embedding(conn, "p/b.jpg", blob)
     result = build_clip_clusters(conn, metric="cosine", threshold=0.90, min_cluster_size=3)
-    assert result == 0
+    assert result == (0, 0)
     assert count_clusters(conn) == 0
+
+
+def test_build_clip_max_size_skips_large_component() -> None:
+    """Components larger than max_cluster_size are skipped and counted."""
+    conn = _open_in_memory()
+    blob = _make_embedding(0)
+    # 3 identical embeddings → they form one component of size 3
+    _add_asset_with_embedding(conn, "p/a.jpg", blob)
+    _add_asset_with_embedding(conn, "p/b.jpg", blob)
+    _add_asset_with_embedding(conn, "p/c.jpg", blob)
+    n_clusters, n_skipped = build_clip_clusters(
+        conn, metric="cosine", threshold=0.90, max_cluster_size=2
+    )
+    assert n_clusters == 0
+    assert n_skipped == 1
+    assert count_clusters(conn) == 0
+
+
+def test_build_clip_max_size_allows_smaller_components() -> None:
+    """Components at or below max_cluster_size are processed normally."""
+    conn = _open_in_memory()
+    blob = _make_embedding(0)
+    _add_asset_with_embedding(conn, "p/a.jpg", blob)
+    _add_asset_with_embedding(conn, "p/b.jpg", blob)
+    n_clusters, n_skipped = build_clip_clusters(
+        conn, metric="cosine", threshold=0.90, max_cluster_size=2
+    )
+    assert n_clusters == 1
+    assert n_skipped == 0
+
+
+def test_build_clip_n_skipped_stored_in_db() -> None:
+    """n_skipped is persisted in the clustering_runs table."""
+    from takeout_rater.db.queries import list_clustering_runs  # noqa: PLC0415
+
+    conn = _open_in_memory()
+    blob = _make_embedding(0)
+    # 3 identical embeddings → component of size 3, skipped by max_cluster_size=2
+    _add_asset_with_embedding(conn, "p/a.jpg", blob)
+    _add_asset_with_embedding(conn, "p/b.jpg", blob)
+    _add_asset_with_embedding(conn, "p/c.jpg", blob)
+    build_clip_clusters(conn, metric="cosine", threshold=0.90, max_cluster_size=2)
+    runs = list_clustering_runs(conn)
+    assert len(runs) == 1
+    assert runs[0]["n_skipped"] == 1
 
 
 def test_build_clip_each_run_independent() -> None:
@@ -506,7 +553,9 @@ def test_build_clip_single_linkage_mode() -> None:
     _add_asset_with_embedding(conn_sl, "p/c.jpg", blob_c)
 
     # Single-linkage: A-B-C may all end up in one cluster
-    n_sl = build_clip_clusters(conn_sl, metric="cosine", threshold=threshold, single_linkage=True)
+    n_sl, _ = build_clip_clusters(
+        conn_sl, metric="cosine", threshold=threshold, single_linkage=True
+    )
 
     conn_cl = _open_in_memory()
     _add_asset_with_embedding(conn_cl, "p/a.jpg", blob_a)
@@ -514,7 +563,9 @@ def test_build_clip_single_linkage_mode() -> None:
     _add_asset_with_embedding(conn_cl, "p/c.jpg", blob_c)
 
     # Complete-linkage: A and C fail the threshold → split
-    n_cl = build_clip_clusters(conn_cl, metric="cosine", threshold=threshold, single_linkage=False)
+    n_cl, _ = build_clip_clusters(
+        conn_cl, metric="cosine", threshold=threshold, single_linkage=False
+    )
 
     # Single-linkage should produce at least as large (or equal) clusters
     assert n_sl >= n_cl

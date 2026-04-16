@@ -560,10 +560,10 @@ class TestFaceSchema:
         assert "face_clusters" in tables
         assert "face_cluster_members" in tables
 
-    def test_schema_version_is_13(self) -> None:
+    def test_schema_version_is_14(self) -> None:
         conn = _make_db()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 13
+        assert version == 14
 
     def test_face_tables_in_baseline(self) -> None:
         """Face detection tables should be created in the baseline schema."""

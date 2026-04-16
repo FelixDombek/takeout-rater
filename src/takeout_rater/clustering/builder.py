@@ -37,6 +37,7 @@ from takeout_rater.db.queries import (
     insert_cluster,
     insert_clustering_run,
     list_all_phashes,
+    update_clustering_run_n_skipped,
 )
 from takeout_rater.scoring.phash import DHASH_ALGO
 
@@ -151,11 +152,12 @@ def build_clusters(
     threshold: int = 20,
     window: int = 200,
     min_cluster_size: int = 2,
+    max_cluster_size: int | None = None,
     single_linkage: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
     on_post_progress: Callable[[int, int], None] | None = None,
     on_save_progress: Callable[[int, int], None] | None = None,
-) -> int:
+) -> tuple[int, int]:
     """Build pHash clusters and persist them to the DB.
 
     Existing clusters for the same *method* + *params* are deleted first so
@@ -170,6 +172,9 @@ def build_clusters(
             Larger values find more near-duplicates at higher CPU cost.
         min_cluster_size: Minimum number of members for a group to be
             stored as a cluster (default 2).  Singletons are ignored.
+        max_cluster_size: Maximum number of members allowed in a cluster.
+            Components larger than this are skipped entirely and counted in
+            the returned *n_skipped* value.  ``None`` means no upper limit.
         single_linkage: When ``True``, skip the complete-linkage post-processing
             step.  Two images can end up in the same cluster even if they are
             far apart, as long as there is a chain of pairwise-similar images
@@ -188,7 +193,9 @@ def build_clusters(
             to the database.
 
     Returns:
-        Number of clusters persisted to the DB.
+        ``(n_persisted, n_skipped)`` — the number of clusters stored in the
+        DB and the number of components that were skipped (due to
+        *max_cluster_size* or a :class:`MemoryError` during processing).
     """
     params: dict[str, int | bool] = {"threshold": threshold, "window": window}
     if single_linkage:
@@ -198,7 +205,7 @@ def build_clusters(
     # Fetch only hashes computed with the current algorithm
     rows = list_all_phashes(conn, algo=DHASH_ALGO)
     if not rows:
-        return 0
+        return 0, 0
 
     # Convert to (asset_id, hash_int) and sort by hash value
     pairs = sorted([(aid, int(h, 16)) for aid, h in rows], key=lambda x: x[1])
@@ -232,30 +239,44 @@ def build_clusters(
 
     # Apply complete-linkage post-processing to each component.
     final_clusters: list[list[int]] = []
+    n_skipped = 0
     for comp_idx, members in enumerate(multi_member_components):
-        if single_linkage:
-            # Use the raw single-linkage components without further splitting.
-            if len(members) >= min_cluster_size:
-                final_clusters.append(members)
-        else:
-            for sub in _split_by_complete_linkage(members, hash_map, threshold):
-                if len(sub) >= min_cluster_size:
-                    final_clusters.append(sub)
+        if max_cluster_size is not None and len(members) > max_cluster_size:
+            n_skipped += 1
+            if on_post_progress:
+                on_post_progress(comp_idx + 1, total_components)
+            continue
+        try:
+            if single_linkage:
+                # Use the raw single-linkage components without further splitting.
+                if len(members) >= min_cluster_size:
+                    final_clusters.append(members)
+            else:
+                for sub in _split_by_complete_linkage(members, hash_map, threshold):
+                    if len(sub) >= min_cluster_size:
+                        final_clusters.append(sub)
+        except MemoryError:
+            n_skipped += 1
         if on_post_progress:
             on_post_progress(comp_idx + 1, total_components)
 
-    if not final_clusters:
-        return 0
+    if not final_clusters and n_skipped == 0:
+        return 0, 0
 
     # Create a new clustering run to group all clusters created in this call.
-    run_id = insert_clustering_run(conn, _METHOD, params_json)
+    run_id = insert_clustering_run(conn, _METHOD, params_json, n_skipped=n_skipped)
 
     # Persist clusters
     total_to_save = len(final_clusters)
     n_persisted = 0
+    n_skipped_save = 0
     for members in sorted(final_clusters, key=lambda m: min(m)):
-        representative = min(members)
-        diameter = _compute_diameter(members, hash_map)
+        try:
+            representative = min(members)
+            diameter = _compute_diameter(members, hash_map)
+        except MemoryError:
+            n_skipped_save += 1
+            continue
         cluster_id = insert_cluster(conn, _METHOD, params_json, diameter=diameter, run_id=run_id)
         rows_to_insert: list[tuple[int, float | None, int]] = [
             (aid, None, 1 if aid == representative else 0) for aid in members
@@ -265,4 +286,7 @@ def build_clusters(
         if on_save_progress:
             on_save_progress(n_persisted, total_to_save)
 
-    return n_persisted
+    if n_skipped_save > 0:
+        update_clustering_run_n_skipped(conn, run_id, n_skipped + n_skipped_save)
+
+    return n_persisted, n_skipped + n_skipped_save
