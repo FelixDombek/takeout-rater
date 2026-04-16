@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from takeout_rater.api.albums import router as albums_router
 from takeout_rater.api.assets import router as assets_router
 from takeout_rater.api.clip_routes import router as clip_router
 from takeout_rater.api.clusters import router as clusters_router
@@ -122,6 +123,7 @@ def create_app(
 
     # Asset browsing routes (require a DB connection)
     app.include_router(assets_router)
+    app.include_router(albums_router)
     app.include_router(clusters_router)
     app.include_router(presets_router)
     app.include_router(jobs_router)

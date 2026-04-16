@@ -1118,3 +1118,102 @@ def test_timeline_seek_page_advances_for_older_timestamp(tmp_path: Path) -> None
     assert resp_older.status_code == 200
     # Older timestamp → more photos are newer → higher page number
     assert resp_older.json()["page"] >= resp_recent.json()["page"]
+
+
+# ── GET /albums ───────────────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def client_with_albums(tmp_path: Path) -> TestClient:
+    from takeout_rater.db.queries import link_asset_to_album, upsert_album  # noqa: PLC0415
+
+    conn = _make_db()
+    id1 = _add_asset(conn, "Vacation 2023/img1.jpg")
+    id2 = _add_asset(conn, "Vacation 2023/img2.jpg")
+    id3 = _add_asset(conn, "Birthday Party/cake.jpg")
+    album1 = upsert_album(conn, "Vacation 2023", "Vacation 2023")
+    album2 = upsert_album(conn, "Birthday Party", "Birthday Party")
+    link_asset_to_album(conn, album1, id1)
+    link_asset_to_album(conn, album1, id2)
+    link_asset_to_album(conn, album2, id3)
+    app = create_app(tmp_path, conn)
+    return TestClient(app, follow_redirects=True)
+
+
+def test_albums_empty_db_returns_200(client: TestClient) -> None:
+    resp = client.get("/albums")
+    assert resp.status_code == 200
+
+
+def test_albums_returns_html(client: TestClient) -> None:
+    resp = client.get("/albums")
+    assert "text/html" in resp.headers["content-type"]
+
+
+def test_albums_empty_shows_no_albums_message(client: TestClient) -> None:
+    resp = client.get("/albums")
+    assert "No albums" in resp.text
+
+
+def test_albums_shows_album_names(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums")
+    assert resp.status_code == 200
+    assert "Vacation 2023" in resp.text
+    assert "Birthday Party" in resp.text
+
+
+def test_albums_shows_photo_counts(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums")
+    assert "2 photos" in resp.text
+    assert "1 photo" in resp.text
+
+
+def test_albums_nav_link_present(client: TestClient) -> None:
+    resp = client.get("/assets")
+    assert "/albums" in resp.text
+
+
+# ── GET /albums/{album_id} ────────────────────────────────────────────────────
+
+
+def test_album_detail_returns_200(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums/1")
+    assert resp.status_code == 200
+
+
+def test_album_detail_not_found_returns_404(client: TestClient) -> None:
+    resp = client.get("/albums/99999")
+    assert resp.status_code == 404
+
+
+def test_album_detail_shows_album_name(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums/1")
+    assert "Vacation 2023" in resp.text
+
+
+def test_album_detail_shows_photos(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums/1")
+    assert "img1.jpg" in resp.text or "img2.jpg" in resp.text
+
+
+def test_album_detail_has_lightbox_markup(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums/1")
+    assert 'id="lightbox"' in resp.text
+    assert 'id="lb-img"' in resp.text
+    assert 'id="lb-details"' in resp.text
+
+
+def test_album_detail_cards_have_lightbox_data_attrs(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums/1")
+    assert "data-lb-id=" in resp.text
+    assert "data-lb-src=" in resp.text
+
+
+def test_album_detail_has_back_link(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums/1")
+    assert "/albums" in resp.text
+
+
+def test_album_detail_page2_returns_200(client_with_albums: TestClient) -> None:
+    resp = client_with_albums.get("/albums/1?page=2")
+    assert resp.status_code == 200

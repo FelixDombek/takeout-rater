@@ -2218,3 +2218,169 @@ def get_face_cluster_label(conn: sqlite3.Connection, cluster_id: int) -> str | N
     """Return the label for a face cluster, or ``None``."""
     row = conn.execute("SELECT label FROM face_clusters WHERE id = ?", (cluster_id,)).fetchone()
     return row["label"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Album helpers
+# ---------------------------------------------------------------------------
+
+
+def upsert_album(conn: sqlite3.Connection, name: str, relpath: str) -> int:
+    """Insert or update an album row and return its ID.
+
+    Uses ``INSERT … ON CONFLICT(relpath) DO UPDATE`` so re-indexing is
+    idempotent — the same directory will always resolve to the same album row.
+
+    Args:
+        conn: Open database connection.
+        name: Human-readable album name (typically the directory name).
+        relpath: Path of the album directory relative to the takeout root.
+
+    Returns:
+        The integer primary key of the album row.
+    """
+    now = int(time.time())
+    row = conn.execute(
+        "INSERT INTO albums (name, relpath, indexed_at)"
+        " VALUES (?, ?, ?)"
+        " ON CONFLICT(relpath) DO UPDATE SET name = excluded.name, indexed_at = excluded.indexed_at"
+        " RETURNING id",
+        (name, relpath, now),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def link_asset_to_album(conn: sqlite3.Connection, album_id: int, asset_id: int) -> None:
+    """Record that *asset_id* belongs to *album_id*.
+
+    Uses ``INSERT OR IGNORE`` so calling this multiple times for the same pair
+    is safe (idempotent).
+
+    Args:
+        conn: Open database connection.
+        album_id: Primary key of the album.
+        asset_id: Primary key of the asset.
+    """
+    conn.execute(
+        "INSERT OR IGNORE INTO album_assets (album_id, asset_id) VALUES (?, ?)",
+        (album_id, asset_id),
+    )
+    conn.commit()
+
+
+def list_albums(conn: sqlite3.Connection) -> list[dict]:
+    """Return all albums, each enriched with photo count and a cover asset ID.
+
+    Albums are ordered by name.  The cover asset is the most-recently-taken
+    photo in the album (by ``taken_at DESC``).
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        List of dicts with keys ``id``, ``name``, ``relpath``, ``indexed_at``,
+        ``photo_count``, and ``cover_asset_id`` (may be ``None``).
+    """
+    rows = conn.execute(
+        """
+        SELECT
+            al.id,
+            al.name,
+            al.relpath,
+            al.indexed_at,
+            COUNT(aa.asset_id) AS photo_count,
+            (
+                SELECT aa2.asset_id
+                FROM album_assets aa2
+                JOIN assets a2 ON a2.id = aa2.asset_id
+                WHERE aa2.album_id = al.id
+                ORDER BY a2.taken_at DESC NULLS LAST
+                LIMIT 1
+            ) AS cover_asset_id
+        FROM albums al
+        LEFT JOIN album_assets aa ON aa.album_id = al.id
+        GROUP BY al.id
+        ORDER BY al.name COLLATE NOCASE
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_album(conn: sqlite3.Connection, album_id: int) -> dict | None:
+    """Return album metadata for *album_id*, or ``None`` if not found.
+
+    Args:
+        conn: Open database connection.
+        album_id: Primary key of the album.
+
+    Returns:
+        Dict with keys ``id``, ``name``, ``relpath``, ``indexed_at``, and
+        ``photo_count``, or ``None``.
+    """
+    row = conn.execute(
+        """
+        SELECT
+            al.id,
+            al.name,
+            al.relpath,
+            al.indexed_at,
+            COUNT(aa.asset_id) AS photo_count
+        FROM albums al
+        LEFT JOIN album_assets aa ON aa.album_id = al.id
+        WHERE al.id = ?
+        GROUP BY al.id
+        """,
+        (album_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_album_assets(
+    conn: sqlite3.Connection,
+    album_id: int,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[AssetRow]:
+    """Return all assets belonging to *album_id*, ordered by taken_at DESC.
+
+    Args:
+        conn: Open database connection.
+        album_id: Primary key of the album.
+        limit: Maximum number of assets to return (``None`` = no limit).
+        offset: Rows to skip for pagination.
+
+    Returns:
+        List of :class:`AssetRow` objects.
+    """
+    params: list[Any] = [album_id]
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+    sql = (
+        "SELECT a.* FROM assets a"
+        " JOIN album_assets aa ON aa.asset_id = a.id"
+        " WHERE aa.album_id = ?"
+        " ORDER BY a.taken_at DESC NULLS LAST, a.filename"
+        f"{limit_clause}"  # noqa: S608
+    )
+    rows = conn.execute(sql, params).fetchall()
+    return [_row_to_asset(row) for row in rows]
+
+
+def count_album_assets(conn: sqlite3.Connection, album_id: int) -> int:
+    """Return the number of assets in *album_id*.
+
+    Args:
+        conn: Open database connection.
+        album_id: Primary key of the album.
+
+    Returns:
+        Integer count.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM album_assets WHERE album_id = ?", (album_id,)
+    ).fetchone()
+    return row[0]

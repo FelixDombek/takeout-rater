@@ -343,6 +343,18 @@ def run_index(
                 row.update(sidecar_updates)
 
                 asset_id = upsert_asset(wconn, row)
+
+                # Link the asset to its album (the top-level directory it lives in).
+                parts = Path(relpath).parts
+                if len(parts) > 1:
+                    from takeout_rater.db.queries import (  # noqa: PLC0415
+                        link_asset_to_album,
+                        upsert_album,
+                    )
+
+                    album_name = parts[0]
+                    album_id = upsert_album(wconn, album_name, album_name)
+                    link_asset_to_album(wconn, album_id, asset_id)
             finally:
                 wconn.close()
         _log.debug("Claimed asset %r → id=%d is_new=%s", relpath, asset_id, is_new)

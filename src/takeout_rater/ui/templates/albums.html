@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Albums – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .toolbar h1 { font-size: 1.25rem; margin: 0; }
+  .album-count-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    background: #e8f0fe;
+    color: #1a5cdb;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  /* ── Album grid ─────────────────────────────────────────────────────────── */
+  .album-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+  .album-card {
+    background: #fff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    transition: box-shadow 0.15s;
+  }
+  .album-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .album-card a { display: block; color: inherit; text-decoration: none; }
+  .album-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #e0e0e0;
+  }
+  .album-thumb-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 2.5rem;
+  }
+  .album-body {
+    padding: 0.45rem 0.55rem;
+    font-size: 0.8rem;
+    color: #333;
+  }
+  .album-name {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 0.15rem;
+  }
+  .album-size {
+    display: inline-block;
+    padding: 0 5px;
+    background: #e8f0fe;
+    color: #1a5cdb;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
+  /* ── Empty state ────────────────────────────────────────────────────────── */
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: #666;
+  }
+  .empty-state h2 { font-size: 1.3rem; margin-bottom: 0.75rem; color: #333; }
+  .empty-state p { max-width: 480px; margin: 0 auto; line-height: 1.6; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1>🗂 Albums</h1>
+  {% if albums %}
+  <span class="album-count-badge">{{ albums | length }} album{{ 's' if albums | length != 1 else '' }}</span>
+  {% endif %}
+</div>
+
+{% if albums %}
+<div class="album-grid">
+  {% for album in albums %}
+  <div class="album-card">
+    <a href="/albums/{{ album.id }}" title="{{ album.name }}">
+      {% if album.cover_asset_id is not none %}
+      <img
+        class="album-thumb"
+        src="/thumbs/{{ album.cover_asset_id }}"
+        alt="{{ album.name }}"
+        loading="lazy"
+        onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+      >
+      <div class="album-thumb-placeholder" style="display:none">🗂</div>
+      {% else %}
+      <div class="album-thumb-placeholder">🗂</div>
+      {% endif %}
+      <div class="album-body">
+        <div class="album-name">{{ album.name }}</div>
+        <span class="album-size">{{ album.photo_count }} photo{{ 's' if album.photo_count != 1 else '' }}</span>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>No albums found</h2>
+  <p>Albums are automatically created when you index a Google Photos Takeout folder.
+     Each subfolder inside the Takeout becomes an album.
+     Run the index job from the <a href="/jobs">Jobs</a> page to get started.</p>
+</div>
+{% endif %}
+
+{% endblock %}
