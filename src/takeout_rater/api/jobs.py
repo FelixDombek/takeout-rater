@@ -148,9 +148,7 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
     jobs = _get_jobs(request.app)
     if job_type is not None:
         if job_type not in _JOB_TYPES:
-            raise HTTPException(
-                status_code=400, detail=f"Unknown job_type: {job_type!r}"
-            )
+            raise HTTPException(status_code=400, detail=f"Unknown job_type: {job_type!r}")
         p = jobs.get(job_type)
         if p is None:
             return JSONResponse(
@@ -264,9 +262,7 @@ def _start_index_job(app: object, library_root: Path) -> None:
                 progress.error = result.error
                 progress.message = f"Error: {result.error}"
             elif result.cancelled:
-                progress.message = (
-                    f"Indexing cancelled — {result.indexed} photo(s) processed."
-                )
+                progress.message = f"Indexing cancelled — {result.indexed} photo(s) processed."
             else:
                 progress.message = f"Indexed {result.indexed} photo(s)."
             progress.running = False
@@ -325,9 +321,7 @@ def cancel_index_job(request: Request) -> JSONResponse:
     jobs = _get_jobs(request.app)
     p = jobs.get("index")
     if p is None or not p.running:
-        raise HTTPException(
-            status_code=404, detail="No index job is currently running."
-        )
+        raise HTTPException(status_code=404, detail="No index job is currently running.")
     p.cancel_event.set()
     return JSONResponse({"status": "cancelling"})
 
@@ -428,9 +422,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                     if variant_id:
                         scorer_variant_pairs = [(scorer_id, variant_id)]
                     elif spec.variants:
-                        scorer_variant_pairs = [
-                            (scorer_id, v.variant_id) for v in spec.variants
-                        ]
+                        scorer_variant_pairs = [(scorer_id, v.variant_id) for v in spec.variants]
                     else:
                         scorer_variant_pairs = [(scorer_id, None)]
                 else:
@@ -460,9 +452,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                 def _cb(scored: int, total: int, _label: str = _scorer_label) -> None:
                     progress.processed = scored
                     progress.total = total
-                    progress.message = (
-                        f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
-                    )
+                    progress.message = f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
 
                 run_scorer_by_id(
                     worker_conn,
@@ -515,9 +505,7 @@ def cancel_score_job(request: Request) -> JSONResponse:
     jobs = _get_jobs(request.app)
     p = jobs.get("score")
     if p is None or not p.running:
-        raise HTTPException(
-            status_code=404, detail="No score job is currently running."
-        )
+        raise HTTPException(status_code=404, detail="No score job is currently running.")
     p.cancel_event.set()
     return JSONResponse({"status": "cancelling"})
 
@@ -605,9 +593,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
                 n_emb = count_clip_embeddings(worker_conn)
                 if n_emb == 0:
-                    progress.message = (
-                        "No CLIP embeddings found. Run the Embed job first."
-                    )
+                    progress.message = "No CLIP embeddings found. Run the Embed job first."
                     progress.running = False
                     progress.done = True
                     return
@@ -619,21 +605,23 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = f"CLIP clustering… {processed}\u202f/\u202f{total} embeddings"
+                        progress.message = (
+                            f"CLIP clustering… {processed}\u202f/\u202f{total} embeddings"
+                        )
 
                 def _clip_post_cb(processed: int, total: int) -> None:
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = f"Post-processing components… {processed}\u202f/\u202f{total}"
+                        progress.message = (
+                            f"Post-processing components… {processed}\u202f/\u202f{total}"
+                        )
 
                 def _clip_save_cb(processed: int, total: int) -> None:
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = (
-                            f"Saving clusters… {processed}\u202f/\u202f{total}"
-                        )
+                        progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
 
                 n_clusters, n_skipped = build_clip_clusters(
                     worker_conn,
@@ -646,10 +634,10 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     on_post_progress=_clip_post_cb,
                     on_save_progress=_clip_save_cb,
                 )
-                skipped_part = (
-                    f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
+                skipped_part = f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
+                progress.message = (
+                    f"CLIP clustering complete — {n_clusters} cluster(s) found{skipped_part}."
                 )
-                progress.message = f"CLIP clustering complete — {n_clusters} cluster(s) found{skipped_part}."
                 progress.running = False
                 progress.done = True
 
@@ -672,15 +660,15 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = f"Post-processing components… {processed}\u202f/\u202f{total}"
+                        progress.message = (
+                            f"Post-processing components… {processed}\u202f/\u202f{total}"
+                        )
 
                 def _save_cb(processed: int, total: int) -> None:
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = (
-                            f"Saving clusters… {processed}\u202f/\u202f{total}"
-                        )
+                        progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
 
                 n_clusters, n_skipped = build_clusters(
                     worker_conn,
@@ -693,10 +681,10 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     on_post_progress=_post_cb,
                     on_save_progress=_save_cb,
                 )
-                skipped_part = (
-                    f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
+                skipped_part = f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
+                progress.message = (
+                    f"Clustering complete — {n_clusters} cluster(s) found{skipped_part}."
                 )
-                progress.message = f"Clustering complete — {n_clusters} cluster(s) found{skipped_part}."
                 progress.running = False
                 progress.done = True
 
@@ -809,10 +797,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                         for asset, _dist, _is_rep in members:
                             scores = get_asset_scores(worker_conn, asset.id)
                             for s in scores:
-                                if (
-                                    s["scorer_id"] == scorer_id
-                                    and s["metric_key"] == metric_key
-                                ):
+                                if s["scorer_id"] == scorer_id and s["metric_key"] == metric_key:
                                     if s["value"] > best_score:
                                         best_score = s["value"]
                                         best_asset_id = asset.id
@@ -846,9 +831,8 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                     progress.processed = copied
                     progress.message = f"Exported {copied} file(s)…"
 
-            progress.message = (
-                f"Export complete — {copied} file(s) copied to {export_dir}"
-                + (f" ({skipped} skipped)" if skipped else "")
+            progress.message = f"Export complete — {copied} file(s) copied to {export_dir}" + (
+                f" ({skipped} skipped)" if skipped else ""
             )
             progress.running = False
             progress.done = True
@@ -901,9 +885,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
         raise HTTPException(status_code=409, detail="A rescan job is already running.")
 
     if body.mode not in ("missing_only", "full"):
-        raise HTTPException(
-            status_code=400, detail="mode must be 'missing_only' or 'full'."
-        )
+        raise HTTPException(status_code=400, detail="mode must be 'missing_only' or 'full'.")
 
     library_root: Path = request.app.state.library_root
     mode = body.mode
@@ -961,10 +943,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 _assets_with_phash: set[int] = set()
             else:
                 _assets_with_phash = {
-                    r[0]
-                    for r in worker_conn.execute(
-                        "SELECT asset_id FROM phash"
-                    ).fetchall()
+                    r[0] for r in worker_conn.execute("SELECT asset_id FROM phash").fetchall()
                 }
 
             for asset_id, _relpath, sidecar_relpath in rows:
@@ -1001,14 +980,10 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                                         else int(sidecar.favorited)
                                     ),
                                     "archived": (
-                                        None
-                                        if sidecar.archived is None
-                                        else int(sidecar.archived)
+                                        None if sidecar.archived is None else int(sidecar.archived)
                                     ),
                                     "trashed": (
-                                        None
-                                        if sidecar.trashed is None
-                                        else int(sidecar.trashed)
+                                        None if sidecar.trashed is None else int(sidecar.trashed)
                                     ),
                                     "origin_type": sidecar.origin_type,
                                     "origin_device_type": sidecar.origin_device_type,
@@ -1048,9 +1023,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                         "indexer_version",
                     }
                 )
-                safe_updates = {
-                    k: v for k, v in updates.items() if k in _ALLOWED_ASSET_COLS
-                }
+                safe_updates = {k: v for k, v in updates.items() if k in _ALLOWED_ASSET_COLS}
 
                 set_clause = ", ".join(f"{k} = ?" for k in safe_updates)
                 worker_conn.execute(
@@ -1271,9 +1244,7 @@ def start_embed_job(request: Request) -> JSONResponse:
 
                 if valid_items:
                     ids_in_batch = [item[0] for item in valid_items]
-                    batch_tensor = torch.stack([item[1] for item in valid_items]).to(
-                        device
-                    )
+                    batch_tensor = torch.stack([item[1] for item in valid_items]).to(device)
 
                     with torch.no_grad():
                         embeddings = clip_model.encode_image(batch_tensor)
@@ -1290,9 +1261,7 @@ def start_embed_job(request: Request) -> JSONResponse:
 
                 embedded += len(batch_ids)
                 progress.processed = embedded
-                progress.message = (
-                    f"Computing embeddings… {embedded}\u202f/\u202f{total}"
-                )
+                progress.message = f"Computing embeddings… {embedded}\u202f/\u202f{total}"
 
             # Invalidate the in-memory search index so the next search rebuilds it.
             if hasattr(request.app.state, "clip_index"):
@@ -1305,9 +1274,7 @@ def start_embed_job(request: Request) -> JSONResponse:
             if progress.cancel_event.is_set():
                 progress.message = "Embedding cancelled."
             else:
-                progress.message = (
-                    f"Embedding complete — {embedded} asset(s) processed."
-                )
+                progress.message = f"Embedding complete — {embedded} asset(s) processed."
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
@@ -1336,9 +1303,7 @@ class _DetectFacesStartBody(BaseModel):
 
 
 @router.post("/api/jobs/detect_faces/start")
-def start_detect_faces_job(
-    body: _DetectFacesStartBody, request: Request
-) -> JSONResponse:
+def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSONResponse:
     """Start a background face detection job.
 
     Uses InsightFace to detect faces and compute 512-d ArcFace identity
@@ -1365,9 +1330,7 @@ def start_detect_faces_job(
 
     existing = jobs.get("detect_faces")
     if existing is not None and existing.running:
-        raise HTTPException(
-            status_code=409, detail="A face detection job is already running."
-        )
+        raise HTTPException(status_code=409, detail="A face detection job is already running.")
 
     library_root: Path = request.app.state.library_root
     model_pack = body.model_pack
@@ -1408,9 +1371,7 @@ def start_detect_faces_job(
             params_json = _json.dumps(params, separators=(",", ":"), sort_keys=True)
             run_id = insert_face_detection_run(worker_conn, model_pack, params_json)
 
-            asset_ids = list_asset_ids_without_face_detection(
-                worker_conn, run_id=run_id
-            )
+            asset_ids = list_asset_ids_without_face_detection(worker_conn, run_id=run_id)
             total = len(asset_ids)
             progress.total = total
             if total == 0:
@@ -1435,9 +1396,7 @@ def start_detect_faces_job(
                     break
 
                 batch_ids = asset_ids[batch_start : batch_start + batch_size]
-                db_rows: list[
-                    tuple[int, int, int, float, float, float, float, float, bytes]
-                ] = []
+                db_rows: list[tuple[int, int, int, float, float, float, float, float, bytes]] = []
 
                 for aid in batch_ids:
                     thumb = thumb_path_for_id(thumbs_dir, aid)
@@ -1480,9 +1439,7 @@ def start_detect_faces_job(
             finish_face_detection_run(worker_conn, run_id)
             progress.current_item = ""
             if progress.cancel_event.is_set():
-                progress.message = (
-                    f"Face detection cancelled — {total_faces} face(s) found."
-                )
+                progress.message = f"Face detection cancelled — {total_faces} face(s) found."
             else:
                 progress.message = (
                     f"Face detection complete — {processed} asset(s) processed,"
@@ -1499,9 +1456,7 @@ def start_detect_faces_job(
         finally:
             worker_conn.close()
 
-    thread = threading.Thread(
-        target=_worker, daemon=True, name="takeout-rater-detect-faces"
-    )
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-detect-faces")
     thread.start()
 
     return JSONResponse({"status": "started"})
@@ -1519,9 +1474,7 @@ class _ClusterFacesStartBody(BaseModel):
 
 
 @router.post("/api/jobs/cluster_faces/start")
-def start_cluster_faces_job(
-    body: _ClusterFacesStartBody, request: Request
-) -> JSONResponse:
+def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> JSONResponse:
     """Start a background face clustering job.
 
     Clusters face embeddings into person groups using DBSCAN with cosine
@@ -1543,9 +1496,7 @@ def start_cluster_faces_job(
 
     existing = jobs.get("cluster_faces")
     if existing is not None and existing.running:
-        raise HTTPException(
-            status_code=409, detail="A face clustering job is already running."
-        )
+        raise HTTPException(status_code=409, detail="A face clustering job is already running.")
 
     library_root: Path = request.app.state.library_root
     eps = body.eps
@@ -1563,9 +1514,7 @@ def start_cluster_faces_job(
         try:
             n_emb = count_face_embeddings(worker_conn)
             if n_emb == 0:
-                progress.message = (
-                    "No face embeddings found. Run the Face Detection job first."
-                )
+                progress.message = "No face embeddings found. Run the Face Detection job first."
                 progress.running = False
                 progress.done = True
                 return
@@ -1584,9 +1533,7 @@ def start_cluster_faces_job(
                 min_samples=min_samples,
                 on_progress=_cb,
             )
-            progress.message = (
-                f"Face clustering complete — {n_clusters} person group(s) found."
-            )
+            progress.message = f"Face clustering complete — {n_clusters} person group(s) found."
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
@@ -1597,9 +1544,7 @@ def start_cluster_faces_job(
         finally:
             worker_conn.close()
 
-    thread = threading.Thread(
-        target=_worker, daemon=True, name="takeout-rater-cluster-faces"
-    )
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-cluster-faces")
     thread.start()
 
     return JSONResponse({"status": "started"})

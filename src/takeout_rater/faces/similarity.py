@@ -1,23 +1,66 @@
-"""CLIP-based similarity search for hidden-face photo suggestions.
+"""CLIP-based and pHash-based similarity search for photos.
 
-Given a face cluster (person group), this module computes a mean CLIP
-embedding from the assets where the person's face *is* detected and
-then searches the full ``clip_embeddings`` table for visually similar
-photos that may contain the same person with a hidden face.
+Two public functions are provided:
+
+``find_similar_photos``
+    Given a face cluster (person group), computes a mean CLIP embedding
+    from the assets where the person's face *is* detected and then
+    searches the full ``clip_embeddings`` table for visually similar
+    photos that may contain the same person with a hidden face.
+
+``find_similar_by_asset``
+    Given a single asset ID, searches all assets for photos that are
+    semantically or perceptually similar using either CLIP embedding
+    cosine/euclidean/angular distance, or pHash Hamming distance.
 
 Usage::
 
-    from takeout_rater.faces.similarity import find_similar_photos
+    from takeout_rater.faces.similarity import find_similar_photos, find_similar_by_asset
 
     suggestions = find_similar_photos(conn, cluster_id=5, threshold=0.80, limit=50)
+    similar = find_similar_by_asset(conn, asset_id=42, method="clip", metric="cosine", threshold=0.85)
+    similar_phash = find_similar_by_asset(conn, asset_id=42, method="phash", threshold=20)
 """
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import struct
 
 _CLIP_DIM = 768
+
+
+def _cos_sim_passes(cos_sim: float, metric: str, threshold: float) -> bool:
+    """Return True if *cos_sim* meets *threshold* under *metric*.
+
+    Mirrors the ``_are_similar`` helper in :mod:`takeout_rater.clustering.clip_builder`.
+
+    - ``cosine``:    cos_sim >= threshold  (higher = more similar)
+    - ``euclidean``: L2 distance √(2 − 2·cos_sim) ≤ threshold  (lower = more similar)
+    - ``combined``:  angular distance arccos(cos_sim) ≤ threshold  (lower = more similar)
+    """
+    if metric == "cosine":
+        return cos_sim >= threshold
+    if metric == "euclidean":
+        return math.sqrt(max(0.0, 2.0 - 2.0 * cos_sim)) <= threshold
+    # combined / angular
+    return math.acos(max(-1.0, min(1.0, cos_sim))) <= threshold
+
+
+def _cos_sim_to_score(cos_sim: float, metric: str) -> float:
+    """Convert cosine similarity to a *score* value stored in results.
+
+    For ``cosine`` the score IS the similarity (range 0–1, higher = better).
+    For ``euclidean`` and ``combined`` we return the raw distance so the
+    caller can interpret it correctly (lower = better).
+    """
+    if metric == "cosine":
+        return round(cos_sim, 4)
+    if metric == "euclidean":
+        return round(math.sqrt(max(0.0, 2.0 - 2.0 * cos_sim)), 4)
+    # combined / angular
+    return round(math.acos(max(-1.0, min(1.0, cos_sim))), 4)
 
 
 def find_similar_photos(
@@ -113,3 +156,191 @@ def find_similar_photos(
 
     results.sort(key=lambda r: r["similarity"], reverse=True)
     return results[:limit]
+
+
+def find_similar_by_asset(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    *,
+    method: str = "clip",
+    metric: str = "cosine",
+    threshold: float | None = None,
+) -> list[dict]:
+    """Find photos similar to a given asset.
+
+    Supports two similarity methods:
+
+    ``method="clip"``
+        Uses cosine similarity in CLIP embedding space.  Three distance
+        *metric* values are supported (mirroring the clustering settings):
+
+        - ``"cosine"``   – *threshold* is a min cosine similarity (0–1, default 0.85).
+        - ``"euclidean"``– *threshold* is a max L2 distance (0–2, default 0.45).
+        - ``"combined"`` – *threshold* is a max angular distance in radians (0–π, default 0.46).
+
+    ``method="phash"``
+        Uses Hamming distance over the stored 256-bit dhash value.  *threshold*
+        is the maximum number of differing bits (0–256, default 20).  *metric*
+        is ignored in this mode.
+
+    Args:
+        conn: Open library database connection.
+        asset_id: The reference asset to search from.
+        method: ``"clip"`` (default) or ``"phash"``.
+        metric: For CLIP mode: ``"cosine"`` (default), ``"euclidean"``, or
+            ``"combined"``.  Ignored for pHash mode.
+        threshold: Similarity / distance threshold.  Defaults depend on method
+            and metric; see above.
+
+    Returns:
+        List of dicts with ``asset_id``, ``score``, ``taken_at``, and
+        ``filename`` keys.  The reference asset is excluded.  Empty list when
+        the reference has no embedding / pHash.
+
+        For CLIP-cosine the ``score`` is the cosine similarity (higher = better).
+        For CLIP-euclidean / CLIP-combined the ``score`` is the distance (lower = better).
+        For pHash the ``score`` is the Hamming distance (lower = better).
+
+        Results are sorted best-first (similarity descending for cosine,
+        distance ascending for all other metrics).
+    """
+    if method == "phash":
+        return _find_similar_phash(conn, asset_id, threshold=threshold)
+    return _find_similar_clip(conn, asset_id, metric=metric, threshold=threshold)
+
+
+# ---------------------------------------------------------------------------
+# Implementation helpers
+# ---------------------------------------------------------------------------
+
+_CLIP_METRIC_DEFAULTS: dict[str, float] = {
+    "cosine": 0.85,
+    "euclidean": 0.45,
+    "combined": 0.46,
+}
+
+
+def _find_similar_clip(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    *,
+    metric: str = "cosine",
+    threshold: float | None = None,
+) -> list[dict]:
+    """CLIP-embedding based similarity search."""
+    import numpy as np  # noqa: PLC0415
+
+    if metric not in _CLIP_METRIC_DEFAULTS:
+        metric = "cosine"
+    if threshold is None:
+        threshold = _CLIP_METRIC_DEFAULTS[metric]
+
+    expected = _CLIP_DIM * 4
+
+    # Load the reference embedding
+    ref_row = conn.execute(
+        "SELECT embedding FROM clip_embeddings WHERE asset_id = ?",
+        (asset_id,),
+    ).fetchone()
+
+    if ref_row is None or len(ref_row[0]) != expected:
+        return []
+
+    ref_vec = np.array(struct.unpack(f"{_CLIP_DIM}f", ref_row[0]), dtype=np.float32)
+    ref_norm = float(np.linalg.norm(ref_vec))
+    if ref_norm < 1e-9:
+        return []
+    ref_vec = ref_vec / ref_norm
+
+    # Load all embeddings joined with asset metadata
+    all_rows = conn.execute(
+        "SELECT ce.asset_id, ce.embedding, a.taken_at, a.filename"
+        " FROM clip_embeddings ce"
+        " JOIN assets a ON a.id = ce.asset_id"
+        " ORDER BY ce.asset_id"
+    ).fetchall()
+
+    results: list[dict] = []
+    for aid, blob, taken_at, filename in all_rows:
+        if aid == asset_id:
+            continue
+        if len(blob) != expected:
+            continue
+        vec = np.array(struct.unpack(f"{_CLIP_DIM}f", blob), dtype=np.float32)
+        norm = float(np.linalg.norm(vec))
+        if norm < 1e-9:
+            continue
+        vec = vec / norm
+        cos_sim = float(np.dot(vec, ref_vec))
+        if _cos_sim_passes(cos_sim, metric, threshold):
+            results.append(
+                {
+                    "asset_id": aid,
+                    "score": _cos_sim_to_score(cos_sim, metric),
+                    "taken_at": taken_at,
+                    "filename": filename,
+                }
+            )
+
+    # Sort best-first: for cosine higher is better; for distance metrics lower is better
+    reverse_sort = metric == "cosine"
+    results.sort(key=lambda r: r["score"], reverse=reverse_sort)
+    return results
+
+
+def _find_similar_phash(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    *,
+    threshold: float | None = None,
+) -> list[dict]:
+    """pHash Hamming-distance based similarity search."""
+    if threshold is None:
+        threshold = 20.0
+    max_bits = int(threshold)
+
+    # Load reference pHash
+    ref_row = conn.execute(
+        "SELECT phash_hex FROM phash WHERE asset_id = ?",
+        (asset_id,),
+    ).fetchone()
+
+    if ref_row is None:
+        return []
+
+    ref_hex = ref_row[0]
+    try:
+        ref_int = int(ref_hex, 16)
+    except (ValueError, TypeError):
+        return []
+
+    # Load all pHashes joined with asset metadata
+    all_rows = conn.execute(
+        "SELECT p.asset_id, p.phash_hex, a.taken_at, a.filename"
+        " FROM phash p"
+        " JOIN assets a ON a.id = p.asset_id"
+        " ORDER BY p.asset_id"
+    ).fetchall()
+
+    results: list[dict] = []
+    for aid, phash_hex, taken_at, filename in all_rows:
+        if aid == asset_id:
+            continue
+        try:
+            h_int = int(phash_hex, 16)
+        except (ValueError, TypeError):
+            continue
+        dist = bin(ref_int ^ h_int).count("1")
+        if dist <= max_bits:
+            results.append(
+                {
+                    "asset_id": aid,
+                    "score": dist,
+                    "taken_at": taken_at,
+                    "filename": filename,
+                }
+            )
+
+    # Sort best-first: lower Hamming distance = more similar
+    results.sort(key=lambda r: r["score"])
+    return results

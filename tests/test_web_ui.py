@@ -1217,3 +1217,191 @@ def test_album_detail_has_back_link(client_with_albums: TestClient) -> None:
 def test_album_detail_page2_returns_200(client_with_albums: TestClient) -> None:
     resp = client_with_albums.get("/albums/1?page=2")
     assert resp.status_code == 200
+
+
+# ── GET /api/assets/{id}/similar ─────────────────────────────────────────────
+
+
+def test_similar_assets_not_found_returns_404(client: TestClient) -> None:
+    resp = client.get("/api/assets/99999/similar")
+    assert resp.status_code == 404
+
+
+def test_similar_assets_no_embedding_returns_empty_with_error(
+    client_with_assets: TestClient,
+) -> None:
+    """Asset exists but has no CLIP embedding → empty results with error key."""
+    resp = client_with_assets.get("/api/assets/1/similar")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["asset_id"] == 1
+    assert data["results"] == []
+    assert data.get("error") == "no_embedding"
+
+
+def test_similar_assets_no_phash_returns_empty_with_error(
+    client_with_assets: TestClient,
+) -> None:
+    """Asset exists but has no pHash → empty results with no_phash error."""
+    resp = client_with_assets.get("/api/assets/1/similar?method=phash")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["asset_id"] == 1
+    assert data["results"] == []
+    assert data.get("error") == "no_phash"
+    assert data["method"] == "phash"
+
+
+def test_similar_assets_with_embedding_returns_results(tmp_path: Path) -> None:
+    """When CLIP embeddings exist, the endpoint returns similar assets."""
+    import struct  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    from takeout_rater.db.queries import bulk_upsert_clip_embeddings  # noqa: PLC0415
+
+    DIM = 768
+    rng = np.random.default_rng(0)
+
+    conn = _make_db()
+
+    # Add two assets
+    id1 = _add_asset(conn, "Photos/a.jpg")
+    id2 = _add_asset(conn, "Photos/b.jpg")
+
+    # Create a reference embedding for asset 1 and a very similar one for asset 2
+    base = rng.standard_normal(DIM).astype(np.float32)
+    base /= np.linalg.norm(base)
+    similar = base + rng.standard_normal(DIM).astype(np.float32) * 0.01
+    similar /= np.linalg.norm(similar)
+
+    blob1 = struct.pack(f"{DIM}f", *base)
+    blob2 = struct.pack(f"{DIM}f", *similar)
+
+    bulk_upsert_clip_embeddings(conn, [(id1, blob1), (id2, blob2)])
+
+    app = create_app(tmp_path, conn)
+    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+
+    client = TC(app)
+
+    resp = client.get(f"/api/assets/{id1}/similar?method=clip&metric=cosine&threshold=0.80")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["asset_id"] == id1
+    assert data["method"] == "clip"
+    assert data["metric"] == "cosine"
+    assert len(data["results"]) >= 1
+    result = data["results"][0]
+    assert result["asset_id"] == id2
+    assert result["score"] >= 0.80
+    assert "taken_at" in result
+    assert result["filename"] == "b.jpg"
+
+
+def test_similar_assets_euclidean_metric(tmp_path: Path) -> None:
+    """CLIP euclidean metric returns distance score (lower = more similar)."""
+    import struct  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    from takeout_rater.db.queries import bulk_upsert_clip_embeddings  # noqa: PLC0415
+
+    DIM = 768
+    rng = np.random.default_rng(1)
+
+    conn = _make_db()
+    id1 = _add_asset(conn, "Photos/a.jpg")
+    id2 = _add_asset(conn, "Photos/b.jpg")
+
+    base = rng.standard_normal(DIM).astype(np.float32)
+    base /= np.linalg.norm(base)
+    close = base + rng.standard_normal(DIM).astype(np.float32) * 0.01
+    close /= np.linalg.norm(close)
+
+    bulk_upsert_clip_embeddings(
+        conn, [(id1, struct.pack(f"{DIM}f", *base)), (id2, struct.pack(f"{DIM}f", *close))]
+    )
+
+    app = create_app(tmp_path, conn)
+    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+
+    client = TC(app)
+
+    resp = client.get(f"/api/assets/{id1}/similar?method=clip&metric=euclidean&threshold=0.45")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["metric"] == "euclidean"
+    assert len(data["results"]) >= 1
+    # score is L2 distance; very similar embeddings should have small distance
+    assert data["results"][0]["score"] < 0.45
+
+
+def test_similar_assets_phash_returns_results(tmp_path: Path) -> None:
+    """When pHash values exist, phash method returns similar assets."""
+    conn = _make_db()
+    id1 = _add_asset(conn, "Photos/a.jpg")
+    id2 = _add_asset(conn, "Photos/b.jpg")
+
+    # Identical hashes → Hamming distance 0
+    upsert_phash(conn, id1, "0" * 64)
+    upsert_phash(conn, id2, "0" * 63 + "1")  # last hex digit 0→1 = 1 bit change
+
+    app = create_app(tmp_path, conn)
+    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+
+    client = TC(app)
+
+    resp = client.get(f"/api/assets/{id1}/similar?method=phash&threshold=10")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["method"] == "phash"
+    assert data["metric"] is None
+    assert len(data["results"]) == 1
+    assert data["results"][0]["asset_id"] == id2
+    assert data["results"][0]["score"] == 1  # 1 bit differs
+
+
+def test_similar_assets_threshold_filters_results(tmp_path: Path) -> None:
+    """Using a very high threshold should exclude moderately similar assets."""
+    import struct  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    from takeout_rater.db.queries import bulk_upsert_clip_embeddings  # noqa: PLC0415
+
+    DIM = 768
+    rng = np.random.default_rng(42)
+
+    conn = _make_db()
+    id1 = _add_asset(conn, "Photos/ref.jpg")
+    id2 = _add_asset(conn, "Photos/similar.jpg")
+
+    base = rng.standard_normal(DIM).astype(np.float32)
+    base /= np.linalg.norm(base)
+    moderate = base + rng.standard_normal(DIM).astype(np.float32) * 0.3
+    moderate /= np.linalg.norm(moderate)
+
+    blob1 = struct.pack(f"{DIM}f", *base)
+    blob2 = struct.pack(f"{DIM}f", *moderate)
+    bulk_upsert_clip_embeddings(conn, [(id1, blob1), (id2, blob2)])
+
+    app = create_app(tmp_path, conn)
+    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+
+    client = TC(app)
+
+    # Very high threshold — should exclude the moderately similar asset
+    resp = client.get(f"/api/assets/{id1}/similar?threshold=0.99")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+
+
+def test_asset_detail_has_more_like_this_panel(client_with_assets: TestClient) -> None:
+    """The asset detail page must include the 'More like this' panel."""
+    resp = client_with_assets.get("/assets/1")
+    assert resp.status_code == 200
+    assert "mlt-panel" in resp.text
+    assert "mlt-method" in resp.text
+    assert "More like this" in resp.text
