@@ -148,7 +148,9 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
     jobs = _get_jobs(request.app)
     if job_type is not None:
         if job_type not in _JOB_TYPES:
-            raise HTTPException(status_code=400, detail=f"Unknown job_type: {job_type!r}")
+            raise HTTPException(
+                status_code=400, detail=f"Unknown job_type: {job_type!r}"
+            )
         p = jobs.get(job_type)
         if p is None:
             return JSONResponse(
@@ -214,7 +216,9 @@ def _start_index_job(app: object, library_root: Path) -> None:
     jobs["index"] = progress
 
     def _worker() -> None:
-        from takeout_rater.db.connection import open_library_db as _open  # noqa: PLC0415
+        from takeout_rater.db.connection import (
+            open_library_db as _open,
+        )  # noqa: PLC0415
         from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
 
         def _cb(p: IndexProgress) -> None:
@@ -260,7 +264,9 @@ def _start_index_job(app: object, library_root: Path) -> None:
                 progress.error = result.error
                 progress.message = f"Error: {result.error}"
             elif result.cancelled:
-                progress.message = f"Indexing cancelled — {result.indexed} photo(s) processed."
+                progress.message = (
+                    f"Indexing cancelled — {result.indexed} photo(s) processed."
+                )
             else:
                 progress.message = f"Indexed {result.indexed} photo(s)."
             progress.running = False
@@ -319,7 +325,9 @@ def cancel_index_job(request: Request) -> JSONResponse:
     jobs = _get_jobs(request.app)
     p = jobs.get("index")
     if p is None or not p.running:
-        raise HTTPException(status_code=404, detail="No index job is currently running.")
+        raise HTTPException(
+            status_code=404, detail="No index job is currently running."
+        )
     p.cancel_event.set()
     return JSONResponse({"status": "cancelling"})
 
@@ -350,7 +358,11 @@ def list_available_scorers() -> JSONResponse:
                 "available": cls.is_available(),
                 "requires_extras": list(spec.requires_extras),
                 "variants": [
-                    {"id": v.variant_id, "name": v.display_name, "description": v.description}
+                    {
+                        "id": v.variant_id,
+                        "name": v.display_name,
+                        "description": v.description,
+                    }
                     for v in spec.variants
                 ],
             }
@@ -416,7 +428,9 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                     if variant_id:
                         scorer_variant_pairs = [(scorer_id, variant_id)]
                     elif spec.variants:
-                        scorer_variant_pairs = [(scorer_id, v.variant_id) for v in spec.variants]
+                        scorer_variant_pairs = [
+                            (scorer_id, v.variant_id) for v in spec.variants
+                        ]
                     else:
                         scorer_variant_pairs = [(scorer_id, None)]
                 else:
@@ -446,7 +460,9 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                 def _cb(scored: int, total: int, _label: str = _scorer_label) -> None:
                     progress.processed = scored
                     progress.total = total
-                    progress.message = f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
+                    progress.message = (
+                        f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
+                    )
 
                 run_scorer_by_id(
                     worker_conn,
@@ -499,7 +515,9 @@ def cancel_score_job(request: Request) -> JSONResponse:
     jobs = _get_jobs(request.app)
     p = jobs.get("score")
     if p is None or not p.running:
-        raise HTTPException(status_code=404, detail="No score job is currently running.")
+        raise HTTPException(
+            status_code=404, detail="No score job is currently running."
+        )
     p.cancel_event.set()
     return JSONResponse({"status": "cancelling"})
 
@@ -542,7 +560,11 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
     if body.method not in ("phash", "clip"):
         raise HTTPException(status_code=400, detail="method must be 'phash' or 'clip'.")
-    if body.method == "clip" and body.clip_metric not in ("cosine", "euclidean", "combined"):
+    if body.method == "clip" and body.clip_metric not in (
+        "cosine",
+        "euclidean",
+        "combined",
+    ):
         raise HTTPException(
             status_code=400,
             detail="clip_metric must be 'cosine', 'euclidean', or 'combined'.",
@@ -583,7 +605,9 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
                 n_emb = count_clip_embeddings(worker_conn)
                 if n_emb == 0:
-                    progress.message = "No CLIP embeddings found. Run the Embed job first."
+                    progress.message = (
+                        "No CLIP embeddings found. Run the Embed job first."
+                    )
                     progress.running = False
                     progress.done = True
                     return
@@ -595,23 +619,21 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = (
-                            f"CLIP clustering… {processed}\u202f/\u202f{total} embeddings"
-                        )
+                        progress.message = f"CLIP clustering… {processed}\u202f/\u202f{total} embeddings"
 
                 def _clip_post_cb(processed: int, total: int) -> None:
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = (
-                            f"Post-processing components… {processed}\u202f/\u202f{total}"
-                        )
+                        progress.message = f"Post-processing components… {processed}\u202f/\u202f{total}"
 
                 def _clip_save_cb(processed: int, total: int) -> None:
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
+                        progress.message = (
+                            f"Saving clusters… {processed}\u202f/\u202f{total}"
+                        )
 
                 n_clusters, n_skipped = build_clip_clusters(
                     worker_conn,
@@ -624,16 +646,18 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     on_post_progress=_clip_post_cb,
                     on_save_progress=_clip_save_cb,
                 )
-                skipped_part = f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
-                progress.message = (
-                    f"CLIP clustering complete — {n_clusters} cluster(s) found{skipped_part}."
+                skipped_part = (
+                    f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
                 )
+                progress.message = f"CLIP clustering complete — {n_clusters} cluster(s) found{skipped_part}."
                 progress.running = False
                 progress.done = True
 
             else:
                 # ── pHash clustering ─────────────────────────────────────────
-                from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
+                from takeout_rater.clustering.builder import (
+                    build_clusters,
+                )  # noqa: PLC0415
 
                 # Build clusters (phash is computed during indexing now)
                 progress.message = "Building clusters…"
@@ -648,15 +672,15 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = (
-                            f"Post-processing components… {processed}\u202f/\u202f{total}"
-                        )
+                        progress.message = f"Post-processing components… {processed}\u202f/\u202f{total}"
 
                 def _save_cb(processed: int, total: int) -> None:
                     progress.processed = processed
                     progress.total = total
                     if total > 0:
-                        progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
+                        progress.message = (
+                            f"Saving clusters… {processed}\u202f/\u202f{total}"
+                        )
 
                 n_clusters, n_skipped = build_clusters(
                     worker_conn,
@@ -669,10 +693,10 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     on_post_progress=_post_cb,
                     on_save_progress=_save_cb,
                 )
-                skipped_part = f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
-                progress.message = (
-                    f"Clustering complete — {n_clusters} cluster(s) found{skipped_part}."
+                skipped_part = (
+                    f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
                 )
+                progress.message = f"Clustering complete — {n_clusters} cluster(s) found{skipped_part}."
                 progress.running = False
                 progress.done = True
 
@@ -720,7 +744,8 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
 
     if scorer_id and not metric_key:
         raise HTTPException(
-            status_code=400, detail="metric_key is required when scorer_id is specified."
+            status_code=400,
+            detail="metric_key is required when scorer_id is specified.",
         )
 
     progress = JobProgress(job_type="export", running=True, message="Starting…")
@@ -740,7 +765,9 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
             get_cluster_members,
             list_clusters_with_representatives,
         )
-        from takeout_rater.indexing.scanner import find_google_photos_root  # noqa: PLC0415
+        from takeout_rater.indexing.scanner import (
+            find_google_photos_root,
+        )  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
         try:
@@ -782,7 +809,10 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                         for asset, _dist, _is_rep in members:
                             scores = get_asset_scores(worker_conn, asset.id)
                             for s in scores:
-                                if s["scorer_id"] == scorer_id and s["metric_key"] == metric_key:
+                                if (
+                                    s["scorer_id"] == scorer_id
+                                    and s["metric_key"] == metric_key
+                                ):
                                     if s["value"] > best_score:
                                         best_score = s["value"]
                                         best_asset_id = asset.id
@@ -816,8 +846,9 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                     progress.processed = copied
                     progress.message = f"Exported {copied} file(s)…"
 
-            progress.message = f"Export complete — {copied} file(s) copied to {export_dir}" + (
-                f" ({skipped} skipped)" if skipped else ""
+            progress.message = (
+                f"Export complete — {copied} file(s) copied to {export_dir}"
+                + (f" ({skipped} skipped)" if skipped else "")
             )
             progress.running = False
             progress.done = True
@@ -870,7 +901,9 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
         raise HTTPException(status_code=409, detail="A rescan job is already running.")
 
     if body.mode not in ("missing_only", "full"):
-        raise HTTPException(status_code=400, detail="mode must be 'missing_only' or 'full'.")
+        raise HTTPException(
+            status_code=400, detail="mode must be 'missing_only' or 'full'."
+        )
 
     library_root: Path = request.app.state.library_root
     mode = body.mode
@@ -914,6 +947,25 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             skipped = 0
             thumbs_ok = 0
             thumbs_skip = 0
+            phash_ok = 0
+
+            from takeout_rater.indexing.thumbnailer import (
+                thumb_path_for_id,
+            )  # noqa: PLC0415
+
+            # Pre-fetch the set of asset IDs that already have a phash so the
+            # per-asset check is a cheap in-memory set lookup instead of a DB
+            # round-trip.  In full mode all assets are re-hashed, so the set
+            # is intentionally empty.
+            if mode == "full":
+                _assets_with_phash: set[int] = set()
+            else:
+                _assets_with_phash = {
+                    r[0]
+                    for r in worker_conn.execute(
+                        "SELECT asset_id FROM phash"
+                    ).fetchall()
+                }
 
             for asset_id, _relpath, sidecar_relpath in rows:
                 progress.current_item = sidecar_relpath or _relpath
@@ -949,10 +1001,14 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                                         else int(sidecar.favorited)
                                     ),
                                     "archived": (
-                                        None if sidecar.archived is None else int(sidecar.archived)
+                                        None
+                                        if sidecar.archived is None
+                                        else int(sidecar.archived)
                                     ),
                                     "trashed": (
-                                        None if sidecar.trashed is None else int(sidecar.trashed)
+                                        None
+                                        if sidecar.trashed is None
+                                        else int(sidecar.trashed)
                                     ),
                                     "origin_type": sidecar.origin_type,
                                     "origin_device_type": sidecar.origin_device_type,
@@ -992,7 +1048,9 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                         "indexer_version",
                     }
                 )
-                safe_updates = {k: v for k, v in updates.items() if k in _ALLOWED_ASSET_COLS}
+                safe_updates = {
+                    k: v for k, v in updates.items() if k in _ALLOWED_ASSET_COLS
+                }
 
                 set_clause = ", ".join(f"{k} = ?" for k in safe_updates)
                 worker_conn.execute(
@@ -1000,17 +1058,40 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                     [*safe_updates.values(), asset_id],
                 )
 
+                # Link the asset to every album it belongs to, mirroring the
+                # indexing pipeline.  An asset may appear in multiple album
+                # directories (e.g. "Photos from 2023" and "Summer Vacation");
+                # in that case the canonical path is in assets.relpath and each
+                # additional location is stored as an alias in asset_paths.
+                # Both must be examined so every album link is created.
+                from takeout_rater.db.queries import (  # noqa: PLC0415
+                    link_asset_to_album,
+                    upsert_album,
+                )
+
+                all_relpaths = [_relpath]
+                alias_rows = worker_conn.execute(
+                    "SELECT relpath FROM asset_paths WHERE asset_id = ?", (asset_id,)
+                ).fetchall()
+                all_relpaths.extend(row[0] for row in alias_rows)
+
+                for rp in all_relpaths:
+                    parts = Path(rp).parts
+                    if len(parts) > 1:
+                        album_name = parts[0]
+                        album_id = upsert_album(worker_conn, album_name, album_name)
+                        link_asset_to_album(worker_conn, album_id, asset_id)
+
                 # Regenerate thumbnail when the original file is accessible.
                 # missing_only: generate only if the thumb file is absent.
                 # full: always regenerate (fixes stale/corrupt thumbnails).
+                thumb = thumb_path_for_id(thumbs_dir, asset_id)
                 if photos_root is not None:
                     from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
                         generate_thumbnail,
-                        thumb_path_for_id,
                     )
 
                     image_path = photos_root / _relpath
-                    thumb = thumb_path_for_id(thumbs_dir, asset_id)
                     if image_path.exists() and (mode == "full" or not thumb.exists()):
                         try:
                             generate_thumbnail(image_path, thumb)
@@ -1019,6 +1100,35 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                             thumbs_skip += 1
                     else:
                         thumbs_skip += 1
+
+                # Compute phash for assets missing a stored perceptual hash, or
+                # always in full mode.  Mirrors the indexing pipeline and
+                # corrects assets whose phash was never saved due to an aborted
+                # indexing run.
+                if thumb.exists():
+                    needs_phash = asset_id not in _assets_with_phash
+                    if needs_phash:
+                        try:
+                            import io  # noqa: PLC0415
+
+                            from PIL import Image  # noqa: PLC0415
+
+                            from takeout_rater.db.queries import (
+                                upsert_phash,
+                            )  # noqa: PLC0415
+                            from takeout_rater.scoring.phash import (  # noqa: PLC0415
+                                DHASH_ALGO,
+                                compute_dhash_from_image,
+                            )
+
+                            thumb_img = Image.open(io.BytesIO(thumb.read_bytes()))
+                            dhash_hex = compute_dhash_from_image(thumb_img)
+                            upsert_phash(worker_conn, asset_id, dhash_hex, DHASH_ALGO)
+                            phash_ok += 1
+                        except (ImportError, OSError):
+                            pass
+                        except Exception:  # noqa: BLE001
+                            pass
 
                 processed += 1
                 progress.processed = processed
@@ -1034,6 +1144,8 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 extras.append(f"{skipped} sidecar error(s)")
             if thumbs_ok:
                 extras.append(f"{thumbs_ok} thumbnail(s) regenerated")
+            if phash_ok:
+                extras.append(f"{phash_ok} pHash(es) computed")
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
                 f" ({', '.join(extras)})" if extras else ""
             )
@@ -1091,7 +1203,9 @@ def start_embed_job(request: Request) -> JSONResponse:
             bulk_upsert_clip_embeddings,  # noqa: PLC0415
             list_asset_ids_without_embedding,  # noqa: PLC0415
         )
-        from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+        from takeout_rater.indexing.thumbnailer import (
+            thumb_path_for_id,
+        )  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
         thumbs_dir = library_state_dir(library_root) / "thumbs"
@@ -1157,7 +1271,9 @@ def start_embed_job(request: Request) -> JSONResponse:
 
                 if valid_items:
                     ids_in_batch = [item[0] for item in valid_items]
-                    batch_tensor = torch.stack([item[1] for item in valid_items]).to(device)
+                    batch_tensor = torch.stack([item[1] for item in valid_items]).to(
+                        device
+                    )
 
                     with torch.no_grad():
                         embeddings = clip_model.encode_image(batch_tensor)
@@ -1174,7 +1290,9 @@ def start_embed_job(request: Request) -> JSONResponse:
 
                 embedded += len(batch_ids)
                 progress.processed = embedded
-                progress.message = f"Computing embeddings… {embedded}\u202f/\u202f{total}"
+                progress.message = (
+                    f"Computing embeddings… {embedded}\u202f/\u202f{total}"
+                )
 
             # Invalidate the in-memory search index so the next search rebuilds it.
             if hasattr(request.app.state, "clip_index"):
@@ -1187,7 +1305,9 @@ def start_embed_job(request: Request) -> JSONResponse:
             if progress.cancel_event.is_set():
                 progress.message = "Embedding cancelled."
             else:
-                progress.message = f"Embedding complete — {embedded} asset(s) processed."
+                progress.message = (
+                    f"Embedding complete — {embedded} asset(s) processed."
+                )
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
@@ -1216,7 +1336,9 @@ class _DetectFacesStartBody(BaseModel):
 
 
 @router.post("/api/jobs/detect_faces/start")
-def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSONResponse:
+def start_detect_faces_job(
+    body: _DetectFacesStartBody, request: Request
+) -> JSONResponse:
     """Start a background face detection job.
 
     Uses InsightFace to detect faces and compute 512-d ArcFace identity
@@ -1243,7 +1365,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
 
     existing = jobs.get("detect_faces")
     if existing is not None and existing.running:
-        raise HTTPException(status_code=409, detail="A face detection job is already running.")
+        raise HTTPException(
+            status_code=409, detail="A face detection job is already running."
+        )
 
     library_root: Path = request.app.state.library_root
     model_pack = body.model_pack
@@ -1269,7 +1393,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             EMBEDDING_DIM,  # noqa: PLC0415
             FaceDetector,  # noqa: PLC0415
         )
-        from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+        from takeout_rater.indexing.thumbnailer import (
+            thumb_path_for_id,
+        )  # noqa: PLC0415
 
         worker_conn = open_library_db(library_root)
         thumbs_dir = library_state_dir(library_root) / "thumbs"
@@ -1282,7 +1408,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             params_json = _json.dumps(params, separators=(",", ":"), sort_keys=True)
             run_id = insert_face_detection_run(worker_conn, model_pack, params_json)
 
-            asset_ids = list_asset_ids_without_face_detection(worker_conn, run_id=run_id)
+            asset_ids = list_asset_ids_without_face_detection(
+                worker_conn, run_id=run_id
+            )
             total = len(asset_ids)
             progress.total = total
             if total == 0:
@@ -1307,7 +1435,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
                     break
 
                 batch_ids = asset_ids[batch_start : batch_start + batch_size]
-                db_rows: list[tuple[int, int, int, float, float, float, float, float, bytes]] = []
+                db_rows: list[
+                    tuple[int, int, int, float, float, float, float, float, bytes]
+                ] = []
 
                 for aid in batch_ids:
                     thumb = thumb_path_for_id(thumbs_dir, aid)
@@ -1350,7 +1480,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             finish_face_detection_run(worker_conn, run_id)
             progress.current_item = ""
             if progress.cancel_event.is_set():
-                progress.message = f"Face detection cancelled — {total_faces} face(s) found."
+                progress.message = (
+                    f"Face detection cancelled — {total_faces} face(s) found."
+                )
             else:
                 progress.message = (
                     f"Face detection complete — {processed} asset(s) processed,"
@@ -1367,7 +1499,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
         finally:
             worker_conn.close()
 
-    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-detect-faces")
+    thread = threading.Thread(
+        target=_worker, daemon=True, name="takeout-rater-detect-faces"
+    )
     thread.start()
 
     return JSONResponse({"status": "started"})
@@ -1385,7 +1519,9 @@ class _ClusterFacesStartBody(BaseModel):
 
 
 @router.post("/api/jobs/cluster_faces/start")
-def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> JSONResponse:
+def start_cluster_faces_job(
+    body: _ClusterFacesStartBody, request: Request
+) -> JSONResponse:
     """Start a background face clustering job.
 
     Clusters face embeddings into person groups using DBSCAN with cosine
@@ -1407,7 +1543,9 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
 
     existing = jobs.get("cluster_faces")
     if existing is not None and existing.running:
-        raise HTTPException(status_code=409, detail="A face clustering job is already running.")
+        raise HTTPException(
+            status_code=409, detail="A face clustering job is already running."
+        )
 
     library_root: Path = request.app.state.library_root
     eps = body.eps
@@ -1425,7 +1563,9 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
         try:
             n_emb = count_face_embeddings(worker_conn)
             if n_emb == 0:
-                progress.message = "No face embeddings found. Run the Face Detection job first."
+                progress.message = (
+                    "No face embeddings found. Run the Face Detection job first."
+                )
                 progress.running = False
                 progress.done = True
                 return
@@ -1444,7 +1584,9 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
                 min_samples=min_samples,
                 on_progress=_cb,
             )
-            progress.message = f"Face clustering complete — {n_clusters} person group(s) found."
+            progress.message = (
+                f"Face clustering complete — {n_clusters} person group(s) found."
+            )
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
@@ -1455,7 +1597,9 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
         finally:
             worker_conn.close()
 
-    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-cluster-faces")
+    thread = threading.Thread(
+        target=_worker, daemon=True, name="takeout-rater-cluster-faces"
+    )
     thread.start()
 
     return JSONResponse({"status": "started"})

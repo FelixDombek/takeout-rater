@@ -33,8 +33,11 @@ JSON:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import math
 import struct
+from collections.abc import Callable
 from typing import Any
 
 _DIM = 768  # ViT-L/14 embedding dimension
@@ -44,6 +47,14 @@ _UMAP_METRIC = "cosine"
 _MIN_UMAP_N = 15  # UMAP needs at least this many samples to be meaningful
 _MIN_CLUSTERS = 2  # always create at least 2 clusters when n ≥ 2
 _MAX_CLUSTERS = 12  # cap to keep the legend readable
+
+# Progress fractions at the end of each stage (cumulative).
+_FRAC_LOADED = 0.03
+_FRAC_SCALED = 0.07
+_FRAC_PCA = 0.15
+_FRAC_UMAP = 0.90  # epoch-level sub-progress fills _FRAC_PCA → _FRAC_UMAP
+_FRAC_KMEANS = 0.96
+_FRAC_DONE = 1.00
 
 
 def _n_clusters(n: int) -> int:
@@ -58,8 +69,79 @@ def _n_clusters(n: int) -> int:
     return min(_MAX_CLUSTERS, max(_MIN_CLUSTERS, int(math.sqrt(n / 2))), n)
 
 
+@contextlib.contextmanager
+def _track_umap_epochs(
+    on_progress: Callable[[float, str], None],
+    base: float,
+    scale: float,
+):
+    """Temporarily replace ``umap.umap_.trange`` with an epoch-tracking version.
+
+    While the context is active, every tqdm ``update()`` call inside the UMAP
+    epoch loop forwards a fractional progress value to *on_progress* so the
+    caller can report per-epoch progress to the UI.  Output is redirected to a
+    ``StringIO`` sink so nothing is printed to the server console.
+
+    The patch is applied to the ``umap.umap_`` module directly.  If the module
+    is not importable the context silently yields without patching.
+
+    .. note::
+        This relies on ``umap-learn`` using ``tqdm.trange`` for its epoch loop
+        (true as of umap-learn 0.5.x).  If a future release changes its
+        progress-reporting mechanism the patch will silently have no effect —
+        the computation still completes correctly, but epoch-level progress
+        will not be reported.
+    """
+    try:
+        import importlib  # noqa: PLC0415
+
+        umap_impl = importlib.import_module("umap.umap_")
+    except ImportError:
+        yield
+        return
+
+    orig_tqdm = getattr(umap_impl, "tqdm", None)
+    orig_trange = getattr(umap_impl, "trange", None)
+    if orig_tqdm is None:
+        yield
+        return
+
+    _sink = io.StringIO()
+
+    class _TrackingTqdm(orig_tqdm):  # type: ignore[valid-type]
+        def update(self, n: int = 1) -> bool | None:
+            result = super().update(n)
+            if self.total and self.total > 0:
+                on_progress(
+                    base + scale * min(1.0, self.n / self.total),
+                    f"UMAP projection – epoch {self.n}/{self.total}",
+                )
+            return result
+
+    def _tracking_trange(*args: Any, **kwargs: Any) -> _TrackingTqdm:
+        kwargs.pop("disable", None)  # force-enable so update() fires
+        kwargs["file"] = _sink  # discard bar text output
+        return _TrackingTqdm(range(*args), **kwargs)
+
+    def _tracking_tqdm(iterable: Any = None, *args: Any, **kwargs: Any) -> _TrackingTqdm:
+        kwargs.pop("disable", None)
+        kwargs["file"] = _sink
+        return _TrackingTqdm(iterable, *args, **kwargs)
+
+    umap_impl.tqdm = _tracking_tqdm
+    if orig_trange is not None:
+        umap_impl.trange = _tracking_trange
+    try:
+        yield
+    finally:
+        umap_impl.tqdm = orig_tqdm
+        if orig_trange is not None:
+            umap_impl.trange = orig_trange
+
+
 def build_embedding_map(
     rows: list[tuple[int, bytes, str]],
+    progress_callback: Callable[[float, str], None] | None = None,
 ) -> dict[str, Any]:
     """Compute a 3-D embedding map from raw CLIP embedding rows.
 
@@ -67,6 +149,9 @@ def build_embedding_map(
         rows: List of ``(asset_id, embedding_blob, relpath)`` tuples as
             returned by
             :func:`takeout_rater.db.queries.load_clip_embeddings_with_relpaths`.
+        progress_callback: Optional callable ``(fraction, message)`` invoked
+            at each pipeline stage.  *fraction* is in ``[0.0, 1.0]``.
+            During the UMAP step it is called once per epoch.
 
     Returns:
         A dict with keys ``"points"``, ``"clusters"``, and ``"total"`` as
@@ -75,6 +160,10 @@ def build_embedding_map(
     """
     if not rows:
         return {"points": [], "clusters": [], "total": 0}
+
+    def _cb(frac: float, msg: str) -> None:
+        if progress_callback is not None:
+            progress_callback(frac, msg)
 
     import numpy as np
     from sklearn.cluster import KMeans
@@ -89,13 +178,16 @@ def build_embedding_map(
     mat = np.empty((n, _DIM), dtype=np.float32)
     for i, (_, blob, _) in enumerate(rows):
         mat[i] = np.array(struct.unpack(f"{_DIM}f", blob), dtype=np.float32)
+    _cb(_FRAC_LOADED, "Scaling features…")
 
     # 1. StandardScaler
     mat_scaled = StandardScaler().fit_transform(mat)
+    _cb(_FRAC_SCALED, f"PCA reduction (768 → {min(_PCA_COMPONENTS, n - 1)})…")
 
     # 2. PCA
     pca_components = min(_PCA_COMPONENTS, n - 1, mat_scaled.shape[1])
     mat_pca = PCA(n_components=pca_components, random_state=42).fit_transform(mat_scaled)
+    _cb(_FRAC_PCA, "UMAP projection…")
 
     # 3. UMAP (skip when too few samples — fall back to PCA[:3])
     if n >= _MIN_UMAP_N:
@@ -109,7 +201,8 @@ def build_embedding_map(
             min_dist=0.1,
             random_state=42,
         )
-        coords = reducer.fit_transform(mat_pca).astype(float)
+        with _track_umap_epochs(_cb, base=_FRAC_PCA, scale=_FRAC_UMAP - _FRAC_PCA):
+            coords = reducer.fit_transform(mat_pca).astype(float)
     else:
         # Pad PCA output to 3 columns if needed
         if mat_pca.shape[1] < _UMAP_COMPONENTS:
@@ -117,12 +210,14 @@ def build_embedding_map(
             coords = np.hstack([mat_pca, pad]).astype(float)
         else:
             coords = mat_pca[:, :_UMAP_COMPONENTS].astype(float)
+    _cb(_FRAC_UMAP, "Clustering…")
 
     # 4. KMeans clustering on 3-D coords
     k = _n_clusters(n)
     km = KMeans(n_clusters=k, random_state=42, n_init="auto")
     cluster_labels = km.fit_predict(coords)
     centroids = km.cluster_centers_  # shape (k, 3)
+    _cb(_FRAC_KMEANS, "Finalizing…")
 
     # 5. Representative per cluster: asset closest to its centroid
     representative: dict[int, int] = {}  # cluster_id → index into rows

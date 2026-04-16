@@ -163,6 +163,25 @@
     color: #888;
     word-break: break-all;
   }
+  /* CLIP embedding grid */
+  .embed-canvas-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+    margin-top: 0.75rem;
+  }
+  .embed-canvas-label {
+    font-size: 0.75rem;
+    color: #666;
+    font-style: italic;
+  }
+  #embed-canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+  }
   /* CLIP tag cloud */
   .clip-tag-cloud {
     display: flex;
@@ -453,6 +472,11 @@
               title="Difference hash (dhash16) – 16×16 grid, each cell shown as a 4×4 px block.
 Bright pixel = left neighbour was brighter; dark pixel = right neighbour was brighter."></canvas>
       <div class="phash-hex" title="64-character hex encoding of the 256-bit dhash">{{ phash_hex }}</div>
+    </div>
+    <div class="embed-canvas-wrap" id="embed-canvas-wrap" style="display:none">
+      <div class="embed-canvas-label">CLIP embedding (32 × 24, grayscale)</div>
+      <canvas id="embed-canvas" width="128" height="96"
+              title="CLIP image embedding – 768 values arranged as a 32×24 grid of 4×4 px cells, min-max normalised to grayscale."></canvas>
     </div>
   </div>
   {% endif %}
@@ -751,6 +775,29 @@ function loadClipWords(panel) {
     ctx.fillStyle = bit ? "#ffffff" : "#1a1a2e";
     ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
   }
+})();
+
+(function () {
+  const assetId = {{ asset.id }};
+  const COLS = 32, ROWS = 24, BLOCK = 4;
+  const wrap = document.getElementById("embed-canvas-wrap");
+  const canvas = document.getElementById("embed-canvas");
+  if (!wrap || !canvas) return;
+  fetch("/api/assets/" + assetId + "/clip-embedding")
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.values || data.values.length !== COLS * ROWS) return;
+      wrap.style.display = "";
+      const ctx = canvas.getContext("2d");
+      for (let i = 0; i < data.values.length; i++) {
+        const gray = Math.round(data.values[i] * 255);
+        const col = i % COLS;
+        const row = Math.floor(i / COLS);
+        ctx.fillStyle = "rgb(" + gray + "," + gray + "," + gray + ")";
+        ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
+      }
+    })
+    .catch(function () {});
 })();
 {% endif %}
 

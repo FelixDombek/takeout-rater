@@ -164,14 +164,20 @@
     gap: 0.5rem;
     pointer-events: none;
   }
-  #viz-overlay .viz-spinner {
-    width: 28px; height: 28px;
-    border: 3px solid #444;
-    border-top-color: #7c9cff;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  #viz-overlay .viz-progress-bar-wrap {
+    width: 260px;
+    height: 8px;
+    background: #2a2a3a;
+    border-radius: 4px;
+    overflow: hidden;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  #viz-overlay .viz-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #4a72ff, #7c9cff);
+    border-radius: 4px;
+    transition: width 0.4s ease;
+  }
 
   /* Cluster legend */
   #viz-legend {
@@ -494,6 +500,46 @@
     if (el) el.style.display = 'none';
   }
 
+  var _elapsedTimer = null;
+  function startElapsedTimer() {
+    stopElapsedTimer();
+    var startTime = Date.now();
+    _elapsedTimer = setInterval(function () {
+      var elapsed = Math.round((Date.now() - startTime) / 1000);
+      var el = document.getElementById('viz-elapsed');
+      if (el) el.textContent = elapsed + 's';
+    }, 1000);
+  }
+  function stopElapsedTimer() {
+    if (_elapsedTimer !== null) {
+      clearInterval(_elapsedTimer);
+      _elapsedTimer = null;
+    }
+  }
+
+  var _progressPollTimer = null;
+  function startProgressPoll() {
+    stopProgressPoll();
+    _progressPollTimer = setInterval(function () {
+      fetch('/api/clip/embedding-map/progress')
+        .then(function (r) { return r.json(); })
+        .then(function (p) {
+          var fill = document.getElementById('viz-progress-fill');
+          var msg  = document.getElementById('viz-progress-msg');
+          if (fill) fill.style.width = (p.fraction * 100).toFixed(1) + '%';
+          if (msg && p.message) msg.textContent = p.message;
+          if (!p.active) stopProgressPoll();
+        })
+        .catch(function () {});
+    }, 1000);
+  }
+  function stopProgressPoll() {
+    if (_progressPollTimer !== null) {
+      clearInterval(_progressPollTimer);
+      _progressPollTimer = null;
+    }
+  }
+
   // ── Main entry point ─────────────────────────────────────────────────────
   window.loadViz = function(forceRefresh) {
     var btn = document.getElementById('btn-build-viz');
@@ -501,7 +547,13 @@
     if (btn) btn.disabled = true;
     if (info) info.textContent = '';
 
-    showOverlay('<div class="viz-spinner"></div><span>Computing\u2026 this may take a minute.</span>');
+    showOverlay(
+      '<div class="viz-progress-bar-wrap"><div class="viz-progress-bar" id="viz-progress-fill"></div></div>' +
+      '<span id="viz-progress-msg">Loading embeddings from database\u2026</span>' +
+      '<span style="font-size:0.75rem;color:#777">Elapsed: <span id="viz-elapsed">0s</span></span>'
+    );
+    startElapsedTimer();
+    startProgressPoll();
 
     if (!initialized) {
       initThree();
@@ -515,6 +567,8 @@
         return r.json();
       })
       .then(function(data) {
+        stopElapsedTimer();
+        stopProgressPoll();
         vizData = data;
         if (!data.total || data.total === 0) {
           showOverlay('<span>No CLIP embeddings found. Run the <strong>Embed</strong> job first.</span>');
@@ -530,6 +584,8 @@
         if (btn) btn.disabled = false;
       })
       .catch(function(err) {
+        stopElapsedTimer();
+        stopProgressPoll();
         showOverlay('<span style="color:#f87171">Error: ' + escHtml(String(err)) + '</span>');
         if (btn) btn.disabled = false;
         if (info) info.textContent = '';
