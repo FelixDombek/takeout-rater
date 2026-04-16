@@ -159,7 +159,10 @@ def run_index(
         generate_thumbnail_from_image,
         thumb_path_for_id,
     )
-    from takeout_rater.scoring.phash import DHASH_ALGO, compute_dhash_from_image  # noqa: PLC0415
+    from takeout_rater.scoring.phash import (
+        DHASH_ALGO,
+        compute_dhash_from_image,
+    )  # noqa: PLC0415
 
     progress = IndexProgress(running=True)
 
@@ -211,7 +214,9 @@ def run_index(
         except Exception:  # noqa: BLE001
             pass
 
-    _warmup_thread = threading.Thread(target=_warmup_clip, daemon=True, name="clip-warmup")
+    _warmup_thread = threading.Thread(
+        target=_warmup_clip, daemon=True, name="clip-warmup"
+    )
     _warmup_thread.start()
 
     def _on_dir_scanned(dirs_done: int, total_dirs: int, dir_name: str) -> None:
@@ -251,6 +256,20 @@ def run_index(
     now = int(time.time())
     num_workers = os.cpu_count() or 1
 
+    # Pre-fetch the sets of asset IDs that already have phash / CLIP records.
+    # Workers share these read-only sets to check whether phash/CLIP need to be
+    # computed without opening an extra DB connection per asset.  Assets that
+    # are genuinely new (is_new=True) always have phash/CLIP computed; the sets
+    # are only consulted for existing assets (is_new=False) so that a
+    # previously-aborted indexing run — where the asset row was committed but
+    # phash/CLIP were not saved — is corrected on the next run.
+    _ids_with_phash: frozenset[int] = frozenset(
+        r[0] for r in conn.execute("SELECT asset_id FROM phash").fetchall()
+    )
+    _ids_with_clip: frozenset[int] = frozenset(
+        r[0] for r in conn.execute("SELECT asset_id FROM clip_embeddings").fetchall()
+    )
+
     # _claim_lock guards the critical section: lookup_sha256 + upsert_asset.
     # This prevents two workers from both claiming the same hash as "new".
     _claim_lock = threading.Lock()
@@ -273,7 +292,9 @@ def run_index(
         except Exception:
             _log.exception("Unexpected error processing asset %r – skipping", relpath)
 
-    def _process_one_inner(asset_file: object, relpath: str) -> None:  # noqa: PLR0912,PLR0915
+    def _process_one_inner(
+        asset_file: object, relpath: str
+    ) -> None:  # noqa: PLR0912,PLR0915
         # Step 1: Read file bytes + compute sha256 (parallel, no locking)
         sha256: str | None = None
         file_bytes: bytes | None = None
@@ -386,7 +407,9 @@ def run_index(
                 except ImportError:
                     pass  # Pillow not available
                 except Exception:
-                    _log.debug("Thumbnail generation failed for %r", relpath, exc_info=True)
+                    _log.debug(
+                        "Thumbnail generation failed for %r", relpath, exc_info=True
+                    )
                     with contextlib.suppress(OSError):
                         thumb.unlink(missing_ok=True)
             else:
@@ -394,9 +417,16 @@ def run_index(
                 with contextlib.suppress(ImportError, OSError):
                     generate_thumbnail(asset_file.abspath, thumb)  # type: ignore[union-attr]
 
-        # For new assets: compute phash + CLIP using the thumbnail image.
-        # If the thumbnail was already on disk (rare re-index case), load it.
-        if is_new:
+        # Compute phash + CLIP for assets that are missing these records.
+        # For new assets both are always absent.  For assets already in the DB
+        # (is_new=False), use the pre-fetched sets built before the thread pool
+        # started so that a previously-aborted indexing run — where the asset
+        # row was committed but phash/CLIP were not saved — is corrected on the
+        # next run rather than silently skipped.
+        needs_phash = is_new or asset_id not in _ids_with_phash
+        needs_clip = is_new or asset_id not in _ids_with_clip
+
+        if needs_phash or needs_clip:
             if thumb_img is None and thumb.exists():
                 try:
                     import io  # noqa: PLC0415
@@ -407,26 +437,33 @@ def run_index(
                 except ImportError:
                     pass
                 except Exception:
-                    _log.debug("Could not load thumbnail for phash/CLIP %r", relpath, exc_info=True)
+                    _log.debug(
+                        "Could not load thumbnail for phash/CLIP %r",
+                        relpath,
+                        exc_info=True,
+                    )
 
             if thumb_img is not None:
-                # Compute phash from thumbnail.
-                try:
-                    from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
-
-                    dhash_hex = compute_dhash_from_image(thumb_img)
-                    wconn2 = open_db(db_path)
+                if needs_phash:
+                    # Compute phash from thumbnail.
                     try:
-                        upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
-                    finally:
-                        wconn2.close()
-                except ImportError:
-                    pass
-                except Exception:
-                    _log.warning("phash failed for %r", relpath, exc_info=True)
+                        from takeout_rater.db.queries import (
+                            upsert_phash,
+                        )  # noqa: PLC0415
 
-                # Compute CLIP embedding from thumbnail.
-                if _clip_warmup_ok.is_set():
+                        dhash_hex = compute_dhash_from_image(thumb_img)
+                        wconn2 = open_db(db_path)
+                        try:
+                            upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
+                        finally:
+                            wconn2.close()
+                    except ImportError:
+                        pass
+                    except Exception:
+                        _log.warning("phash failed for %r", relpath, exc_info=True)
+
+                if needs_clip and _clip_warmup_ok.is_set():
+                    # Compute CLIP embedding from thumbnail.
                     _log.debug("CLIP inference start for %r", relpath)
                     try:
                         import struct  # noqa: PLC0415
@@ -459,7 +496,9 @@ def run_index(
                     except ImportError:
                         pass  # torch / open_clip not available
                     except Exception:
-                        _log.warning("CLIP embedding failed for %r", relpath, exc_info=True)
+                        _log.warning(
+                            "CLIP embedding failed for %r", relpath, exc_info=True
+                        )
 
     # Submit all workers in parallel; _process_one swallows every exception
     # internally (logging it) so future.result() never re-raises and the
