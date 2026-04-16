@@ -673,3 +673,185 @@ def test_start_index_job_creates_job_progress(client_with_db: TestClient) -> Non
     jobs = client_with_db.app.state.jobs  # type: ignore[union-attr]
     assert "index" in jobs
     assert jobs["index"].job_type == "index"
+
+
+# ---------------------------------------------------------------------------
+# Rescan: album linking
+# ---------------------------------------------------------------------------
+
+
+def _run_rescan_worker(tmp_path: Path) -> None:
+    """Helper: start and synchronously wait for the rescan worker to finish."""
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
+
+    import threading  # noqa: E402
+    import time  # noqa: E402
+
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.ui.app import create_app  # noqa: E402
+
+    app = create_app(tmp_path, open_library_db(tmp_path))
+    client = TestClient(app, follow_redirects=False)
+
+    done_event = threading.Event()
+    original_thread = threading.Thread
+
+    class _SyncThread(original_thread):
+        def start(self) -> None:
+            super().start()
+            done_event.set()
+
+    orig = jobs_mod.threading.Thread
+    jobs_mod.threading.Thread = _SyncThread  # type: ignore[assignment]
+    try:
+        resp = client.post("/api/jobs/rescan/start", json={"mode": "missing_only"})
+        assert resp.status_code == 200
+        done_event.wait(timeout=5)
+        time.sleep(0.5)
+    finally:
+        jobs_mod.threading.Thread = orig  # type: ignore[assignment]
+
+
+def test_rescan_worker_links_asset_to_album(tmp_path: Path) -> None:
+    """Rescan must link each asset to the album derived from its relpath."""
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.db.queries import upsert_asset  # noqa: E402
+
+    conn = open_library_db(tmp_path)
+    upsert_asset(
+        conn,
+        {
+            "relpath": "Summer Vacation 2023/IMG_001.jpg",
+            "filename": "IMG_001.jpg",
+            "ext": ".jpg",
+            "mime": "image/jpeg",
+            "size_bytes": 1,
+        },
+    )
+    conn.commit()
+    conn.close()
+
+    _run_rescan_worker(tmp_path)
+
+    check_conn = open_library_db(tmp_path)
+    albums = check_conn.execute("SELECT name FROM albums").fetchall()
+    album_names = [r[0] for r in albums]
+    assert "Summer Vacation 2023" in album_names
+
+    links = check_conn.execute(
+        "SELECT COUNT(*) FROM album_assets aa"
+        " JOIN albums al ON al.id = aa.album_id"
+        " WHERE al.name = 'Summer Vacation 2023'"
+    ).fetchone()[0]
+    check_conn.close()
+    assert links == 1
+
+
+def test_rescan_worker_links_asset_to_all_albums_via_aliases(tmp_path: Path) -> None:
+    """Rescan must link a canonical asset to every album it appears in, including
+    albums derived from alias paths stored in asset_paths."""
+    import time  # noqa: E402
+
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.db.queries import upsert_asset  # noqa: E402
+
+    conn = open_library_db(tmp_path)
+    # Insert canonical asset in "Photos from 2023"
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": "Photos from 2023/IMG_001.jpg",
+            "filename": "IMG_001.jpg",
+            "ext": ".jpg",
+            "mime": "image/jpeg",
+            "size_bytes": 1,
+        },
+    )
+    # Record alias in "Summer Vacation 2023" (same binary, different directory)
+    conn.execute(
+        "INSERT INTO asset_paths (asset_id, relpath, indexed_at) VALUES (?, ?, ?)",
+        (asset_id, "Summer Vacation 2023/IMG_001.jpg", int(time.time())),
+    )
+    conn.commit()
+    conn.close()
+
+    _run_rescan_worker(tmp_path)
+
+    check_conn = open_library_db(tmp_path)
+    album_names = {
+        r[0]
+        for r in check_conn.execute(
+            "SELECT al.name FROM albums al"
+            " JOIN album_assets aa ON aa.album_id = al.id"
+            " WHERE aa.asset_id = ?",
+            (asset_id,),
+        ).fetchall()
+    }
+    check_conn.close()
+    assert "Photos from 2023" in album_names
+    assert "Summer Vacation 2023" in album_names
+
+
+# ---------------------------------------------------------------------------
+# Indexing resume: phash filled in for partially-indexed assets
+# ---------------------------------------------------------------------------
+
+
+def test_run_index_fills_missing_phash_for_existing_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When an asset row already exists but has no phash (aborted indexing),
+    a subsequent run_index must compute and store the phash."""
+    import sqlite3  # noqa: E402
+
+    from PIL import Image  # noqa: E402
+
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.db.queries import upsert_asset  # noqa: E402
+    from takeout_rater.db.schema import migrate  # noqa: E402
+    from takeout_rater.indexing.run import run_index  # noqa: E402
+
+    # Disable CLIP model loading so the warmup thread exits immediately.
+    monkeypatch.setattr(
+        "takeout_rater.scorers.adapters.clip_backbone.is_available",
+        lambda: False,
+    )
+
+    # Build a minimal Takeout tree with one image
+    photos_dir = tmp_path / "Takeout" / "Photos from 2023"
+    photos_dir.mkdir(parents=True)
+    img_path = photos_dir / "test.jpg"
+    Image.new("RGB", (64, 64), color=(200, 100, 50)).save(img_path, "JPEG")
+
+    # Pre-populate the DB with the asset row (simulating a completed upsert
+    # from a previous indexing run that was aborted before phash was saved).
+    lib_db = tmp_path / "takeout-rater" / "library.db"
+    lib_db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(lib_db))
+    conn.row_factory = sqlite3.Row
+    migrate(conn)
+    upsert_asset(
+        conn,
+        {
+            "relpath": "Photos from 2023/test.jpg",
+            "filename": "test.jpg",
+            "ext": ".jpg",
+            "mime": "image/jpeg",
+            "size_bytes": img_path.stat().st_size,
+        },
+    )
+    conn.commit()
+    conn.close()
+
+    # Confirm no phash exists yet
+    conn2 = open_library_db(tmp_path)
+    assert conn2.execute("SELECT COUNT(*) FROM phash").fetchone()[0] == 0
+
+    # Re-index — the existing asset row must NOT prevent phash from being computed
+    run_index(tmp_path, conn2)
+    conn2.close()
+
+    check_conn = open_library_db(tmp_path)
+    phash_count = check_conn.execute("SELECT COUNT(*) FROM phash").fetchone()[0]
+    check_conn.close()
+    assert phash_count == 1, "phash must be computed even for assets already in the DB"

@@ -394,9 +394,32 @@ def run_index(
                 with contextlib.suppress(ImportError, OSError):
                     generate_thumbnail(asset_file.abspath, thumb)  # type: ignore[union-attr]
 
-        # For new assets: compute phash + CLIP using the thumbnail image.
-        # If the thumbnail was already on disk (rare re-index case), load it.
-        if is_new:
+        # Compute phash + CLIP for assets that are missing these records.
+        # For new assets both are always absent.  For assets already in the DB
+        # (is_new=False), check actual presence so that a previously-aborted
+        # indexing run — where the asset row was committed but phash/CLIP were
+        # not saved — is corrected on the next run rather than silently skipped.
+        needs_phash = is_new
+        needs_clip = is_new
+        if not is_new:
+            wconn_check = open_db(db_path)
+            try:
+                needs_phash = (
+                    wconn_check.execute(
+                        "SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)
+                    ).fetchone()
+                    is None
+                )
+                needs_clip = (
+                    wconn_check.execute(
+                        "SELECT 1 FROM clip_embeddings WHERE asset_id = ?", (asset_id,)
+                    ).fetchone()
+                    is None
+                )
+            finally:
+                wconn_check.close()
+
+        if needs_phash or needs_clip:
             if thumb_img is None and thumb.exists():
                 try:
                     import io  # noqa: PLC0415
@@ -410,23 +433,24 @@ def run_index(
                     _log.debug("Could not load thumbnail for phash/CLIP %r", relpath, exc_info=True)
 
             if thumb_img is not None:
-                # Compute phash from thumbnail.
-                try:
-                    from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
-
-                    dhash_hex = compute_dhash_from_image(thumb_img)
-                    wconn2 = open_db(db_path)
+                if needs_phash:
+                    # Compute phash from thumbnail.
                     try:
-                        upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
-                    finally:
-                        wconn2.close()
-                except ImportError:
-                    pass
-                except Exception:
-                    _log.warning("phash failed for %r", relpath, exc_info=True)
+                        from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
 
-                # Compute CLIP embedding from thumbnail.
-                if _clip_warmup_ok.is_set():
+                        dhash_hex = compute_dhash_from_image(thumb_img)
+                        wconn2 = open_db(db_path)
+                        try:
+                            upsert_phash(wconn2, asset_id, dhash_hex, DHASH_ALGO)
+                        finally:
+                            wconn2.close()
+                    except ImportError:
+                        pass
+                    except Exception:
+                        _log.warning("phash failed for %r", relpath, exc_info=True)
+
+                if needs_clip and _clip_warmup_ok.is_set():
+                    # Compute CLIP embedding from thumbnail.
                     _log.debug("CLIP inference start for %r", relpath)
                     try:
                         import struct  # noqa: PLC0415

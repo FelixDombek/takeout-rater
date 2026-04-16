@@ -914,6 +914,9 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             skipped = 0
             thumbs_ok = 0
             thumbs_skip = 0
+            phash_ok = 0
+
+            from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
 
             for asset_id, _relpath, sidecar_relpath in rows:
                 progress.current_item = sidecar_relpath or _relpath
@@ -1000,17 +1003,40 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                     [*safe_updates.values(), asset_id],
                 )
 
+                # Link the asset to every album it belongs to, mirroring the
+                # indexing pipeline.  An asset may appear in multiple album
+                # directories (e.g. "Photos from 2023" and "Summer Vacation");
+                # in that case the canonical path is in assets.relpath and each
+                # additional location is stored as an alias in asset_paths.
+                # Both must be examined so every album link is created.
+                from takeout_rater.db.queries import (  # noqa: PLC0415
+                    link_asset_to_album,
+                    upsert_album,
+                )
+
+                all_relpaths = [_relpath]
+                alias_rows = worker_conn.execute(
+                    "SELECT relpath FROM asset_paths WHERE asset_id = ?", (asset_id,)
+                ).fetchall()
+                all_relpaths.extend(row[0] for row in alias_rows)
+
+                for rp in all_relpaths:
+                    parts = Path(rp).parts
+                    if len(parts) > 1:
+                        album_name = parts[0]
+                        album_id = upsert_album(worker_conn, album_name, album_name)
+                        link_asset_to_album(worker_conn, album_id, asset_id)
+
                 # Regenerate thumbnail when the original file is accessible.
                 # missing_only: generate only if the thumb file is absent.
                 # full: always regenerate (fixes stale/corrupt thumbnails).
+                thumb = thumb_path_for_id(thumbs_dir, asset_id)
                 if photos_root is not None:
                     from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
                         generate_thumbnail,
-                        thumb_path_for_id,
                     )
 
                     image_path = photos_root / _relpath
-                    thumb = thumb_path_for_id(thumbs_dir, asset_id)
                     if image_path.exists() and (mode == "full" or not thumb.exists()):
                         try:
                             generate_thumbnail(image_path, thumb)
@@ -1019,6 +1045,35 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                             thumbs_skip += 1
                     else:
                         thumbs_skip += 1
+
+                # Compute phash for assets missing a stored perceptual hash, or
+                # always in full mode.  Mirrors the indexing pipeline and
+                # corrects assets whose phash was never saved due to an aborted
+                # indexing run.
+                if thumb.exists():
+                    needs_phash = mode == "full" or worker_conn.execute(
+                        "SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)
+                    ).fetchone() is None
+                    if needs_phash:
+                        try:
+                            import io  # noqa: PLC0415
+
+                            from PIL import Image  # noqa: PLC0415
+
+                            from takeout_rater.db.queries import upsert_phash  # noqa: PLC0415
+                            from takeout_rater.scoring.phash import (  # noqa: PLC0415
+                                DHASH_ALGO,
+                                compute_dhash_from_image,
+                            )
+
+                            thumb_img = Image.open(io.BytesIO(thumb.read_bytes()))
+                            dhash_hex = compute_dhash_from_image(thumb_img)
+                            upsert_phash(worker_conn, asset_id, dhash_hex, DHASH_ALGO)
+                            phash_ok += 1
+                        except (ImportError, OSError):
+                            pass
+                        except Exception:  # noqa: BLE001
+                            pass
 
                 processed += 1
                 progress.processed = processed
@@ -1034,6 +1089,8 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 extras.append(f"{skipped} sidecar error(s)")
             if thumbs_ok:
                 extras.append(f"{thumbs_ok} thumbnail(s) regenerated")
+            if phash_ok:
+                extras.append(f"{phash_ok} pHash(es) computed")
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
                 f" ({', '.join(extras)})" if extras else ""
             )
