@@ -114,6 +114,27 @@ def remove_tag(
     return JSONResponse({"tags": tags})
 
 
+@router.get("/api/clip/embedding-map/progress")
+def get_embedding_map_progress(request: Request) -> JSONResponse:
+    """Return the progress of the current or most-recent embedding-map build.
+
+    Intended to be polled by the frontend while ``/api/clip/embedding-map`` is
+    computing.  Safe to call at any time; returns a no-op response when no
+    build has been triggered yet.
+
+    Returns JSON::
+
+        {"fraction": 0.0..1.0, "message": "...", "active": true|false}
+
+    ``active`` is ``true`` only while a build is in progress; it becomes
+    ``false`` once the build finishes (or if no build has ever started).
+    """
+    progress = getattr(request.app.state, "clip_map_progress", None)
+    if progress is None:
+        return JSONResponse({"fraction": 0.0, "message": "", "active": False})
+    return JSONResponse(progress)
+
+
 @router.get("/api/clip/embedding-map")
 def get_embedding_map(
     request: Request,
@@ -161,12 +182,29 @@ def get_embedding_map(
     if cached is not None and not refresh:
         return JSONResponse(cached)
 
+    # Initialise progress state visible to the polling endpoint.
+    app_state = request.app.state
+    app_state.clip_map_progress = {
+        "fraction": 0.0,
+        "message": "Loading embeddings from database…",
+        "active": True,
+    }
+
+    def _progress(fraction: float, message: str) -> None:
+        app_state.clip_map_progress = {
+            "fraction": fraction,
+            "message": message,
+            "active": True,
+        }
+
     rows = load_clip_embeddings_with_relpaths(conn)
     if not rows:
+        app_state.clip_map_progress = {"fraction": 1.0, "message": "", "active": False}
         return JSONResponse({"points": [], "clusters": [], "total": 0})
 
     from takeout_rater.clustering.embedding_map import build_embedding_map  # noqa: PLC0415
 
-    result = build_embedding_map(rows)
-    request.app.state.clip_embedding_map = result
+    result = build_embedding_map(rows, progress_callback=_progress)
+    app_state.clip_map_progress = {"fraction": 1.0, "message": "Done", "active": False}
+    app_state.clip_embedding_map = result
     return JSONResponse(result)

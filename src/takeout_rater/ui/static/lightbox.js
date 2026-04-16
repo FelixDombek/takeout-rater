@@ -123,6 +123,29 @@ window.SharedLightbox = (function () {
             }
           });
 
+          // Fetch and draw CLIP embedding grid (32×24 grayscale).
+          lbDetails.querySelectorAll('.lb-embed-wrap[data-asset-id]').forEach(function (wrap) {
+            var assetId = wrap.dataset.assetId;
+            var canvas = wrap.querySelector('.lb-embed-canvas');
+            if (!assetId || !canvas) return;
+            fetch('/api/assets/' + assetId + '/clip-embedding')
+              .then(function (r) { return r.json(); })
+              .then(function (data) {
+                var COLS = 32, ROWS = 24, BLOCK = 4;
+                if (!data.values || data.values.length !== COLS * ROWS) return;
+                wrap.style.display = '';
+                var ctx = canvas.getContext('2d');
+                for (var i = 0; i < data.values.length; i++) {
+                  var gray = Math.round(data.values[i] * 255);
+                  var col = i % COLS;
+                  var row = Math.floor(i / COLS);
+                  ctx.fillStyle = 'rgb(' + gray + ',' + gray + ',' + gray + ')';
+                  ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
+                }
+              })
+              .catch(function () {});
+          });
+
           // Wire tab buttons (injected via innerHTML don't have event listeners).
           lbDetails.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
             btn.addEventListener('click', function () {

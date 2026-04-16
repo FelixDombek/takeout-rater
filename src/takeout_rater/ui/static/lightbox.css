@@ -236,6 +236,26 @@
   word-break: break-all;
 }
 
+/* CLIP embedding grid in lightbox */
+.lb-embed-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  margin-top: 0.6rem;
+}
+.lb-embed-label {
+  font-size: 0.65rem;
+  color: #666;
+  font-style: italic;
+}
+.lb-embed-canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 3px;
+}
+
 /* CLIP tag cloud in lightbox */
 .lb-clip-cloud {
   display: flex;
