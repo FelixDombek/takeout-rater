@@ -196,15 +196,24 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-def _start_index_job(app: object, library_root: Path) -> None:
-    """Launch a background thread that indexes *library_root*.
+def _start_index_job(app: object, photos_root: Path, db_root: Path | None = None) -> None:
+    """Launch a background thread that indexes *photos_root*.
 
     Progress is stored in ``app.state.jobs["index"]`` as a :class:`JobProgress`
     entry so that it is visible in the unified job queue.  The ``message``
     field surfaces directory-level progress (phase, dirs_scanned, current_dir).
 
+    Args:
+        app: The FastAPI application instance.
+        photos_root: The directory that directly contains the album sub-folders.
+        db_root: Optional separate directory for the ``takeout-rater/`` state
+            (DB, thumbnails).  Defaults to *photos_root* when not given.
+
     If an indexing run is already active, this call is a no-op.
     """
+    if db_root is None:
+        db_root = photos_root
+
     jobs = _get_jobs(app)
     existing = jobs.get("index")
     if existing is not None and existing.running:
@@ -212,6 +221,8 @@ def _start_index_job(app: object, library_root: Path) -> None:
 
     progress = JobProgress(job_type="index", running=True, message="Starting\u2026")
     jobs["index"] = progress
+
+    _db_root = db_root  # capture for closure
 
     def _worker() -> None:
         from takeout_rater.db.connection import open_library_db as _open  # noqa: PLC0415
@@ -245,11 +256,12 @@ def _start_index_job(app: object, library_root: Path) -> None:
                 msg = "Scanning for photos\u2026"
             progress.message = msg
 
-        worker_conn = _open(library_root)
+        worker_conn = _open(_db_root)
         try:
             result = run_index(
-                library_root,
+                photos_root,
                 worker_conn,
+                db_root=_db_root,
                 on_progress=_cb,
                 cancel_check=progress.cancel_event.is_set,
             )
@@ -300,7 +312,11 @@ def start_index_job(request: Request) -> JSONResponse:
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="An index job is already running.")
 
-    _start_index_job(request.app, request.app.state.library_root)
+    _start_index_job(
+        request.app,
+        request.app.state.library_root,
+        db_root=getattr(request.app.state, "db_root", None),
+    )
     return JSONResponse({"status": "started"})
 
 

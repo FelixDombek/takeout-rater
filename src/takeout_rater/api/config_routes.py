@@ -1,11 +1,11 @@
-"""FastAPI router for runtime configuration and Takeout path setup.
+"""FastAPI router for runtime configuration and photos path setup.
 
 Endpoints
 ---------
 GET  /health                   – liveness probe (always returns 200)
 GET  /api/config               – current config state
 GET  /api/library/status       – library path, DB schema version, and scan version
-POST /api/config/takeout-path  – save a Takeout library path and start indexing
+POST /api/config/takeout-path  – save a photos root path (and optional db_root) and start indexing
 POST /api/config/open-picker   – open a native OS directory picker (Tkinter)
 """
 
@@ -17,7 +17,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from takeout_rater.config import get_takeout_path, set_takeout_path
+from takeout_rater.config import get_db_root, get_photos_root, set_db_root, set_photos_root
 from takeout_rater.db.connection import open_library_db
 from takeout_rater.db.queries import CURRENT_INDEXER_VERSION
 
@@ -43,11 +43,14 @@ def health() -> JSONResponse:
 @router.get("/api/config")
 def get_config() -> JSONResponse:
     """Return the current configuration state."""
-    path = get_takeout_path()
+    photos_root = get_photos_root()
+    db_root = get_db_root()
     return JSONResponse(
         {
-            "takeout_path": str(path) if path else None,
-            "configured": path is not None,
+            "takeout_path": str(photos_root) if photos_root else None,
+            "photos_root": str(photos_root) if photos_root else None,
+            "db_root": str(db_root) if db_root else None,
+            "configured": photos_root is not None,
         }
     )
 
@@ -95,14 +98,21 @@ def library_status(request: Request) -> JSONResponse:
 
 class _TakeoutPathBody(BaseModel):
     path: str
+    db_root: str | None = None
 
 
 @router.post("/api/config/takeout-path")
 def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
-    """Validate and persist a Takeout library root path, then start indexing.
+    """Validate and persist a photos root path, then start indexing.
 
-    The path must point to an existing directory.  Returns 400 if the path
-    does not exist, 200 with the saved path on success.
+    The ``path`` field must point to an existing directory that directly
+    contains the album sub-folders (no ``Takeout/`` wrapper assumed).
+    The optional ``db_root`` field overrides where the ``takeout-rater/``
+    state directory (DB, thumbnails) is created; it defaults to ``path``
+    when not supplied.
+
+    Returns 400 if either path does not exist, 200 with the saved path on
+    success.
 
     Also initialises (or re-initialises) the library database and updates the
     running app's shared state so that the new configuration takes effect
@@ -117,30 +127,40 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail=f"Path does not exist: {p}")
     if not p.is_dir():
         raise HTTPException(status_code=400, detail=f"Path is not a directory: {p}")
-    set_takeout_path(p)
+
+    db_root: Path
+    if body.db_root:
+        db_root = Path(body.db_root).expanduser().resolve()
+        if not db_root.exists():
+            raise HTTPException(status_code=400, detail=f"DB root does not exist: {db_root}")
+        if not db_root.is_dir():
+            raise HTTPException(status_code=400, detail=f"DB root is not a directory: {db_root}")
+    else:
+        db_root = p
+
+    set_photos_root(p)
+    set_db_root(None if db_root == p else db_root)
 
     # Open (or create) the library DB and update the live app state so that
     # all subsequent requests see the new configuration immediately.
     old_conn = request.app.state.db_conn
     if old_conn is not None:
         old_conn.close()
-    conn = open_library_db(p)
+    conn = open_library_db(db_root)
     request.app.state.db_conn = conn
     request.app.state.library_root = p
     from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
 
-    request.app.state.db_path = library_db_path(p)
-    # Compute the actual photos root (where relpath/sidecar_relpath are relative to).
-    from takeout_rater.indexing.scanner import resolve_photos_root  # noqa: PLC0415
-
-    request.app.state.takeout_root = resolve_photos_root(p)
-    request.app.state.thumbs_dir = p / "takeout-rater" / "thumbs"
+    request.app.state.db_path = library_db_path(db_root)
+    # photos root is used directly — no Takeout/ resolution needed.
+    request.app.state.takeout_root = p
+    request.app.state.thumbs_dir = db_root / "takeout-rater" / "thumbs"
 
     # Start background indexing so the library is populated without the user
     # needing to run a separate CLI command.
     from takeout_rater.api.jobs import _start_index_job
 
-    _start_index_job(request.app, p)
+    _start_index_job(request.app, p, db_root=db_root)
 
     return JSONResponse({"status": "ok", "takeout_path": str(p)})
 
@@ -175,7 +195,7 @@ def open_picker() -> JSONResponse:
     root.wm_attributes("-topmost", True)
     selected = filedialog.askdirectory(
         parent=root,
-        title="Select your Google Photos Takeout folder (the folder *containing* Takeout/)",
+        title="Select your photos folder (the folder containing your album sub-folders)",
     )
     root.destroy()
 
