@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS clustering_runs (
     id          INTEGER PRIMARY KEY,
     method      TEXT NOT NULL,
     params_json TEXT,
-    created_at  INTEGER NOT NULL
+    created_at  INTEGER NOT NULL,
+    n_skipped   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS clusters (
@@ -193,4 +194,4 @@ CREATE INDEX IF NOT EXISTS idx_face_embeddings_run_id   ON face_embeddings(run_i
 CREATE INDEX IF NOT EXISTS idx_face_clusters_run_id     ON face_clusters(run_id);
 CREATE INDEX IF NOT EXISTS idx_face_cluster_members_face_id ON face_cluster_members(face_id);
 
-PRAGMA user_version = 13;
+PRAGMA user_version = 14;

@@ -76,6 +76,7 @@
     font-weight: 600;
   }
   .run-badge-clusters { background: #e8f0fe; color: #1a5cdb; }
+  .run-badge-skipped  { background: #fef9c3; color: #92400e; }
   .run-badge-params   { background: #f3f4f6; color: #374151; font-family: monospace; }
   .run-actions {
     flex-shrink: 0;
@@ -133,6 +134,12 @@
                title="Sliding-window size over the sorted hash list. Each image is compared to up to this many neighbours. Increase if you have many very similar images spread far apart in hash space.">
         <label for="cluster-minsize-phash">Min&nbsp;size:</label>
         <input type="number" id="cluster-minsize-phash" value="2" min="2" max="20" style="width:4rem;">
+        <label for="cluster-maxsize-phash"
+               title="Maximum cluster size. Components larger than this are skipped entirely. Leave empty for no limit.">
+          Max&nbsp;size:
+        </label>
+        <input type="number" id="cluster-maxsize-phash" min="2" placeholder="none" style="width:5rem;"
+               title="Maximum number of members in a cluster. Components exceeding this are skipped and counted as 'skipped' in the run results. Leave empty for no upper limit.">
       </div>
       <div class="job-options" style="margin-top:-0.2rem;">
         <label for="cluster-single-linkage" style="cursor:pointer;"
@@ -165,6 +172,12 @@
       <div class="job-options">
         <label for="cluster-minsize-clip">Min&nbsp;size:</label>
         <input type="number" id="cluster-minsize-clip" value="2" min="2" max="20" style="width:4rem;">
+        <label for="cluster-maxsize-clip"
+               title="Maximum cluster size. Components larger than this are skipped entirely. Leave empty for no limit.">
+          Max&nbsp;size:
+        </label>
+        <input type="number" id="cluster-maxsize-clip" min="2" placeholder="none" style="width:5rem;"
+               title="Maximum number of members in a cluster. Components exceeding this are skipped and counted as 'skipped' in the run results. Leave empty for no upper limit.">
       </div>
       <div class="job-options" style="margin-top:-0.2rem;">
         <label for="clip-single-linkage" style="cursor:pointer;"
@@ -241,6 +254,11 @@
           <span class="run-badge run-badge-clusters">
             {{ run.n_clusters }} cluster{{ 's' if run.n_clusters != 1 else '' }}
           </span>
+          {% if run.n_skipped %}
+          <span class="run-badge run-badge-skipped" title="Components skipped due to size or memory limits">
+            {{ run.n_skipped }} skipped
+          </span>
+          {% endif %}
           {% if run.method == "clip_embedding" %}
           <span class="run-badge run-badge-params" title="CLIP semantic embedding clustering">🧠 CLIP</span>
           {% else %}
@@ -413,11 +431,15 @@
         body.clip_threshold = parseFloat(document.getElementById('clip-threshold').value) || 0.90;
         body.min_size       = parseInt(document.getElementById('cluster-minsize-clip').value, 10) || 2;
         body.single_linkage = document.getElementById('clip-single-linkage').checked;
+        var maxClip = parseInt(document.getElementById('cluster-maxsize-clip').value, 10);
+        if (maxClip > 0) body.max_size = maxClip;
       } else {
         body.threshold      = parseInt(document.getElementById('cluster-threshold').value, 10) || 20;
         body.window         = parseInt(document.getElementById('cluster-window').value, 10) || 200;
         body.min_size       = parseInt(document.getElementById('cluster-minsize-phash').value, 10) || 2;
         body.single_linkage = document.getElementById('cluster-single-linkage').checked;
+        var maxPhash = parseInt(document.getElementById('cluster-maxsize-phash').value, 10);
+        if (maxPhash > 0) body.max_size = maxPhash;
       }
     } else if (jobType === 'export') {
       var exportScorer = document.getElementById('export-scorer').value;

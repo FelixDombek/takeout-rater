@@ -9,14 +9,16 @@ from pathlib import Path
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 # The single schema version this codebase targets.
-CURRENT_SCHEMA_VERSION: int = 13
+CURRENT_SCHEMA_VERSION: int = 14
 
 # Earliest schema version from which incremental migrations are supported.
 # Databases older than this must be fully rebuilt (full re-scan).
 _INCREMENTAL_MIGRATION_BASE: int = 13
 
 # Map target_version → SQL file that upgrades from (target_version - 1) to target_version.
-_INCREMENTAL_MIGRATIONS: dict[int, Path] = {}
+_INCREMENTAL_MIGRATIONS: dict[int, Path] = {
+    14: _MIGRATIONS_DIR / "0008_clustering_n_skipped.sql",
+}
 
 
 class SchemaMismatchError(RuntimeError):

@@ -515,6 +515,7 @@ class _ClusterStartBody(BaseModel):
     threshold: int = 10
     window: int = 200
     min_size: int = 2
+    max_size: int | None = None
     single_linkage: bool = False
     # CLIP-specific params
     clip_metric: str = "cosine"  # "cosine" | "euclidean" | "combined"
@@ -559,6 +560,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
     threshold = body.threshold
     window = body.window
     min_size = body.min_size
+    max_size = body.max_size
     single_linkage = body.single_linkage
     clip_metric = body.clip_metric
     clip_threshold = body.clip_threshold
@@ -611,17 +613,21 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     if total > 0:
                         progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
 
-                n_clusters = build_clip_clusters(
+                n_clusters, n_skipped = build_clip_clusters(
                     worker_conn,
                     metric=clip_metric,
                     threshold=clip_threshold,
                     min_cluster_size=min_size,
+                    max_cluster_size=max_size,
                     single_linkage=single_linkage,
                     on_progress=_clip_cb,
                     on_post_progress=_clip_post_cb,
                     on_save_progress=_clip_save_cb,
                 )
-                progress.message = f"CLIP clustering complete — {n_clusters} cluster(s) found."
+                skipped_part = f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
+                progress.message = (
+                    f"CLIP clustering complete — {n_clusters} cluster(s) found{skipped_part}."
+                )
                 progress.running = False
                 progress.done = True
 
@@ -652,17 +658,21 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                     if total > 0:
                         progress.message = f"Saving clusters… {processed}\u202f/\u202f{total}"
 
-                n_clusters = build_clusters(
+                n_clusters, n_skipped = build_clusters(
                     worker_conn,
                     threshold=threshold,
                     window=window,
                     min_cluster_size=min_size,
+                    max_cluster_size=max_size,
                     single_linkage=single_linkage,
                     on_progress=_cb,
                     on_post_progress=_post_cb,
                     on_save_progress=_save_cb,
                 )
-                progress.message = f"Clustering complete — {n_clusters} cluster(s) found."
+                skipped_part = f"\u202f\u2014\u202f{n_skipped} skipped" if n_skipped else ""
+                progress.message = (
+                    f"Clustering complete — {n_clusters} cluster(s) found{skipped_part}."
+                )
                 progress.running = False
                 progress.done = True
 

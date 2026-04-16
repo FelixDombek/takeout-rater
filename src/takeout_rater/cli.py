@@ -404,14 +404,15 @@ def _cmd_cluster(args: argparse.Namespace) -> int:
     def _progress(done: int, total: int) -> None:
         print(f"  {done}/{total}", end="\r", flush=True)
 
-    n_clusters = build_clusters(
+    n_clusters, n_skipped = build_clusters(
         conn,
         threshold=args.threshold,
         window=args.window,
         min_cluster_size=args.min_size,
         on_progress=_progress,
     )
-    print(f"\nFound {n_clusters} cluster(s).")
+    skipped_info = f", {n_skipped} skipped" if n_skipped else ""
+    print(f"\nFound {n_clusters} cluster(s){skipped_info}.")
     conn.close()
     return 0
 
