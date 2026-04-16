@@ -685,47 +685,78 @@ def get_clip_words(
 def get_similar_assets(
     asset_id: int,
     request: Request,  # noqa: ARG001
-    threshold: float = 0.85,
+    method: str = "clip",
+    metric: str = "cosine",
+    threshold: float | None = None,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> JSONResponse:
-    """Return photos semantically similar to this asset via CLIP embeddings.
-
-    Uses nearest-neighbour cosine similarity in CLIP embedding space to find
-    photos that are visually/semantically similar to the reference asset.
+    """Return photos similar to this asset via CLIP embeddings or pHash.
 
     Query parameters:
-    - ``threshold``: Minimum cosine similarity to include (default 0.85,
-      range 0.0–1.0).  Higher values return only very close matches.
+    - ``method``: ``"clip"`` (default) or ``"phash"``.
+    - ``metric``: For CLIP only — ``"cosine"`` (default), ``"euclidean"``, or
+      ``"combined"``.  Ignored for pHash.
+    - ``threshold``: Similarity / distance threshold.  Defaults per method:
+
+      - clip/cosine:     0.85  (min cosine similarity, range 0–1)
+      - clip/euclidean:  0.45  (max L2 distance, range 0–2)
+      - clip/combined:   0.46  (max angular distance in radians, range 0–π)
+      - phash:           20    (max Hamming distance in bits, range 0–256)
 
     Returns JSON::
 
         {
           "asset_id": <int>,
+          "method": <str>,
+          "metric": <str|null>,
           "results": [
-            {"asset_id": <int>, "similarity": <float>,
+            {"asset_id": <int>, "score": <float>,
              "taken_at": <int|null>, "filename": <str>},
             ...
           ]
         }
 
-    When the asset has no CLIP embedding, ``results`` is empty and
-    ``"error": "no_embedding"`` is included in the response.
+    ``score`` semantics depend on method/metric:
+    - clip/cosine: cosine similarity (higher = more similar)
+    - clip/euclidean: L2 distance (lower = more similar)
+    - clip/combined: angular distance in radians (lower = more similar)
+    - phash: Hamming distance in bits (lower = more similar)
+
+    On error an ``"error"`` key is added: ``"no_embedding"`` or ``"no_phash"``.
     """
     from takeout_rater.faces.similarity import find_similar_by_asset  # noqa: PLC0415
 
-    threshold = max(0.0, min(1.0, threshold))
+    if method not in ("clip", "phash"):
+        method = "clip"
+    if metric not in ("cosine", "euclidean", "combined"):
+        metric = "cosine"
 
     asset = get_asset_by_id(conn, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
 
-    results = find_similar_by_asset(conn, asset_id, threshold=threshold)
-    if not results:
-        from takeout_rater.db.queries import get_clip_embedding_for_asset as _gce  # noqa: PLC0415
+    results = find_similar_by_asset(
+        conn, asset_id, method=method, metric=metric, threshold=threshold
+    )
 
-        if _gce(conn, asset_id) is None:
-            return JSONResponse({"asset_id": asset_id, "results": [], "error": "no_embedding"})
-    return JSONResponse({"asset_id": asset_id, "results": results})
+    response_metric = metric if method == "clip" else None
+    base = {"asset_id": asset_id, "method": method, "metric": response_metric}
+
+    if not results:
+        # Distinguish "no data" from "no matches above threshold"
+        if method == "phash":
+            no_data = conn.execute(
+                "SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)
+            ).fetchone() is None
+            if no_data:
+                return JSONResponse({**base, "results": [], "error": "no_phash"})
+        else:
+            from takeout_rater.db.queries import get_clip_embedding_for_asset as _gce  # noqa: PLC0415
+
+            if _gce(conn, asset_id) is None:
+                return JSONResponse({**base, "results": [], "error": "no_embedding"})
+
+    return JSONResponse({**base, "results": results})
 
 
 @router.get("/thumbs/{asset_id}")

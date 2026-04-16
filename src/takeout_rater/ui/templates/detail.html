@@ -201,24 +201,35 @@
   }
   .mlt-controls {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 1rem 1.5rem;
+    flex-direction: column;
+    gap: 0.5rem;
     margin-bottom: 1rem;
     font-size: 0.875rem;
   }
-  .mlt-slider-group {
+  .mlt-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.6rem 1.2rem;
   }
-  .mlt-slider-group label { color: #555; white-space: nowrap; }
-  .mlt-slider-group input[type=range] { width: 130px; cursor: pointer; }
-  .mlt-slider-val {
-    min-width: 2.5em;
-    font-variant-numeric: tabular-nums;
-    color: #1a5cdb;
-    font-weight: 600;
+  .mlt-row label { color: #555; white-space: nowrap; }
+  .mlt-row select {
+    padding: 0.25rem 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .mlt-row input[type=number] {
+    width: 5.5rem;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+  .mlt-threshold-hint {
+    font-size: 0.78rem;
+    color: #888;
   }
   .mlt-sort-group {
     display: flex;
@@ -283,7 +294,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .mlt-sim {
+  .mlt-score {
     display: inline-block;
     background: #e8f0fe;
     color: #1a5cdb;
@@ -458,15 +469,50 @@ Bright pixel = left neighbour was brighter; dark pixel = right neighbour was bri
 <div class="more-like-this" id="mlt-panel" data-asset-id="{{ asset.id }}">
   <h2>More like this</h2>
   <div class="mlt-controls">
-    <div class="mlt-slider-group">
-      <label for="mlt-threshold">Similarity threshold:</label>
-      <input type="range" id="mlt-threshold" min="0.50" max="0.99" step="0.01" value="0.85">
-      <span class="mlt-slider-val" id="mlt-threshold-val">0.85</span>
+    {# Row 1: Method selector #}
+    <div class="mlt-row">
+      <label for="mlt-method"><strong>Method:</strong></label>
+      <select id="mlt-method" onchange="mltOnMethodChange()">
+        <option value="clip">CLIP — semantic embedding</option>
+        <option value="phash">pHash — perceptual hashing</option>
+      </select>
     </div>
-    <div class="mlt-sort-group">
-      <label>Sort by:</label>
-      <button class="mlt-sort-btn active" id="mlt-sort-sim" onclick="mltSetSort('similarity')">Similarity</button>
-      <button class="mlt-sort-btn" id="mlt-sort-time" onclick="mltSetSort('time')">Time</button>
+
+    {# Row 2a: pHash options (shown only when pHash selected) #}
+    <div class="mlt-row" id="mlt-phash-opts">
+      <label for="mlt-phash-threshold"
+             title="Maximum Hamming distance (number of differing bits out of 256) for two images to be considered similar. Lower = only very similar images.">
+        Threshold (bits):
+      </label>
+      <input type="number" id="mlt-phash-threshold" value="20" min="1" max="128">
+      <span class="mlt-threshold-hint">range 1–128, default 20</span>
+    </div>
+
+    {# Row 2b: CLIP options (shown only when CLIP selected) #}
+    <div class="mlt-row" id="mlt-clip-opts">
+      <label for="mlt-clip-metric"><strong>Distance metric:</strong></label>
+      <select id="mlt-clip-metric" onchange="mltOnMetricChange()">
+        <option value="cosine">Cosine similarity (min similarity threshold)</option>
+        <option value="euclidean">Euclidean distance (max L2 distance)</option>
+        <option value="combined">Angular distance (max angle, radians)</option>
+      </select>
+    </div>
+    <div class="mlt-row" id="mlt-clip-threshold-row">
+      <label for="mlt-clip-threshold" id="mlt-clip-threshold-label"
+             title="Cosine similarity threshold: images with similarity ≥ this value are shown.">
+        Min cosine similarity:
+      </label>
+      <input type="number" id="mlt-clip-threshold" value="0.85" min="0" max="1" step="0.01">
+      <span class="mlt-threshold-hint" id="mlt-clip-threshold-hint">range 0–1, default 0.85</span>
+    </div>
+
+    {# Row 3: Sort controls #}
+    <div class="mlt-row">
+      <div class="mlt-sort-group">
+        <label>Sort by:</label>
+        <button class="mlt-sort-btn active" id="mlt-sort-score" onclick="mltSetSort('score')">Score</button>
+        <button class="mlt-sort-btn" id="mlt-sort-time" onclick="mltSetSort('time')">Time</button>
+      </div>
     </div>
   </div>
   <p class="mlt-status" id="mlt-status">Loading…</p>
@@ -715,26 +761,86 @@ function loadClipWords(panel) {
   var assetId = panel.dataset.assetId;
   var grid    = document.getElementById('mlt-grid');
   var status  = document.getElementById('mlt-status');
-  var slider  = document.getElementById('mlt-threshold');
-  var sliderVal = document.getElementById('mlt-threshold-val');
 
-  var currentSort = 'similarity';
+  var currentSort    = 'score';
   var currentResults = [];
-  var debounceTimer = null;
+  var currentMethod  = 'clip';
+  var debounceTimer  = null;
 
-  // Keep the displayed value in sync with the slider
-  slider.addEventListener('input', function () {
-    sliderVal.textContent = parseFloat(slider.value).toFixed(2);
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(loadSimilar, 400);
-  });
+  // Per-metric defaults for CLIP (mirrors clusterings.html)
+  var _clipMetricDefaults = {
+    cosine:    { label: 'Min cosine similarity:', hint: 'range 0–1, default 0.85',         val: '0.85', min: '0',    max: '1',    step: '0.01' },
+    euclidean: { label: 'Max L2 distance:',       hint: 'range 0–2, default 0.45',         val: '0.45', min: '0',    max: '2',    step: '0.01' },
+    combined:  { label: 'Max angle (radians):',   hint: 'range 0–π≈3.14, default 0.46',   val: '0.46', min: '0',    max: '3.15', step: '0.01' }
+  };
+
+  // ── Control change handlers (exposed for inline onchange) ────────────────
+
+  window.mltOnMethodChange = function () {
+    var method = document.getElementById('mlt-method').value;
+    currentMethod = method;
+    document.getElementById('mlt-phash-opts').style.display   = method === 'phash' ? '' : 'none';
+    document.getElementById('mlt-clip-opts').style.display    = method === 'clip'  ? '' : 'none';
+    document.getElementById('mlt-clip-threshold-row').style.display = method === 'clip' ? '' : 'none';
+    scheduleSimilar();
+  };
+
+  window.mltOnMetricChange = function () {
+    var metric = document.getElementById('mlt-clip-metric').value;
+    var cfg = _clipMetricDefaults[metric] || _clipMetricDefaults.cosine;
+    document.getElementById('mlt-clip-threshold-label').textContent = cfg.label;
+    document.getElementById('mlt-clip-threshold-hint').textContent  = cfg.hint;
+    var inp = document.getElementById('mlt-clip-threshold');
+    inp.value = cfg.val;
+    inp.min   = cfg.min;
+    inp.max   = cfg.max;
+    inp.step  = cfg.step;
+    scheduleSimilar();
+  };
 
   window.mltSetSort = function (sortKey) {
     currentSort = sortKey;
-    document.getElementById('mlt-sort-sim').classList.toggle('active', sortKey === 'similarity');
-    document.getElementById('mlt-sort-time').classList.toggle('active', sortKey === 'time');
+    document.getElementById('mlt-sort-score').classList.toggle('active', sortKey === 'score');
+    document.getElementById('mlt-sort-time').classList.toggle('active',  sortKey === 'time');
     renderResults();
   };
+
+  // Reload on threshold input (debounced)
+  ['mlt-phash-threshold', 'mlt-clip-threshold'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', function () { scheduleSimilar(); });
+    }
+  });
+
+  function scheduleSimilar() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(loadSimilar, 400);
+  }
+
+  // ── Score badge helpers ──────────────────────────────────────────────────
+
+  function scoreBadgeText(item, method, metric) {
+    if (method === 'phash') {
+      return item.score + ' bits';
+    }
+    if (metric === 'cosine') {
+      return 'sim=' + item.score.toFixed(3);
+    }
+    if (metric === 'euclidean') {
+      return 'L2=' + item.score.toFixed(3);
+    }
+    return item.score.toFixed(3) + ' rad';
+  }
+
+  function scoreBadgeTitle(method, metric) {
+    if (method === 'phash') return 'Hamming distance (bits)';
+    if (metric === 'cosine') return 'Cosine similarity';
+    if (metric === 'euclidean') return 'L2 (Euclidean) distance';
+    return 'Angular distance (radians)';
+  }
+
+  // ── Rendering ────────────────────────────────────────────────────────────
 
   function formatDate(ts) {
     if (!ts) return '';
@@ -748,15 +854,18 @@ function loadClipWords(panel) {
     grid.innerHTML = '';
     if (!currentResults.length) return;
 
+    var method = document.getElementById('mlt-method').value;
+    var metric = document.getElementById('mlt-clip-metric').value;
+
     var sorted = currentResults.slice();
     if (currentSort === 'time') {
       sorted.sort(function (a, b) {
         var ta = a.taken_at != null ? a.taken_at : 0;
         var tb = b.taken_at != null ? b.taken_at : 0;
-        return tb - ta;
+        return tb - ta;  // newest first
       });
     }
-    // else keep similarity-descending order (already sorted by backend)
+    // else keep backend order (best score first)
 
     sorted.forEach(function (item) {
       var card = document.createElement('a');
@@ -779,11 +888,11 @@ function loadClipWords(panel) {
 
       var body = document.createElement('div');
       body.className = 'mlt-body';
-      var simBadge = document.createElement('span');
-      simBadge.className = 'mlt-sim';
-      simBadge.title = 'Cosine similarity';
-      simBadge.textContent = item.similarity.toFixed(3);
-      body.appendChild(simBadge);
+      var scoreBadge = document.createElement('span');
+      scoreBadge.className = 'mlt-score';
+      scoreBadge.title = scoreBadgeTitle(method, metric);
+      scoreBadge.textContent = scoreBadgeText(item, method, metric);
+      body.appendChild(scoreBadge);
 
       var dateStr = formatDate(item.taken_at);
       if (dateStr) {
@@ -802,13 +911,28 @@ function loadClipWords(panel) {
     });
   }
 
+  // ── API fetch ────────────────────────────────────────────────────────────
+
   function loadSimilar() {
-    var threshold = parseFloat(slider.value).toFixed(2);
+    var method = document.getElementById('mlt-method').value;
+    var metric = document.getElementById('mlt-clip-metric').value;
+    var threshold;
+    if (method === 'phash') {
+      threshold = parseInt(document.getElementById('mlt-phash-threshold').value, 10) || 20;
+    } else {
+      threshold = parseFloat(document.getElementById('mlt-clip-threshold').value) || 0.85;
+    }
+
     status.textContent = 'Loading…';
     status.className = 'mlt-status';
     grid.innerHTML = '';
 
-    fetch('/api/assets/' + assetId + '/similar?threshold=' + threshold)
+    var url = '/api/assets/' + assetId + '/similar'
+      + '?method=' + encodeURIComponent(method)
+      + '&metric=' + encodeURIComponent(metric)
+      + '&threshold=' + threshold;
+
+    fetch(url)
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data.error === 'no_embedding') {
@@ -816,12 +940,18 @@ function loadClipWords(panel) {
           status.className = 'mlt-status';
           return;
         }
+        if (data.error === 'no_phash') {
+          status.textContent = 'No perceptual hash found. Run the Index job first.';
+          status.className = 'mlt-status';
+          return;
+        }
         currentResults = data.results || [];
         if (!currentResults.length) {
-          status.textContent = 'No similar photos found at this threshold. Try lowering it.';
+          status.textContent = 'No similar photos found at this threshold. Try relaxing it.';
           status.className = 'mlt-status';
         } else {
-          status.textContent = currentResults.length + ' similar photo' + (currentResults.length === 1 ? '' : 's') + ' found.';
+          status.textContent = currentResults.length + ' similar photo'
+            + (currentResults.length === 1 ? '' : 's') + ' found.';
           status.className = 'mlt-status';
           renderResults();
         }
