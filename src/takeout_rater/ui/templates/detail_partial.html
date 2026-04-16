@@ -100,6 +100,11 @@
                 title="Difference hash (dhash16) – 16×16 grid. Bright = left neighbour brighter; dark = right neighbour brighter."></canvas>
         <div class="lb-phash-hex">{{ phash_hex }}</div>
       </div>
+      <div class="lb-embed-wrap" data-asset-id="{{ asset.id }}" style="display:none">
+        <div class="lb-embed-label">CLIP embedding (32 × 24, grayscale)</div>
+        <canvas class="lb-embed-canvas" width="128" height="96"
+                title="CLIP image embedding – 768 values arranged as a 32×24 grid of 4×4 px cells, min-max normalised to grayscale."></canvas>
+      </div>
     </div>
     {% endif %}
 

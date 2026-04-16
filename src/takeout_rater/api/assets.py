@@ -681,6 +681,41 @@ def get_clip_words(
     return JSONResponse({"words": words})
 
 
+@router.get("/api/assets/{asset_id}/clip-embedding")
+def get_clip_embedding(
+    asset_id: int,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return the raw CLIP embedding for an asset as a list of float values.
+
+    The embedding is a 768-dimensional float32 vector, returned as a JSON list
+    of 768 numbers (values are min-max normalised to [0, 1] for display).
+
+    Returns ``{"values": [...]}`` or ``{"values": null}`` when no embedding
+    has been computed for this asset yet.
+    """
+    import struct  # noqa: PLC0415
+
+    blob = get_clip_embedding_for_asset(conn, asset_id)
+    if blob is None:
+        return JSONResponse({"values": None})
+
+    dim = 768
+    expected_bytes = dim * 4
+    if len(blob) != expected_bytes:
+        return JSONResponse({"values": None})
+
+    values = list(struct.unpack(f"{dim}f", blob))
+    vmin = min(values)
+    vmax = max(values)
+    span = vmax - vmin
+    if span > 0:
+        values = [(v - vmin) / span for v in values]
+    else:
+        values = [0.5] * dim
+    return JSONResponse({"values": [round(v, 4) for v in values]})
+
+
 @router.get("/thumbs/{asset_id}")
 def serve_thumbnail(
     asset_id: int,

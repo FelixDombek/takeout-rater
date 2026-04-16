@@ -494,6 +494,23 @@
     if (el) el.style.display = 'none';
   }
 
+  var _elapsedTimer = null;
+  function startElapsedTimer() {
+    stopElapsedTimer();
+    var startTime = Date.now();
+    _elapsedTimer = setInterval(function () {
+      var elapsed = Math.round((Date.now() - startTime) / 1000);
+      var el = document.getElementById('viz-elapsed');
+      if (el) el.textContent = elapsed + 's';
+    }, 1000);
+  }
+  function stopElapsedTimer() {
+    if (_elapsedTimer !== null) {
+      clearInterval(_elapsedTimer);
+      _elapsedTimer = null;
+    }
+  }
+
   // ── Main entry point ─────────────────────────────────────────────────────
   window.loadViz = function(forceRefresh) {
     var btn = document.getElementById('btn-build-viz');
@@ -501,7 +518,12 @@
     if (btn) btn.disabled = true;
     if (info) info.textContent = '';
 
-    showOverlay('<div class="viz-spinner"></div><span>Computing\u2026 this may take a minute.</span>');
+    showOverlay(
+      '<div class="viz-spinner"></div>' +
+      '<span>Computing\u2026 this may take a minute.</span>' +
+      '<span style="font-size:0.75rem;color:#777">Elapsed: <span id="viz-elapsed">0s</span></span>'
+    );
+    startElapsedTimer();
 
     if (!initialized) {
       initThree();
@@ -515,6 +537,7 @@
         return r.json();
       })
       .then(function(data) {
+        stopElapsedTimer();
         vizData = data;
         if (!data.total || data.total === 0) {
           showOverlay('<span>No CLIP embeddings found. Run the <strong>Embed</strong> job first.</span>');
@@ -530,6 +553,7 @@
         if (btn) btn.disabled = false;
       })
       .catch(function(err) {
+        stopElapsedTimer();
         showOverlay('<span style="color:#f87171">Error: ' + escHtml(String(err)) + '</span>');
         if (btn) btn.disabled = false;
         if (info) info.textContent = '';
