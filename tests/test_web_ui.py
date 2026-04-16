@@ -1343,7 +1343,7 @@ def test_similar_assets_phash_returns_results(tmp_path: Path) -> None:
 
     # Identical hashes → Hamming distance 0
     upsert_phash(conn, id1, "0" * 64)
-    upsert_phash(conn, id2, "0" * 63 + "1")  # 1 bit differs (0x1 = 0b0001)
+    upsert_phash(conn, id2, "0" * 63 + "1")  # last hex digit 0→1 = 1 bit change
 
     app = create_app(tmp_path, conn)
     from fastapi.testclient import TestClient as TC  # noqa: PLC0415
