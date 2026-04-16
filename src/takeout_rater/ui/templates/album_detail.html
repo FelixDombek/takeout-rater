@@ -1,0 +1,552 @@
+{% extends "base.html" %}
+
+{% block title %}{{ album.name }} – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  /* ── Remove global max-width for wide grids ─────────────────────────────── */
+  main { max-width: none; }
+
+  .album-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .album-header h1 { font-size: 1.25rem; margin: 0; }
+  .photo-count {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    background: #e8f0fe;
+    color: #1a5cdb;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .back-link { margin-bottom: 1rem; display: inline-block; }
+
+  /* ── Photo grid ─────────────────────────────────────────────────────────── */
+  .photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+    transition: box-shadow 0.15s;
+    cursor: pointer;
+  }
+  .card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .card--active { box-shadow: 0 0 0 2px #1a5cdb, 0 2px 6px rgba(0,0,0,.15) !important; }
+  .card a { display: block; color: inherit; text-decoration: none; }
+  .card-thumb {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #e0e0e0;
+    pointer-events: none;
+  }
+  .card-thumb-placeholder {
+    width: 100%;
+    aspect-ratio: 1;
+    background: #ddd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 2rem;
+    pointer-events: none;
+  }
+  .card-body {
+    padding: 0.3rem 0.45rem;
+    font-size: 0.72rem;
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .fav-badge {
+    font-size: 0.7rem;
+    margin-right: 2px;
+  }
+
+  /* ── Pagination ─────────────────────────────────────────────────────────── */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .pagination .btn { min-width: 2.2rem; text-align: center; }
+  .pagination .btn.active {
+    background: #1a5cdb;
+    color: #fff;
+    border-color: #1a5cdb;
+  }
+  .pagination-info { font-size: 0.82rem; color: #666; }
+
+  /* ── Lightbox overlay ───────────────────────────────────────────────────── */
+  #lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.88);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .lb-container {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .lb-img-col {
+    flex: 1 1 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 3.5rem;
+    min-width: 0;
+  }
+  #lb-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 4px;
+    outline: none;
+  }
+  .lb-close {
+    position: absolute;
+    top: 0.75rem; right: 0.75rem;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    font-size: 1.1rem;
+    width: 2rem; height: 2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1;
+  }
+  .lb-close:hover { background: rgba(255,255,255,0.28); }
+  .lb-prev, .lb-next {
+    position: absolute;
+    top: 50%; transform: translateY(-50%);
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #fff;
+    font-size: 1.5rem;
+    width: 2.5rem; height: 3rem;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .lb-prev { left: 0.5rem; }
+  .lb-next { right: 0.5rem; }
+  .lb-prev:hover, .lb-next:hover { background: rgba(255,255,255,0.25); }
+  .lb-footer {
+    position: absolute;
+    bottom: 0.75rem; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 0 1rem;
+  }
+  #lb-title {
+    color: #ccc;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60%;
+  }
+  #lb-counter { color: #888; font-size: 0.8rem; white-space: nowrap; }
+  .lb-details-col {
+    width: 300px;
+    min-width: 260px;
+    max-width: 340px;
+    flex-shrink: 0;
+    border-left: 1px solid rgba(255,255,255,0.08);
+    padding: 1rem 1rem 1rem 1rem;
+    overflow-y: auto;
+    color: #ccc;
+    font-size: 0.82rem;
+    display: flex;
+    flex-direction: column;
+  }
+  .lb-details-loading { color: #666; font-size: 0.8rem; padding: 1rem 0.5rem; }
+
+  /* ── JSON syntax highlight for lightbox details ─────────────────────────── */
+  .json-highlight {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 3px;
+    font-size: 8pt;
+    line-height: 1.4;
+    overflow-x: auto;
+    white-space: pre;
+    overflow-y: auto;
+    color: #ccc;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  .lb-details-col .json-key    { color: #7ec8e3; }
+  .lb-details-col .json-string { color: #98c379; }
+  .lb-details-col .json-number { color: #d19a66; }
+  .lb-details-col .json-bool   { color: #e5c07b; }
+  .lb-details-col .json-null   { color: #777; }
+
+  /* ── Lightbox info tabs ─────────────────────────────────────────────────── */
+  .lb-info-tabs {
+    margin-top: 0.75rem;
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .lb-tab-bar { display: flex; border-bottom: 1px solid rgba(255,255,255,0.15); }
+  .lb-tab-btn {
+    background: none; border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.72rem; font-weight: 700;
+    color: #777; cursor: pointer;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .lb-tab-btn:hover { color: #ccc; }
+  .lb-tab-btn.active { color: #7ec8e3; border-bottom-color: #7ec8e3; }
+  .lb-tab-panel { display: none; padding-top: 0.5rem; }
+  .lb-tab-panel.active {
+    display: flex; flex-direction: column;
+    flex: 1 1 0; min-height: 0; padding-top: 0.5rem;
+  }
+  .lb-empty-note { color: #666; font-size: 0.75rem; margin: 0.4rem 0; }
+  .lb-meta-subsection { margin-bottom: 0.5rem; }
+  .lb-meta-sublabel {
+    font-size: 0.68rem; color: #777;
+    margin-bottom: 0.2rem; font-style: italic;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* pHash canvas */
+  .lb-phash-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+  .lb-phash-canvas { image-rendering: pixelated; image-rendering: crisp-edges;
+    border: 1px solid rgba(255,255,255,0.2); border-radius: 3px; }
+  .lb-phash-hex { font-family: monospace; font-size: 0.65rem; color: #666; word-break: break-all; }
+  /* CLIP tag cloud */
+  .lb-clip-cloud { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.2rem 0; }
+  .lb-clip-tag {
+    display: inline-block; padding: 0.15rem 0.45rem;
+    border-radius: 999px; background: rgba(126,200,227,0.15);
+    color: #7ec8e3; font-size: 0.72rem; white-space: nowrap;
+  }
+  .lb-detail-btn {
+    background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.3);
+    color: #fff; font-size: 0.75rem; padding: 0.2rem 0.5rem;
+  }
+  .lb-detail-btn:hover { background: rgba(255,255,255,0.28); text-decoration: none; }
+
+  @media (max-width: 700px) {
+    .lb-container { flex-direction: column; }
+    .lb-details-col {
+      width: 100%; max-width: 100%;
+      border-left: none; border-top: 1px solid rgba(255,255,255,0.08);
+      max-height: 45vh; padding: 0.75rem 1rem;
+    }
+    .lb-img-col { padding: 2.5rem 2.5rem 0.5rem; }
+    #lb-img { max-height: 50vh; }
+  }
+
+  /* ── Empty state ────────────────────────────────────────────────────────── */
+  .empty-state { text-align: center; padding: 4rem 2rem; color: #666; }
+  .empty-state h2 { font-size: 1.3rem; margin-bottom: 0.75rem; color: #333; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a class="btn back-link" href="/albums">← Back to albums</a>
+
+<div class="album-header">
+  <h1>🗂 {{ album.name }}</h1>
+  <span class="photo-count">{{ total }} photo{{ 's' if total != 1 else '' }}</span>
+</div>
+
+{% if assets %}
+<div class="photo-grid" id="photo-grid">
+  {% for asset in assets %}
+  <div class="card"
+       data-lb-id="{{ asset.id }}"
+       data-lb-src="/thumbs/{{ asset.id }}"
+       data-lb-title="{{ asset.title or asset.filename }}">
+    <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
+      <img
+        class="card-thumb"
+        src="/thumbs/{{ asset.id }}"
+        alt="{{ asset.title or asset.filename }}"
+        loading="lazy"
+        onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+      >
+      <div class="card-thumb-placeholder" style="display:none">🖼</div>
+      <div class="card-body">
+        {% if asset.favorited %}<span class="fav-badge">⭐</span>{% endif %}
+        {{ asset.filename }}
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+  <a class="btn" href="/albums/{{ album.id }}?page={{ page - 1 }}">‹ Prev</a>
+  {% endif %}
+
+  {% for p in range(1, total_pages + 1) %}
+  {% if p == page %}
+  <span class="btn active">{{ p }}</span>
+  {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+  <a class="btn" href="/albums/{{ album.id }}?page={{ p }}">{{ p }}</a>
+  {% elif p == page - 3 or p == page + 3 %}
+  <span class="pagination-info">…</span>
+  {% endif %}
+  {% endfor %}
+
+  {% if page < total_pages %}
+  <a class="btn" href="/albums/{{ album.id }}?page={{ page + 1 }}">Next ›</a>
+  {% endif %}
+
+  <span class="pagination-info">Page {{ page }} of {{ total_pages }}</span>
+</div>
+{% endif %}
+
+{% else %}
+<div class="empty-state">
+  <h2>No photos in this album</h2>
+</div>
+{% endif %}
+
+{# ── Lightbox overlay ────────────────────────────────────────────────────── #}
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" aria-hidden="true">
+  <div class="lb-container">
+    <div class="lb-img-col">
+      <button id="lb-close" class="lb-close" aria-label="Close viewer">✕</button>
+      <button id="lb-prev" class="lb-prev" aria-label="Previous image">‹</button>
+      <button id="lb-next" class="lb-next" aria-label="Next image">›</button>
+      <img id="lb-img" src="" alt="" tabindex="0">
+      <div class="lb-footer">
+        <span id="lb-title"></span>
+        <span id="lb-counter"></span>
+        <a id="lb-link" href="" class="btn lb-detail-btn">Open page →</a>
+      </div>
+    </div>
+    <div class="lb-details-col" id="lb-details">
+      <div class="lb-details-loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const grid      = document.getElementById('photo-grid');
+  const lightbox  = document.getElementById('lightbox');
+  const lbImg     = document.getElementById('lb-img');
+  const lbTitle   = document.getElementById('lb-title');
+  const lbLink    = document.getElementById('lb-link');
+  const lbCounter = document.getElementById('lb-counter');
+  const lbDetails = document.getElementById('lb-details');
+  let lbIndex = 0;
+  let lbDetailAbort = null;
+
+  function getCards() {
+    return Array.from(document.querySelectorAll('.card[data-lb-id]'));
+  }
+
+  function highlightJson(pre) {
+    const text = pre.textContent;
+    let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html = html.replace(
+      /("(?:\\.|[^"\\])*")(\s*:)|("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)/g,
+      function (m, key, colon, str, num, bool, nil) {
+        if (key && colon) return '<span class="json-key">' + key + '</span>' + colon;
+        if (str)  return '<span class="json-string">' + str + '</span>';
+        if (num)  return '<span class="json-number">' + num + '</span>';
+        if (bool) return '<span class="json-bool">' + bool + '</span>';
+        if (nil)  return '<span class="json-null">' + nil + '</span>';
+        return m;
+      }
+    );
+    pre.innerHTML = html;
+  }
+
+  function lbLoadClipWords(panel) {
+    var assetId = panel.dataset.assetId;
+    var loadingEl = panel.querySelector('.lb-clip-loading');
+    var emptyEl = panel.querySelector('.lb-clip-empty');
+    if (loadingEl) loadingEl.style.display = '';
+    if (emptyEl) emptyEl.style.display = 'none';
+    fetch('/api/assets/' + assetId + '/clip-words?top_k=30')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (!data.words || data.words.length === 0) {
+          if (emptyEl) emptyEl.style.display = '';
+          return;
+        }
+        panel.dataset.loaded = '1';
+        var maxScore = data.words[0].score || 1;
+        var cloud = document.createElement('div');
+        cloud.className = 'lb-clip-cloud';
+        data.words.forEach(function (w) {
+          var tag = document.createElement('span');
+          tag.className = 'lb-clip-tag';
+          var rel = w.score / maxScore;
+          tag.style.opacity = (0.4 + 0.6 * rel).toFixed(2);
+          tag.style.fontSize = (0.65 + 0.3 * rel).toFixed(2) + 'rem';
+          tag.title = 'score: ' + w.score.toFixed(4);
+          tag.textContent = w.word;
+          cloud.appendChild(tag);
+        });
+        panel.appendChild(cloud);
+      })
+      .catch(function () {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = '';
+      });
+  }
+
+  function loadDetails(assetId) {
+    if (lbDetailAbort) lbDetailAbort.abort();
+    lbDetailAbort = new AbortController();
+    lbDetails.innerHTML = '<div class="lb-details-loading">Loading\u2026</div>';
+    fetch('/assets/' + assetId + '?partial=1', { signal: lbDetailAbort.signal })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function (html) {
+        lbDetails.innerHTML = html;
+        lbDetails.querySelectorAll('.json-highlight').forEach(highlightJson);
+
+        // Draw pHash canvas (inline scripts in innerHTML don't run).
+        lbDetails.querySelectorAll('.lb-phash-canvas[data-phash]').forEach(function (canvas) {
+          var hex = canvas.dataset.phash;
+          if (!hex) return;
+          var ctx = canvas.getContext('2d');
+          var BITS = 256, SIDE = 16, BLOCK = 4;
+          var bigInt = BigInt('0x' + hex);
+          for (var idx = 0; idx < BITS; idx++) {
+            var bit = Number((bigInt >> BigInt(idx)) & 1n);
+            var row = Math.floor(idx / SIDE);
+            var col = idx % SIDE;
+            ctx.fillStyle = bit ? '#ffffff' : '#1a1a2e';
+            ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
+          }
+        });
+
+        // Wire tabs.
+        lbDetails.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var tabName = btn.dataset.tab;
+            lbDetails.querySelectorAll('.lb-tab-btn').forEach(function (b) {
+              var active = b.dataset.tab === tabName;
+              b.classList.toggle('active', active);
+              b.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            lbDetails.querySelectorAll('.lb-tab-panel').forEach(function (p) {
+              p.classList.toggle('active', p.dataset.panel === tabName);
+            });
+            if (tabName === 'clip') {
+              var panel = lbDetails.querySelector('[data-panel="clip"]');
+              if (panel && !panel.dataset.loaded) lbLoadClipWords(panel);
+            }
+          });
+        });
+      })
+      .catch(function (err) {
+        if (err.name !== 'AbortError') {
+          lbDetails.innerHTML = '<div class="lb-details-loading">Could not load details.</div>';
+        }
+      });
+  }
+
+  function openLightbox(index) {
+    const cards = getCards();
+    if (!cards.length) return;
+    lbIndex = Math.max(0, Math.min(index, cards.length - 1));
+    const card = cards[lbIndex];
+
+    document.querySelectorAll('.card--active').forEach(function (c) { c.classList.remove('card--active'); });
+    card.classList.add('card--active');
+
+    lbImg.src = card.dataset.lbSrc;
+    lbImg.alt = card.dataset.lbTitle;
+    lbTitle.textContent = card.dataset.lbTitle;
+    lbLink.href = '/assets/' + card.dataset.lbId;
+    lbCounter.textContent = (lbIndex + 1) + ' / ' + cards.length;
+    lightbox.style.display = 'flex';
+    lightbox.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    card.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+    lbImg.focus();
+    loadDetails(card.dataset.lbId);
+  }
+
+  function lbClose() {
+    if (lbDetailAbort) { lbDetailAbort.abort(); lbDetailAbort = null; }
+    document.querySelectorAll('.card--active').forEach(function (c) { c.classList.remove('card--active'); });
+    lightbox.style.display = 'none';
+    lightbox.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    lbImg.src = '';
+    lbDetails.innerHTML = '<div class="lb-details-loading">Loading\u2026</div>';
+  }
+
+  function lbPrev() { if (lbIndex > 0) openLightbox(lbIndex - 1); }
+  function lbNext() {
+    const cards = getCards();
+    if (lbIndex < cards.length - 1) openLightbox(lbIndex + 1);
+  }
+
+  document.getElementById('lb-close').addEventListener('click', lbClose);
+  document.getElementById('lb-prev').addEventListener('click', lbPrev);
+  document.getElementById('lb-next').addEventListener('click', lbNext);
+
+  if (grid) {
+    grid.addEventListener('click', function (e) {
+      const card = e.target.closest('.card[data-lb-id]');
+      if (!card) return;
+      e.preventDefault();
+      const cards = getCards();
+      openLightbox(cards.indexOf(card));
+    });
+  }
+
+  lightbox.addEventListener('click', function (e) {
+    if (e.target === lightbox) lbClose();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (lightbox.style.display !== 'flex') return;
+    if (e.key === 'Escape')     { e.preventDefault(); lbClose(); }
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); lbPrev(); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); lbNext(); }
+  });
+})();
+</script>
+{% endblock %}
