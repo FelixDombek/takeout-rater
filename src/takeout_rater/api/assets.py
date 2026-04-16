@@ -696,23 +696,24 @@ def get_clip_embedding(
     """
     import struct  # noqa: PLC0415
 
+    from takeout_rater.clustering.embedding_map import _DIM  # noqa: PLC0415
+
     blob = get_clip_embedding_for_asset(conn, asset_id)
     if blob is None:
         return JSONResponse({"values": None})
 
-    dim = 768
-    expected_bytes = dim * 4
+    expected_bytes = _DIM * 4
     if len(blob) != expected_bytes:
         return JSONResponse({"values": None})
 
-    values = list(struct.unpack(f"{dim}f", blob))
+    values = list(struct.unpack(f"{_DIM}f", blob))
     vmin = min(values)
     vmax = max(values)
     span = vmax - vmin
     if span > 0:
         values = [(v - vmin) / span for v in values]
     else:
-        values = [0.5] * dim
+        values = [0.5] * _DIM
     return JSONResponse({"values": [round(v, 4) for v in values]})
 
 
