@@ -239,24 +239,16 @@
       <tr><td>Google Photos</td><td><a href="{{ asset.google_photos_url }}" target="_blank" rel="noopener">Open ↗</a></td></tr>
       {% endif %}
       <tr><td>Asset ID</td><td>{{ asset.id }}</td></tr>
-      <tr><td>Path</td><td><small>{{ asset.relpath }}</small></td></tr>
-    </table>
-
-    {% if alias_paths %}
-    <h2 style="font-size:1rem; margin-top:1.25rem; margin-bottom:0.5rem; color:#444;">Also stored at</h2>
-    <p style="font-size:0.85rem; color:#666; margin-bottom:0.5rem;">
-      This image appears in {{ alias_paths | length + 1 }} location{{ "s" if (alias_paths | length + 1) != 1 else "" }} in your Takeout archive:
-    </p>
-    <table>
-      <tr><td style="color:#888;">{{ asset.relpath }}</td><td style="color:#888;"><em>(this copy)</em></td></tr>
-      {% for alias in alias_paths %}
       <tr>
-        <td><small>{{ alias }}</small></td>
-        <td></td>
+        <td>Path{{ 's' if alias_paths else '' }}</td>
+        <td>
+          <small>{{ asset.relpath }}</small>
+          {% for alias in alias_paths %}
+          <br><small>{{ alias }}</small>
+          {% endfor %}
+        </td>
       </tr>
-      {% endfor %}
     </table>
-    {% endif %}
 
   </div>
 </div>

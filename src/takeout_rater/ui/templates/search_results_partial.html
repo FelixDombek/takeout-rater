@@ -4,8 +4,12 @@
      {% if no_embeddings|default(false) %}data-no-embeddings="true"{% endif %}
      style="display:none"></div>
 {% for item in results %}
-<div class="card">
-  <a href="/assets/{{ item.asset.id }}" aria-label="{{ item.asset.title or item.asset.filename }}">
+<div class="card"
+     data-lb-id="{{ item.asset.id }}"
+     data-lb-src="/thumbs/{{ item.asset.id }}"
+     data-lb-title="{{ item.asset.title or item.asset.filename }}">
+  <a href="/assets/{{ item.asset.id }}" aria-label="{{ item.asset.title or item.asset.filename }}"
+     onclick="return false;" tabindex="-1" aria-hidden="true">
     <img
       class="card-thumb"
       src="/thumbs/{{ item.asset.id }}"
