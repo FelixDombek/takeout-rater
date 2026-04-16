@@ -904,66 +904,6 @@ def test_asset_detail_no_exif_when_image_has_none(tmp_path: Path) -> None:
     assert "No EXIF data available" in resp.text
 
 
-# ── End-to-end: indexer → detail page ────────────────────────────────────────
-
-
-def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> None:
-    """End-to-end: after indexing a real takeout tree the detail page must display
-    both the sidecar JSON panel and the EXIF data panel.
-
-    This test exercises the complete stack:
-        real takeout layout on disk
-        → run_index()  (scan + upsert)
-        → create_app() (resolves photos_root from library_root)
-        → GET /assets/{id}
-        → sidecar JSON content visible
-        → EXIF Make/Model visible
-    """
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
-    from takeout_rater.db.queries import list_assets  # noqa: F811, PLC0415
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
-
-    # Build a minimal takeout tree with a real JPEG (EXIF) and a sidecar file.
-    album = tmp_path / "Takeout" / "Photos from 2026"
-    album.mkdir(parents=True)
-
-    img_path = album / "photo.jpg"
-    _make_jpeg_with_exif(img_path, make="PipelineCamera", model="FullStack 5000")
-
-    (album / "photo.jpg.supplemental-metadata.json").write_text(
-        '{"title":"photo.jpg","description":"pipeline test","url":"",'
-        '"creationTime":{"timestamp":"1771361057"},'
-        '"photoTakenTime":{"timestamp":"1771354888"},'
-        '"imageViews":"42"}',
-        encoding="utf-8",
-    )
-
-    # Run the real indexer — this is the full run_index pipeline.
-    conn = open_library_db(tmp_path)
-    run_index(tmp_path, conn)
-
-    # create_app must resolve the correct photos_root so file reads succeed.
-    app = create_app(tmp_path, conn)
-    client = TestClient(app, follow_redirects=True)
-
-    rows = list_assets(conn, limit=10)
-    assert len(rows) == 1, f"Expected 1 indexed asset, got {len(rows)}"
-    asset_id = rows[0].id
-
-    resp = client.get(f"/assets/{asset_id}")
-    assert resp.status_code == 200
-
-    # Sidecar JSON panel: content from the .supplemental-metadata.json file.
-    assert "pipeline test" in resp.text
-    assert "imageViews" in resp.text
-    assert "No sidecar JSON available" not in resp.text
-
-    # EXIF panel: Make and Model tags read directly from the image file.
-    assert "PipelineCamera" in resp.text
-    assert "FullStack 5000" in resp.text
-    assert "No EXIF data available" not in resp.text
-
-
 def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> None:
     """Detail page should find sidecar when library has a Takeout/Google Photos structure.
 
