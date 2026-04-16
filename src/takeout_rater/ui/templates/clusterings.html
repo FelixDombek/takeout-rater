@@ -110,11 +110,18 @@
     </p>
     <!-- Method selector -->
     <div class="job-options">
-      <label for="cluster-method"><strong>Method:</strong></label>
-      <select id="cluster-method" onchange="onClusterMethodChange()" style="min-width:14rem;">
-        <option value="phash">pHash — perceptual hashing (near-duplicates)</option>
-        <option value="clip">CLIP — semantic embedding (cross-modal similarity)</option>
-      </select>
+      <label><strong>Method:</strong></label>
+      <div class="seg-tabs" role="tablist" aria-label="Clustering method">
+        <button class="seg-tab active" id="cluster-method-phash" role="tab"
+                aria-selected="true" data-method="phash"
+                onclick="onClusterMethodChange('phash')">🔑 pHash</button>
+        <button class="seg-tab" id="cluster-method-clip" role="tab"
+                aria-selected="false" data-method="clip"
+                onclick="onClusterMethodChange('clip')">🧠 CLIP</button>
+      </div>
+      <span id="cluster-method-desc" style="font-size:0.82rem; color:#666;">
+        perceptual hashing — finds near-duplicate images
+      </span>
     </div>
 
     <!-- pHash-specific options -->
@@ -395,8 +402,21 @@
       .catch(function() { /* ignore */ });
   });
 
-  window.onClusterMethodChange = function() {
-    var method = document.getElementById('cluster-method').value;
+  window.onClusterMethodChange = function(method) {
+    // Update tab active state
+    ['phash', 'clip'].forEach(function(m) {
+      var btn = document.getElementById('cluster-method-' + m);
+      if (btn) {
+        btn.classList.toggle('active', m === method);
+        btn.setAttribute('aria-selected', m === method ? 'true' : 'false');
+      }
+    });
+    var descEl = document.getElementById('cluster-method-desc');
+    if (descEl) {
+      descEl.textContent = method === 'phash'
+        ? 'perceptual hashing — finds near-duplicate images'
+        : 'semantic embedding — groups visually/conceptually similar images';
+    }
     document.getElementById('phash-options').style.display = method === 'phash' ? '' : 'none';
     document.getElementById('clip-options').style.display  = method === 'clip'  ? '' : 'none';
   };
@@ -424,7 +444,8 @@
     var body = {};
 
     if (jobType === 'cluster') {
-      var method = document.getElementById('cluster-method').value;
+      var activeMethodBtn = document.querySelector('.seg-tab[data-method].active');
+      var method = activeMethodBtn ? activeMethodBtn.dataset.method : 'phash';
       body.method = method;
       if (method === 'clip') {
         body.clip_metric    = document.getElementById('clip-metric').value;

@@ -9,7 +9,7 @@ from collections import defaultdict
 from collections.abc import Generator
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from takeout_rater.db.queries import (
@@ -757,6 +757,104 @@ def get_similar_assets(
             if _gce(conn, asset_id) is None:
                 return JSONResponse({**base, "results": [], "error": "no_embedding"})
 
+    return JSONResponse({**base, "results": results})
+
+
+@router.post("/api/search-by-image")
+async def search_by_image(
+    request: Request,  # noqa: ARG001
+    file: UploadFile,
+    method: str = "clip",
+    metric: str = "cosine",
+    threshold: float | None = None,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Find photos similar to an uploaded image via CLIP or pHash.
+
+    The uploaded image is **not** stored in the database.  Use this endpoint
+    to implement *search by image*: upload any reference image and find
+    visually or semantically similar photos already in the library.
+
+    Body: multipart/form-data with a ``file`` field containing an image.
+
+    Query parameters:
+    - ``method``: ``"clip"`` (default) or ``"phash"``.
+    - ``metric``: For CLIP — ``"cosine"`` (default), ``"euclidean"``, or
+      ``"combined"``.  Ignored for pHash.
+    - ``threshold``: Similarity / distance threshold.  Same defaults as
+      :func:`get_similar_assets`.
+
+    Returns JSON in the same format as :func:`get_similar_assets`.
+    """
+    import io  # noqa: PLC0415
+
+    if method not in ("clip", "phash"):
+        method = "clip"
+    if metric not in ("cosine", "euclidean", "combined"):
+        metric = "cosine"
+
+    # Limit upload to 50 MB
+    _MAX_BYTES = 50 * 1024 * 1024
+    image_bytes = await file.read(_MAX_BYTES + 1)
+    if len(image_bytes) > _MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Uploaded file too large (max 50 MB).")
+
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.open(io.BytesIO(image_bytes))
+        img.load()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not open image: {exc}") from exc
+
+    base = {"method": method, "metric": metric if method == "clip" else None}
+
+    if method == "phash":
+        from takeout_rater.faces.similarity import find_similar_by_phash_hex  # noqa: PLC0415
+        from takeout_rater.scoring.phash import compute_dhash_from_image  # noqa: PLC0415
+
+        try:
+            phash_hex = compute_dhash_from_image(img)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500, detail=f"pHash computation failed: {exc}"
+            ) from exc
+
+        results = find_similar_by_phash_hex(conn, phash_hex, threshold=threshold)
+        return JSONResponse({**base, "results": results})
+
+    # CLIP path
+    import struct  # noqa: PLC0415
+
+    try:
+        import torch  # noqa: PLC0415
+
+        from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+            EMBEDDING_DIM,
+            get_clip_model,
+        )
+
+        model, preprocess, _tokenizer, device = get_clip_model()
+        img_rgb = img.convert("RGB")
+        img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
+        with torch.no_grad():
+            features = model.encode_image(img_tensor)
+            features = features / features.norm(dim=-1, keepdim=True)
+            vec = features.cpu().float().numpy().flatten()
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="CLIP dependencies not available. Install torch and open_clip.",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"CLIP embedding failed: {exc}"
+        ) from exc
+
+    from takeout_rater.faces.similarity import find_similar_by_embedding  # noqa: PLC0415
+
+    ref_blob = struct.pack(f"{EMBEDDING_DIM}f", *vec)
+    results = find_similar_by_embedding(conn, ref_blob, metric=metric, threshold=threshold)
     return JSONResponse({**base, "results": results})
 
 

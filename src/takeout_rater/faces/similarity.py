@@ -1,6 +1,6 @@
 """CLIP-based and pHash-based similarity search for photos.
 
-Two public functions are provided:
+Public functions:
 
 ``find_similar_photos``
     Given a face cluster (person group), computes a mean CLIP embedding
@@ -13,13 +13,29 @@ Two public functions are provided:
     semantically or perceptually similar using either CLIP embedding
     cosine/euclidean/angular distance, or pHash Hamming distance.
 
+``find_similar_by_embedding``
+    Like :func:`find_similar_by_asset` with ``method="clip"``, but accepts
+    a raw embedding blob directly instead of loading one from the database.
+    Used for *search by image* where the user uploads an arbitrary reference
+    image that is not stored in the library.
+
+``find_similar_by_phash_hex``
+    Like :func:`find_similar_by_asset` with ``method="phash"``, but accepts
+    a pHash hex string directly instead of loading one from the database.
+
 Usage::
 
-    from takeout_rater.faces.similarity import find_similar_photos, find_similar_by_asset
+    from takeout_rater.faces.similarity import (
+        find_similar_photos, find_similar_by_asset,
+        find_similar_by_embedding, find_similar_by_phash_hex,
+    )
 
     suggestions = find_similar_photos(conn, cluster_id=5, threshold=0.80, limit=50)
     similar = find_similar_by_asset(conn, asset_id=42, method="clip", metric="cosine", threshold=0.85)
     similar_phash = find_similar_by_asset(conn, asset_id=42, method="phash", threshold=20)
+    # Search by image – reference data from an uploaded file:
+    similar_rev = find_similar_by_embedding(conn, embedding_blob, metric="cosine")
+    similar_rev_ph = find_similar_by_phash_hex(conn, "abcdef...", threshold=20)
 """
 
 from __future__ import annotations
@@ -309,6 +325,18 @@ def _find_similar_phash(
         return []
 
     ref_hex = ref_row[0]
+    results = _phash_search_by_hex(conn, ref_hex, max_bits=max_bits)
+    # Exclude the reference asset itself
+    return [r for r in results if r["asset_id"] != asset_id]
+
+
+def _phash_search_by_hex(
+    conn: sqlite3.Connection,
+    ref_hex: str,
+    *,
+    max_bits: int = 20,
+) -> list[dict]:
+    """Inner pHash search given a pre-computed hex string (includes all assets)."""
     try:
         ref_int = int(ref_hex, 16)
     except (ValueError, TypeError):
@@ -324,8 +352,6 @@ def _find_similar_phash(
 
     results: list[dict] = []
     for aid, phash_hex, taken_at, filename in all_rows:
-        if aid == asset_id:
-            continue
         try:
             h_int = int(phash_hex, 16)
         except (ValueError, TypeError):
@@ -344,3 +370,112 @@ def _find_similar_phash(
     # Sort best-first: lower Hamming distance = more similar
     results.sort(key=lambda r: r["score"])
     return results
+
+
+# ---------------------------------------------------------------------------
+# Public helpers for "search by image" (reference data supplied directly)
+# ---------------------------------------------------------------------------
+
+
+def find_similar_by_embedding(
+    conn: sqlite3.Connection,
+    ref_blob: bytes,
+    *,
+    metric: str = "cosine",
+    threshold: float | None = None,
+) -> list[dict]:
+    """Find photos similar to a given CLIP embedding blob.
+
+    Like :func:`find_similar_by_asset` with ``method="clip"``, but accepts
+    the reference embedding directly instead of loading it from the database.
+    Used for *search by image* where the user supplies an arbitrary reference
+    image that is **not** stored in the library.
+
+    Args:
+        conn: Open library database connection.
+        ref_blob: Raw CLIP embedding as packed float32 bytes (``_CLIP_DIM × 4``
+            bytes, i.e. 3072 bytes for the default 768-dimensional model).
+        metric: ``"cosine"`` (default), ``"euclidean"``, or ``"combined"``.
+        threshold: Similarity / distance threshold.  Defaults to the same values
+            as :func:`find_similar_by_asset`.
+
+    Returns:
+        Same format as :func:`find_similar_by_asset`.  Empty list when
+        *ref_blob* cannot be decoded or is all-zero.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    if metric not in _CLIP_METRIC_DEFAULTS:
+        metric = "cosine"
+    if threshold is None:
+        threshold = _CLIP_METRIC_DEFAULTS[metric]
+
+    expected = _CLIP_DIM * 4
+    if len(ref_blob) != expected:
+        return []
+
+    ref_vec = np.array(struct.unpack(f"{_CLIP_DIM}f", ref_blob), dtype=np.float32)
+    ref_norm = float(np.linalg.norm(ref_vec))
+    if ref_norm < 1e-9:
+        return []
+    ref_vec = ref_vec / ref_norm
+
+    # Load all embeddings joined with asset metadata
+    all_rows = conn.execute(
+        "SELECT ce.asset_id, ce.embedding, a.taken_at, a.filename"
+        " FROM clip_embeddings ce"
+        " JOIN assets a ON a.id = ce.asset_id"
+        " ORDER BY ce.asset_id"
+    ).fetchall()
+
+    results: list[dict] = []
+    for aid, blob, taken_at, filename in all_rows:
+        if len(blob) != expected:
+            continue
+        vec = np.array(struct.unpack(f"{_CLIP_DIM}f", blob), dtype=np.float32)
+        norm = float(np.linalg.norm(vec))
+        if norm < 1e-9:
+            continue
+        vec = vec / norm
+        cos_sim = float(np.dot(vec, ref_vec))
+        if _cos_sim_passes(cos_sim, metric, threshold):
+            results.append(
+                {
+                    "asset_id": aid,
+                    "score": _cos_sim_to_score(cos_sim, metric),
+                    "taken_at": taken_at,
+                    "filename": filename,
+                }
+            )
+
+    reverse_sort = metric == "cosine"
+    results.sort(key=lambda r: r["score"], reverse=reverse_sort)
+    return results
+
+
+def find_similar_by_phash_hex(
+    conn: sqlite3.Connection,
+    ref_hex: str,
+    *,
+    threshold: float | None = None,
+) -> list[dict]:
+    """Find photos similar to a given pHash hex string.
+
+    Like :func:`find_similar_by_asset` with ``method="phash"``, but accepts
+    the reference pHash directly instead of loading it from the database.
+    Used for *search by image* where the user supplies an arbitrary reference
+    image that is **not** stored in the library.
+
+    Args:
+        conn: Open library database connection.
+        ref_hex: 64-character hexadecimal dhash string.
+        threshold: Maximum Hamming distance (default 20).
+
+    Returns:
+        Same format as :func:`find_similar_by_asset`.  Empty list when
+        *ref_hex* cannot be parsed.
+    """
+    if threshold is None:
+        threshold = 20.0
+    max_bits = int(threshold)
+    return _phash_search_by_hex(conn, ref_hex, max_bits=max_bits)
