@@ -251,6 +251,20 @@ def run_index(
     now = int(time.time())
     num_workers = os.cpu_count() or 1
 
+    # Pre-fetch the sets of asset IDs that already have phash / CLIP records.
+    # Workers share these read-only sets to check whether phash/CLIP need to be
+    # computed without opening an extra DB connection per asset.  Assets that
+    # are genuinely new (is_new=True) always have phash/CLIP computed; the sets
+    # are only consulted for existing assets (is_new=False) so that a
+    # previously-aborted indexing run — where the asset row was committed but
+    # phash/CLIP were not saved — is corrected on the next run.
+    _ids_with_phash: frozenset[int] = frozenset(
+        r[0] for r in conn.execute("SELECT asset_id FROM phash").fetchall()
+    )
+    _ids_with_clip: frozenset[int] = frozenset(
+        r[0] for r in conn.execute("SELECT asset_id FROM clip_embeddings").fetchall()
+    )
+
     # _claim_lock guards the critical section: lookup_sha256 + upsert_asset.
     # This prevents two workers from both claiming the same hash as "new".
     _claim_lock = threading.Lock()
@@ -396,28 +410,12 @@ def run_index(
 
         # Compute phash + CLIP for assets that are missing these records.
         # For new assets both are always absent.  For assets already in the DB
-        # (is_new=False), check actual presence so that a previously-aborted
-        # indexing run — where the asset row was committed but phash/CLIP were
-        # not saved — is corrected on the next run rather than silently skipped.
-        needs_phash = is_new
-        needs_clip = is_new
-        if not is_new:
-            wconn_check = open_db(db_path)
-            try:
-                needs_phash = (
-                    wconn_check.execute(
-                        "SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)
-                    ).fetchone()
-                    is None
-                )
-                needs_clip = (
-                    wconn_check.execute(
-                        "SELECT 1 FROM clip_embeddings WHERE asset_id = ?", (asset_id,)
-                    ).fetchone()
-                    is None
-                )
-            finally:
-                wconn_check.close()
+        # (is_new=False), use the pre-fetched sets built before the thread pool
+        # started so that a previously-aborted indexing run — where the asset
+        # row was committed but phash/CLIP were not saved — is corrected on the
+        # next run rather than silently skipped.
+        needs_phash = is_new or asset_id not in _ids_with_phash
+        needs_clip = is_new or asset_id not in _ids_with_clip
 
         if needs_phash or needs_clip:
             if thumb_img is None and thumb.exists():
