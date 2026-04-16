@@ -682,11 +682,10 @@ def test_start_index_job_creates_job_progress(client_with_db: TestClient) -> Non
 
 def _run_rescan_worker(tmp_path: Path) -> None:
     """Helper: start and synchronously wait for the rescan worker to finish."""
-    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
-
     import threading  # noqa: E402
     import time  # noqa: E402
 
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
     from takeout_rater.db.connection import open_library_db  # noqa: E402
     from takeout_rater.ui.app import create_app  # noqa: E402
 

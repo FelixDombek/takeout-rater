@@ -918,6 +918,18 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
             from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
 
+            # Pre-fetch the set of asset IDs that already have a phash so the
+            # per-asset check is a cheap in-memory set lookup instead of a DB
+            # round-trip.  In full mode all assets are re-hashed, so the set
+            # is intentionally empty.
+            if mode == "full":
+                _assets_with_phash: set[int] = set()
+            else:
+                _assets_with_phash = {
+                    r[0]
+                    for r in worker_conn.execute("SELECT asset_id FROM phash").fetchall()
+                }
+
             for asset_id, _relpath, sidecar_relpath in rows:
                 progress.current_item = sidecar_relpath or _relpath
                 updates: dict = {}
@@ -1051,9 +1063,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 # corrects assets whose phash was never saved due to an aborted
                 # indexing run.
                 if thumb.exists():
-                    needs_phash = mode == "full" or worker_conn.execute(
-                        "SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)
-                    ).fetchone() is None
+                    needs_phash = asset_id not in _assets_with_phash
                     if needs_phash:
                         try:
                             import io  # noqa: PLC0415
