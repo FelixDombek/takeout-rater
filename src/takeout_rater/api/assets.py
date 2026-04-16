@@ -710,10 +710,7 @@ def get_clip_embedding(
     vmin = min(values)
     vmax = max(values)
     span = vmax - vmin
-    if span > 0:
-        values = [(v - vmin) / span for v in values]
-    else:
-        values = [0.5] * _DIM
+    values = [(v - vmin) / span for v in values] if span > 0 else [0.5] * _DIM
     return JSONResponse({"values": [round(v, 4) for v in values]})
 
 
