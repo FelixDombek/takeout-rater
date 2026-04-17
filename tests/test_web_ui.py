@@ -905,10 +905,10 @@ def test_asset_detail_no_exif_when_image_has_none(tmp_path: Path) -> None:
 
 
 def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> None:
-    """Detail page should find sidecar when the caller passes the Google Photos directory directly.
+    """Detail page should find sidecar when library has a Takeout/Google Photos structure.
 
-    Relpaths are stored relative to the photos root, and app.state.takeout_root
-    must point to that same root for file reads to succeed.
+    Relpaths are stored relative to the Google Photos root, but app.state.takeout_root
+    must point to the same root (not to library_root) for file reads to succeed.
     """
     conn = _make_db()
     # Simulate the real on-disk structure: library_root/Takeout/Google Photos/...
@@ -933,8 +933,8 @@ def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> N
             "indexed_at": int(time.time()),
         },
     )
-    # Pass google_photos directly as the photos root (new design: no Takeout/ assumed).
-    app = create_app(google_photos, conn)
+    # Pass library_root (parent of Takeout/) — app must resolve photos_root itself.
+    app = create_app(tmp_path, conn)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
@@ -943,7 +943,7 @@ def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> N
 
 
 def test_asset_detail_sidecar_partial_with_nested_google_photos_dir(tmp_path: Path) -> None:
-    """Lightbox partial should also find sidecar when photos root is passed directly."""
+    """Lightbox partial should also find sidecar with nested Takeout/Google Photos structure."""
     conn = _make_db()
     google_photos = tmp_path / "Takeout" / "Google Photos"
     sidecar_relpath = "Photos from 2026/img.jpg.supplemental-metadata.json"
@@ -966,7 +966,7 @@ def test_asset_detail_sidecar_partial_with_nested_google_photos_dir(tmp_path: Pa
             "indexed_at": int(time.time()),
         },
     )
-    app = create_app(google_photos, conn)
+    app = create_app(tmp_path, conn)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}?partial=1")
     assert resp.status_code == 200
