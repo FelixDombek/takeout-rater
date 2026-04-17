@@ -96,6 +96,26 @@ def library_status(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_user_dir(value: str, label: str) -> "Path":
+    """Canonicalise and validate a user-supplied directory path.
+
+    Resolves symlinks and ``~`` expansion, then asserts the path is an
+    existing directory.  Raises :class:`fastapi.HTTPException` (400) on any
+    failure.  All user-provided paths in this module are funnelled through
+    this function to provide a clear sanitisation barrier for path operations.
+    """
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    # expanduser + resolve canonicalises the path (removes .., resolves links)
+    # so there is no path-traversal risk from the raw user string.
+    p = Path(value).expanduser().resolve()
+    if not p.exists():
+        raise HTTPException(status_code=400, detail=f"{label} does not exist: {p}")
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"{label} is not a directory: {p}")
+    return p
+
+
 class _TakeoutPathBody(BaseModel):
     path: str
     db_root: str | None = None
@@ -120,26 +140,8 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     is launched automatically; callers can poll ``GET /api/jobs/status?job_type=index``
     to track progress.
     """
-    from fastapi import HTTPException
-
-    # Both paths are user-supplied but validated (exist, are directories) and
-    # fully resolved to absolute paths before use.  The app intentionally allows
-    # the user to choose any local directory for their photo library and DB state.
-    p = Path(body.path).expanduser().resolve()
-    if not p.exists():
-        raise HTTPException(status_code=400, detail=f"Path does not exist: {p}")
-    if not p.is_dir():
-        raise HTTPException(status_code=400, detail=f"Path is not a directory: {p}")
-
-    db_root: Path
-    if body.db_root:
-        db_root = Path(body.db_root).expanduser().resolve()
-        if not db_root.exists():
-            raise HTTPException(status_code=400, detail=f"DB root does not exist: {db_root}")
-        if not db_root.is_dir():
-            raise HTTPException(status_code=400, detail=f"DB root is not a directory: {db_root}")
-    else:
-        db_root = p
+    p = _resolve_user_dir(body.path, "Photos root")
+    db_root: Path = _resolve_user_dir(body.db_root, "DB root") if body.db_root else p
 
     set_photos_root(p)
     set_db_root(None if db_root == p else db_root)
@@ -192,9 +194,7 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
     """
     from fastapi import HTTPException
 
-    db_root_path = Path(body.db_root).expanduser().resolve()
-    if not db_root_path.exists() or not db_root_path.is_dir():
-        raise HTTPException(status_code=400, detail=f"Directory does not exist: {db_root_path}")
+    db_root_path = _resolve_user_dir(body.db_root, "DB root")
 
     db_file = db_root_path / "takeout-rater" / "library.sqlite"
     if not db_file.exists():
@@ -206,11 +206,7 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
 
     # Determine photos root: caller > saved config > fall back to db_root.
     if body.photos_root:
-        photos_path = Path(body.photos_root).expanduser().resolve()
-        if not photos_path.exists() or not photos_path.is_dir():
-            raise HTTPException(
-                status_code=400, detail=f"Photos root does not exist: {photos_path}"
-            )
+        photos_path = _resolve_user_dir(body.photos_root, "Photos root")
     else:
         from takeout_rater import config as _cfg  # noqa: PLC0415
 

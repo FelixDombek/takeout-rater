@@ -416,7 +416,6 @@ def _cmd_browse(args: argparse.Namespace) -> int:
     conn = open_library_db(db_root)
     app = create_app(photos_root, conn, db_root=db_root)
 
-    url = f"http://{args.host}:{args.port}/assets"
     try:
         port = _find_free_port(args.host, args.port)
     except OSError as exc:
