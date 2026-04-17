@@ -354,12 +354,9 @@
 </div>
 
 {# ── Info tabs (shared macro) ────────────────────────────────────────── #}
-<div class="info-tabs" id="info-tabs-panel">
+<div class="info-tabs">
   {{ info_tabs(scores, sidecar_json, exif_data, phash_hex, asset.id) }}
 </div>
-<p id="info-tabs-external-notice" style="display:none; color:#999; font-size:0.85rem; margin:1.25rem 0;">
-  Scores, EXIF and hash data are only available for library assets.
-</p>
 
 {# ── More like this panel ──────────────────────────────────────────────────── #}
 <div class="more-like-this" id="mlt-panel" data-asset-id="{{ asset.id }}">
@@ -420,28 +417,43 @@
 </div>
 
 <script>
-(function () {
-  function highlightJson(pre) {
-    const text = pre.textContent;
-    let html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    html = html.replace(
-      /("(?:\\.|[^"\\])*")(\s*:)|("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)/g,
-      function (m, key, colon, str, num, bool, nil) {
-        if (key && colon) return '<span class="json-key">' + key + '</span>' + colon;
-        if (str)  return '<span class="json-string">' + str + '</span>';
-        if (num)  return '<span class="json-number">' + num + '</span>';
-        if (bool) return '<span class="json-bool">' + bool + '</span>';
-        if (nil)  return '<span class="json-null">' + nil + '</span>';
-        return m;
-      }
-    );
-    pre.innerHTML = html;
-  }
+// ── JSON syntax highlighter (global — used both at load time and for external images) ──
+function highlightJson(pre) {
+  var text = pre.textContent;
+  var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  html = html.replace(
+    /("(?:\\.|[^"\\])*")(\s*:)|("(?:\\.|[^"\\])*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)/g,
+    function (m, key, colon, str, num, bool, nil) {
+      if (key && colon) return '<span class="json-key">' + key + '</span>' + colon;
+      if (str)  return '<span class="json-string">'  + str  + '</span>';
+      if (num)  return '<span class="json-number">'  + num  + '</span>';
+      if (bool) return '<span class="json-bool">'    + bool + '</span>';
+      if (nil)  return '<span class="json-null">'    + nil  + '</span>';
+      return m;
+    }
+  );
+  pre.innerHTML = html;
+}
 
-  document.querySelectorAll(".json-highlight").forEach(function (pre) {
-    highlightJson(pre);
+document.querySelectorAll('.json-highlight').forEach(highlightJson);
+
+// ── CLIP word-cloud builder (global — used both by lazy-load and external images) ──
+function buildClipCloud(panel, words) {
+  var maxScore = words[0].score || 1;
+  var cloud = document.createElement('div');
+  cloud.className = 'lb-clip-cloud';
+  words.forEach(function (w) {
+    var tag = document.createElement('span');
+    tag.className = 'lb-clip-tag' + (w.user_tag ? ' lb-clip-tag--user' : '');
+    var rel = w.score / maxScore;
+    tag.style.opacity  = (0.45 + 0.55 * rel).toFixed(2);
+    tag.style.fontSize = (0.72 + 0.36 * rel).toFixed(2) + 'rem';
+    tag.title = (w.user_tag ? 'custom tag — ' : '') + 'score: ' + w.score.toFixed(4);
+    tag.textContent = w.word;
+    cloud.appendChild(tag);
   });
-})();
+  panel.appendChild(cloud);
+}
 
 // ── Info tabs (shared lb-* component, light-theme context) ─────────────────
 (function () {
@@ -481,20 +493,7 @@ function loadClipWords(panel) {
         return;
       }
       panel.dataset.loaded = '1';
-      var maxScore = data.words[0].score || 1;
-      var cloud = document.createElement('div');
-      cloud.className = 'lb-clip-cloud';
-      data.words.forEach(function (w) {
-        var tag = document.createElement('span');
-        tag.className = 'lb-clip-tag' + (w.user_tag ? ' lb-clip-tag--user' : '');
-        var rel = w.score / maxScore;
-        tag.style.opacity = (0.45 + 0.55 * rel).toFixed(2);
-        tag.style.fontSize = (0.72 + 0.36 * rel).toFixed(2) + 'rem';
-        tag.title = (w.user_tag ? 'custom tag — ' : '') + 'score: ' + w.score.toFixed(4);
-        tag.textContent = w.word;
-        cloud.appendChild(tag);
-      });
-      panel.appendChild(cloud);
+      buildClipCloud(panel, data.words);
     })
     .catch(function () {
       panel.querySelector('.lb-clip-loading').style.display = 'none';
@@ -642,47 +641,49 @@ function loadClipWords(panel) {
 })();
 
 {% if phash_hex %}
-(function () {
-  const BITS = 256, SIDE = 16, BLOCK = 4;
-  const canvas = document.querySelector('.info-tabs .lb-phash-canvas');
+// ── Named canvas functions (also called after external-image clear) ─────────
+function drawPhashCanvas() {
+  var canvas = document.querySelector('.info-tabs .lb-phash-canvas');
   if (!canvas) return;
-  const hex = canvas.dataset.phash;
+  var hex = canvas.dataset.phash;
   if (!hex) return;
-  const ctx = canvas.getContext('2d');
-  // Convert hex → big integer bits, MSB-first (matches compute_dhash bit layout)
-  const bigInt = BigInt('0x' + hex);
-  for (let idx = 0; idx < BITS; idx++) {
-    const bit = Number((bigInt >> BigInt(idx)) & 1n);
-    const row = Math.floor(idx / SIDE);
-    const col = idx % SIDE;
+  var BITS = 256, SIDE = 16, BLOCK = 4;
+  var ctx = canvas.getContext('2d');
+  var bigInt = BigInt('0x' + hex);
+  for (var idx = 0; idx < BITS; idx++) {
+    var bit = Number((bigInt >> BigInt(idx)) & 1n);
+    var row = Math.floor(idx / SIDE);
+    var col = idx % SIDE;
     ctx.fillStyle = bit ? '#ffffff' : '#1a1a2e';
     ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
   }
-})();
+}
+drawPhashCanvas();
 
-(function () {
-  const COLS = 32, ROWS = 24, BLOCK = 4;
-  const wrap = document.querySelector('.info-tabs .lb-embed-wrap');
+function loadEmbedCanvas() {
+  var COLS = 32, ROWS = 24, BLOCK = 4;
+  var wrap = document.querySelector('.info-tabs .lb-embed-wrap');
   if (!wrap) return;
-  const assetId = parseInt(wrap.dataset.assetId, 10);
-  const canvas = wrap.querySelector('.lb-embed-canvas');
+  var assetId = parseInt(wrap.dataset.assetId, 10);
+  var canvas = wrap.querySelector('.lb-embed-canvas');
   if (!canvas) return;
   fetch('/api/assets/' + assetId + '/clip-embedding')
     .then(function (r) { return r.json(); })
     .then(function (data) {
       if (!data.values || data.values.length !== COLS * ROWS) return;
       wrap.style.display = '';
-      const ctx = canvas.getContext('2d');
-      for (let i = 0; i < data.values.length; i++) {
-        const gray = Math.round(data.values[i] * 255);
-        const col = i % COLS;
-        const row = Math.floor(i / COLS);
+      var ctx = canvas.getContext('2d');
+      for (var i = 0; i < data.values.length; i++) {
+        var gray = Math.round(data.values[i] * 255);
+        var col = i % COLS;
+        var row = Math.floor(i / COLS);
         ctx.fillStyle = 'rgb(' + gray + ',' + gray + ',' + gray + ')';
         ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
       }
     })
     .catch(function () {});
-})();
+}
+loadEmbedCanvas();
 {% endif %}
 
 // ── Similarity panel (More like this / Search by image) ──────────────────
@@ -691,93 +692,208 @@ function loadClipWords(panel) {
 <script>
 var _mltPanel = SimilarityPanel.init({ assetId: {{ asset.id }} });
 
-// ── Search by image (drag-and-drop reference image) ────────────────────────
+// ── Search by image ─────────────────────────────────────────────────────────
 (function () {
-  var dropZone    = document.getElementById('ref-drop-zone');
-  var previewWrap = document.getElementById('ref-preview-wrap');
+  var dropZone     = document.getElementById('ref-drop-zone');
+  var previewWrap  = document.getElementById('ref-preview-wrap');
   var previewLabel = document.getElementById('ref-preview-label');
-  var refStatus   = document.getElementById('ref-status');
-  var clearBtn    = document.getElementById('ref-clear-btn');
+  var refStatus    = document.getElementById('ref-status');
 
-  // Hero image elements
-  var detailImg     = document.getElementById('detail-img');
-  var detailTitle   = document.getElementById('detail-title');
-  var metaLibrary   = document.getElementById('detail-meta-library');
-  var metaExternal  = document.getElementById('detail-meta-external');
-  var infoTabsPanel = document.getElementById('info-tabs-panel');
-  var infoTabsNote  = document.getElementById('info-tabs-external-notice');
+  var detailImg    = document.getElementById('detail-img');
+  var detailTitle  = document.getElementById('detail-title');
+  var metaLibrary  = document.getElementById('detail-meta-library');
+  var metaExternal = document.getElementById('detail-meta-external');
+  var tabsEl       = document.querySelector('.info-tabs');
 
-  // Capture original values so we can restore them on clear
-  var _origSrc   = detailImg ? detailImg.src   : '';
-  var _origAlt   = detailImg ? detailImg.alt   : '';
-  var _origTitle = detailTitle ? detailTitle.textContent : '';
+  // Whether the original library asset had a pHash (controls tab visibility on clear)
+  var _hasLibraryPhash = {{ 'true' if phash_hex else 'false' }};
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  function drawPhashFromHex(hex) {
+    var phashPanel = tabsEl.querySelector('.lb-tab-panel[data-panel="phash"]');
+    if (!phashPanel) return;
+    var canvas = phashPanel.querySelector('.lb-phash-canvas');
+    if (!canvas) return;
+    canvas.dataset.phash = hex;
+    phashPanel.querySelector('.lb-phash-hex').textContent = hex;
+    var BITS = 256, SIDE = 16, BLOCK = 4;
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    var bigInt = BigInt('0x' + hex);
+    for (var idx = 0; idx < BITS; idx++) {
+      var bit = Number((bigInt >> BigInt(idx)) & 1n);
+      var row = Math.floor(idx / SIDE);
+      var col = idx % SIDE;
+      ctx.fillStyle = bit ? '#ffffff' : '#1a1a2e';
+      ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
+    }
+  }
+
+  function drawEmbedFromValues(values) {
+    var phashPanel = tabsEl.querySelector('.lb-tab-panel[data-panel="phash"]');
+    if (!phashPanel) return;
+    var wrap = phashPanel.querySelector('.lb-embed-wrap');
+    var canvas = wrap && wrap.querySelector('.lb-embed-canvas');
+    if (!canvas) return;
+    var COLS = 32, ROWS = 24, BLOCK = 4;
+    if (values.length !== COLS * ROWS) return;
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (var i = 0; i < values.length; i++) {
+      var gray = Math.round(values[i] * 255);
+      ctx.fillStyle = 'rgb(' + gray + ',' + gray + ',' + gray + ')';
+      ctx.fillRect((i % COLS) * BLOCK, Math.floor(i / COLS) * BLOCK, BLOCK, BLOCK);
+    }
+    wrap.style.display = '';
+  }
+
+  function setTabActive(name) {
+    tabsEl.querySelectorAll('.lb-tab-btn').forEach(function (b) {
+      var active = b.dataset.tab === name;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    tabsEl.querySelectorAll('.lb-tab-panel').forEach(function (p) {
+      p.classList.toggle('active', p.dataset.panel === name);
+    });
+  }
+
+  function setPanelContent(name, html) {
+    var panel = tabsEl.querySelector('.lb-tab-panel[data-panel="' + name + '"]');
+    if (panel) panel.innerHTML = html;
+  }
+
+  // ── Render: called once both the data URL and analyze response are ready ──
+
+  function renderExternalImage(dataUrl, file, data) {
+    // Hero image
+    detailImg.style.filter = '';
+    detailImg.style.opacity = '';
+    detailImg.src = dataUrl;
+    detailImg.alt = file.name;
+    detailImg.style.background = '';
+
+    // Meta table
+    metaLibrary.style.display = 'none';
+    document.getElementById('ext-filename').textContent = file.name;
+    document.getElementById('ext-type').textContent = file.type || '—';
+    document.getElementById('ext-size').textContent =
+      file.size ? (file.size / 1024).toFixed(0) + '\u00a0KB' : '—';
+    metaExternal.style.display = '';
+
+    // Scores — not computed for external images
+    setPanelContent('scores', '<p class="lb-empty-note">Scores are not available for external images.</p>');
+
+    // JSON — no sidecar for an arbitrary dropped file
+    setPanelContent('json', '<p class="lb-empty-note">No sidecar JSON available.</p>');
+
+    // EXIF
+    if (data.exif) {
+      var pre = document.createElement('pre');
+      pre.className = 'lb-sidecar-pre json-highlight';
+      pre.textContent = data.exif;
+      var exifPanel = tabsEl.querySelector('.lb-tab-panel[data-panel="exif"]');
+      exifPanel.innerHTML = '';
+      exifPanel.appendChild(pre);
+      highlightJson(pre);
+    } else {
+      setPanelContent('exif', '<p class="lb-empty-note">No EXIF tags found in this file.</p>');
+    }
+
+    // pHash + embed
+    var phashBtn   = tabsEl.querySelector('.lb-tab-btn[data-tab="phash"]');
+    var phashPanel = tabsEl.querySelector('.lb-tab-panel[data-panel="phash"]');
+    if (data.phash) {
+      // Unhide the tab button and panel (removing inline display:none)
+      phashBtn.style.display = '';
+      phashPanel.style.display = '';
+      // Clear any leftover "active" class on a previous panel before the
+      // phash panel existed, then reset active to scores
+      drawPhashFromHex(data.phash);
+      if (data.clip_embedding) {
+        drawEmbedFromValues(data.clip_embedding);
+      }
+    }
+
+    // CLIP words
+    var clipPanel = tabsEl.querySelector('.lb-tab-panel[data-panel="clip"]');
+    clipPanel.dataset.loaded = '1';   // prevent the lazy-load click handler
+    if (data.clip_words === null) {
+      clipPanel.innerHTML = '<p class="lb-empty-note">CLIP model not available.</p>';
+    } else if (data.clip_words && data.clip_words.length > 0) {
+      clipPanel.innerHTML = '';
+      buildClipCloud(clipPanel, data.clip_words);
+    } else {
+      clipPanel.innerHTML = '<p class="lb-empty-note">No CLIP tags found.</p>';
+    }
+
+    // Activate Scores tab
+    setTabActive('scores');
+
+    refStatus.textContent = '';
+  }
+
+  // ── loadFile: upload → analyze → render ──────────────────────────────────
 
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) {
       refStatus.textContent = 'Please drop or select an image file.';
       return;
     }
-    var reader = new FileReader();
-    reader.onload = function (e) {
-      var dataUrl = e.target.result;
 
-      // Replace the hero image with the dropped file
-      detailImg.src = dataUrl;
-      detailImg.alt = file.name;
-      detailImg.style.background = '';
+    // Show loading state: dim the current hero while we wait for the backend
+    detailImg.style.filter  = 'blur(3px)';
+    detailImg.style.opacity = '0.35';
+    refStatus.textContent = 'Analyzing…';
 
-      // Update the page title
-      detailTitle.textContent = file.name;
+    // Mark every tab panel as "loading" so the lazy CLIP fetch won't fire
+    tabsEl.querySelectorAll('.lb-tab-panel').forEach(function (p) {
+      p.dataset.loaded = 'loading';
+    });
 
-      // Swap the meta table
-      metaLibrary.style.display = 'none';
-      document.getElementById('ext-filename').textContent = file.name;
-      document.getElementById('ext-type').textContent = file.type || '—';
-      document.getElementById('ext-size').textContent =
-        file.size ? (file.size / 1024).toFixed(0) + '\u00a0KB' : '—';
-      metaExternal.style.display = '';
-
-      // Hide library-specific tabs, show brief notice
-      infoTabsPanel.style.display = 'none';
-      infoTabsNote.style.display = '';
-    };
-    reader.readAsDataURL(file);
-
-    // Show the compact widget preview label + clear button
+    // Show compact widget
     previewLabel.textContent = file.name;
     previewWrap.classList.add('visible');
     dropZone.style.display = 'none';
-    refStatus.textContent = '';
 
-    // Trigger similarity search
+    // Read as data URL (fast, local)
+    var dataUrlPromise = new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload  = function (e) { resolve(e.target.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    // Analyze on the backend (pHash + EXIF + CLIP — nothing stored in DB)
+    var fd = new FormData();
+    fd.append('file', file);
+    var analyzePromise = fetch('/api/upload/analyze?top_k=30', {
+      method: 'POST', body: fd
+    }).then(function (r) { return r.json(); });
+
+    // Fire similarity search in parallel — no need to wait for analyze
     _mltPanel.setReferenceFile(file);
+
+    // Render once both are ready
+    Promise.all([dataUrlPromise, analyzePromise])
+      .then(function (results) {
+        renderExternalImage(results[0], file, results[1]);
+      })
+      .catch(function () {
+        detailImg.style.filter  = '';
+        detailImg.style.opacity = '';
+        refStatus.textContent = 'Analysis failed.';
+      });
   }
+
+  // ── Public handlers ───────────────────────────────────────────────────────
 
   window.refOnFileSelected = function (file) { loadFile(file); };
 
   window.refClear = function () {
-    // Restore hero image
-    detailImg.src = _origSrc;
-    detailImg.alt = _origAlt;
-
-    // Restore title
-    detailTitle.textContent = _origTitle;
-
-    // Restore meta table
-    metaLibrary.style.display = '';
-    metaExternal.style.display = 'none';
-
-    // Restore info tabs
-    infoTabsPanel.style.display = '';
-    infoTabsNote.style.display = 'none';
-
-    // Reset compact widget
-    previewLabel.textContent = '';
-    previewWrap.classList.remove('visible');
-    dropZone.style.display = '';
-    refStatus.textContent = '';
-
-    _mltPanel.setReferenceFile(null);
+    // Reload the page — cheapest, most reliable restore of all panel state
+    window.location.reload();
   };
 
   // Drag-and-drop on the drop zone
@@ -795,7 +911,7 @@ var _mltPanel = SimilarityPanel.init({ assetId: {{ asset.id }} });
     if (file) loadFile(file);
   });
 
-  // Paste an image from the clipboard (anywhere on the page)
+  // Paste from clipboard (anywhere on the page)
   document.addEventListener('paste', function (e) {
     var items = e.clipboardData && e.clipboardData.items;
     if (!items) return;

@@ -99,6 +99,68 @@ def _read_sidecar_json(takeout_root: Path | None, asset: AssetRow) -> str | None
         return None
 
 
+def _make_exif_serializable(value: object) -> object:
+    """Recursively convert a PIL EXIF value to a JSON-serialisable type."""
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.decode("latin-1")
+    if isinstance(value, (list, tuple)):
+        return [_make_exif_serializable(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _make_exif_serializable(v) for k, v in value.items()}
+    try:
+        return float(value) if hasattr(value, "numerator") else value
+    except Exception:  # noqa: BLE001
+        return str(value)
+
+
+def _extract_exif_from_image(img: object) -> str | None:
+    """Return pretty-printed EXIF JSON extracted from an already-open PIL Image.
+
+    Returns ``None`` when no EXIF data is present or on any error.
+    """
+    try:
+        from PIL import ExifTags  # noqa: PLC0415
+    except ImportError:
+        return None
+
+    try:
+        exif = img.getexif()  # type: ignore[union-attr]
+        if not exif:
+            return None
+
+        data: dict[str, object] = {}
+        for tag_id, value in exif.items():
+            tag_name = ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")
+            data[tag_name] = _make_exif_serializable(value)
+
+        try:
+            exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+            if exif_ifd:
+                section: dict[str, object] = {}
+                for tag_id, value in exif_ifd.items():
+                    section[ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")] = _make_exif_serializable(value)
+                data["ExifIFD"] = section
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
+            if gps_ifd:
+                section = {}
+                for tag_id, value in gps_ifd.items():
+                    section[ExifTags.GPSTAGS.get(tag_id, f"Tag_{tag_id:#06x}")] = _make_exif_serializable(value)
+                data["GPSIFD"] = section
+        except Exception:  # noqa: BLE001
+            pass
+
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
     """Return a pretty-printed JSON string of all EXIF data for *asset*, or ``None``.
 
@@ -113,7 +175,7 @@ def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
     if not image_path.exists():
         return None
     try:
-        from PIL import ExifTags, Image  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
     except ImportError:
         return None
 
@@ -124,63 +186,9 @@ def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
     except ImportError:
         pass
 
-    def _make_serializable(value: object) -> object:
-        """Recursively convert a value to a JSON-serialisable type."""
-        if isinstance(value, bytes):
-            # Try UTF-8 first; fall back to Latin-1 which guarantees every byte
-            # round-trips without loss (unlike UTF-8, which may raise on arbitrary bytes).
-            try:
-                return value.decode("utf-8")
-            except UnicodeDecodeError:
-                return value.decode("latin-1")
-        if isinstance(value, (list, tuple)):
-            return [_make_serializable(v) for v in value]
-        if isinstance(value, dict):
-            return {str(k): _make_serializable(v) for k, v in value.items()}
-        # IFDRational (Pillow) → float; anything else that is numeric stays as-is.
-        try:
-            return float(value) if hasattr(value, "numerator") else value
-        except Exception:  # noqa: BLE001
-            return str(value)
-
     try:
         with Image.open(image_path) as img:
-            exif = img.getexif()
-            if not exif:
-                return None
-
-            data: dict[str, object] = {}
-
-            # Main IFD tags.
-            for tag_id, value in exif.items():
-                tag_name = ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")
-                data[tag_name] = _make_serializable(value)
-
-            # EXIF sub-IFD.
-            try:
-                exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
-                if exif_ifd:
-                    exif_section: dict[str, object] = {}
-                    for tag_id, value in exif_ifd.items():
-                        tag_name = ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")
-                        exif_section[tag_name] = _make_serializable(value)
-                    data["ExifIFD"] = exif_section
-            except Exception:  # noqa: BLE001
-                pass
-
-            # GPS sub-IFD.
-            try:
-                gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
-                if gps_ifd:
-                    gps_section: dict[str, object] = {}
-                    for tag_id, value in gps_ifd.items():
-                        tag_name = ExifTags.GPSTAGS.get(tag_id, f"Tag_{tag_id:#06x}")
-                        gps_section[tag_name] = _make_serializable(value)
-                    data["GPSIFD"] = gps_section
-            except Exception:  # noqa: BLE001
-                pass
-
-            return json.dumps(data, indent=2, ensure_ascii=False)
+            return _extract_exif_from_image(img)
     except Exception:  # noqa: BLE001
         return None
 
@@ -893,6 +901,132 @@ def get_clip_embedding(
     span = vmax - vmin
     values = [(v - vmin) / span for v in values] if span > 0 else [0.5] * _DIM
     return JSONResponse({"values": [round(v, 4) for v in values]})
+
+
+@router.post("/api/upload/analyze")
+async def analyze_uploaded_image(
+    request: Request,
+    file: UploadFile,
+    top_k: int = 20,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Compute EXIF, pHash, and CLIP data for an uploaded image without storing it.
+
+    Nothing is written to the database.  Use this to populate the info tabs
+    on the detail page when the user drops an arbitrary reference image.
+
+    Body: multipart/form-data with a ``file`` field containing an image.
+
+    Returns JSON::
+
+        {
+          "phash": <str|null>,           // 64-char dhash16 hex
+          "exif":  <str|null>,           // pretty-printed JSON string
+          "clip_embedding": <[float]|null>, // 768 values, min-max normalised
+          "clip_words": <[{word, score, user_tag}]|null>  // null = model unavailable
+        }
+    """
+    import io  # noqa: PLC0415
+
+    top_k = max(1, min(top_k, 100))
+
+    _MAX_BYTES = 50 * 1024 * 1024
+    image_bytes = await file.read(_MAX_BYTES + 1)
+    if len(image_bytes) > _MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Uploaded file too large (max 50 MB).")
+
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        img = Image.open(io.BytesIO(image_bytes))
+        img.load()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not open image: {exc}") from exc
+
+    result: dict[str, object] = {}
+
+    # ── pHash ──────────────────────────────────────────────────────────────
+    try:
+        from takeout_rater.scoring.phash import compute_dhash_from_image  # noqa: PLC0415
+
+        result["phash"] = compute_dhash_from_image(img)
+    except Exception:  # noqa: BLE001
+        result["phash"] = None
+
+    # ── EXIF ───────────────────────────────────────────────────────────────
+    result["exif"] = _extract_exif_from_image(img)
+
+    # ── CLIP embedding + words ─────────────────────────────────────────────
+    try:
+        import struct  # noqa: PLC0415
+
+        import numpy as np  # noqa: PLC0415
+        import torch  # noqa: PLC0415
+
+        from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+            EMBEDDING_DIM,
+            get_clip_model,
+        )
+
+        model, preprocess, _tokenizer, device = get_clip_model()
+        img_rgb = img.convert("RGB")
+        img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
+        with torch.no_grad():
+            features = model.encode_image(img_tensor)
+            features = features / features.norm(dim=-1, keepdim=True)
+            vec = features.cpu().float().numpy().flatten()
+
+        # Min-max normalise to [0,1] for canvas rendering
+        values = list(vec)
+        vmin, vmax = min(values), max(values)
+        span = vmax - vmin
+        result["clip_embedding"] = (
+            [round((v - vmin) / span, 4) for v in values] if span > 0 else [0.5] * EMBEDDING_DIM
+        )
+
+        # CLIP words: reuse the same vocab/user-tag machinery as get_clip_words
+        vocab = _get_clip_vocab_matrix(request)
+        if vocab is not None:
+            vocab_matrix, vocab_terms = vocab
+            image_vec = np.array(vec, dtype=np.float32)
+            norm = np.linalg.norm(image_vec)
+            if norm > 0:
+                image_vec = image_vec / norm
+
+            user_tags = list_clip_user_tags(conn)
+            user_tag_set = set(user_tags)
+            novel_user_tags = [t for t in user_tags if t not in set(vocab_terms)]
+            user_matrix_result = _get_user_tags_matrix(request, novel_user_tags)
+
+            if user_matrix_result is not None:
+                combined_matrix = np.vstack([vocab_matrix, user_matrix_result[0]])
+                combined_terms = vocab_terms + user_matrix_result[1]
+            else:
+                combined_matrix = vocab_matrix
+                combined_terms = vocab_terms
+
+            scores_arr = combined_matrix @ image_vec
+            top_k_actual = min(top_k, len(combined_terms))
+            ranked = np.argsort(-scores_arr)[:top_k_actual]
+            result["clip_words"] = [
+                {
+                    "word": combined_terms[int(i)],
+                    "score": round(float(scores_arr[i]), 4),
+                    "user_tag": combined_terms[int(i)] in user_tag_set,
+                }
+                for i in ranked
+            ]
+        else:
+            result["clip_words"] = None
+
+    except ImportError:
+        result["clip_embedding"] = None
+        result["clip_words"] = None
+    except Exception:  # noqa: BLE001
+        result["clip_embedding"] = None
+        result["clip_words"] = None
+
+    return JSONResponse(result)
 
 
 @router.get("/thumbs/{asset_id}")

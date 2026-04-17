@@ -26,6 +26,9 @@
     {% if phash_hex %}
     <button class="lb-tab-btn" role="tab" aria-selected="false"
             data-tab="phash">pHash</button>
+    {% else %}
+    <button class="lb-tab-btn" role="tab" aria-selected="false"
+            data-tab="phash" style="display:none">pHash</button>
     {% endif %}
     <button class="lb-tab-btn" role="tab" aria-selected="false"
             data-tab="clip">CLIP</button>
@@ -65,14 +68,13 @@
     {% endif %}
   </div>
 
-  {# pHash tab — only present when a hash is available #}
-  {% if phash_hex %}
-  <div class="lb-tab-panel" data-panel="phash">
+  {# pHash tab — always in DOM; hidden via inline style when no hash is available #}
+  <div class="lb-tab-panel" data-panel="phash"{% if not phash_hex %} style="display:none"{% endif %}>
     <div class="lb-phash-wrap">
       <canvas class="lb-phash-canvas" width="64" height="64"
-              data-phash="{{ phash_hex }}"
+              data-phash="{{ phash_hex or '' }}"
               title="Difference hash (dhash16) – 16×16 grid. Bright = left neighbour brighter; dark = right neighbour brighter."></canvas>
-      <div class="lb-phash-hex">{{ phash_hex }}</div>
+      <div class="lb-phash-hex">{{ phash_hex or '' }}</div>
     </div>
     <div class="lb-embed-wrap" data-asset-id="{{ asset_id }}" style="display:none">
       <div class="lb-embed-label">CLIP embedding (32 × 24, grayscale)</div>
@@ -80,7 +82,6 @@
               title="CLIP image embedding – 768 values arranged as a 32×24 grid of 4×4 px cells, min-max normalised to grayscale."></canvas>
     </div>
   </div>
-  {% endif %}
 
   {# CLIP tab #}
   <div class="lb-tab-panel" data-panel="clip" data-asset-id="{{ asset_id }}">
