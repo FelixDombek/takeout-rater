@@ -752,7 +752,9 @@ def get_similar_assets(
             if no_data:
                 return JSONResponse({**base, "results": [], "error": "no_phash"})
         else:
-            from takeout_rater.db.queries import get_clip_embedding_for_asset as _gce  # noqa: PLC0415
+            from takeout_rater.db.queries import (
+                get_clip_embedding_for_asset as _gce,  # noqa: PLC0415
+            )
 
             if _gce(conn, asset_id) is None:
                 return JSONResponse({**base, "results": [], "error": "no_embedding"})
