@@ -407,6 +407,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         raise HTTPException(status_code=409, detail="A score job is already running.")
 
     library_root: Path = request.app.state.library_root
+    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     progress = JobProgress(job_type="score", running=True, message="Starting…")
     jobs["score"] = progress
 
@@ -422,8 +423,8 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
         from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
 
-        worker_conn = open_library_db(library_root)
-        thumbs_dir = library_state_dir(library_root) / "thumbs"
+        worker_conn = open_library_db(db_root)
+        thumbs_dir = library_state_dir(db_root) / "thumbs"
         try:
             # ── Run scorers ──────────────────────────────────────────────────
             # Build the list of (scorer_id, variant_id) pairs to run.
@@ -579,6 +580,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
         raise HTTPException(status_code=409, detail="A cluster job is already running.")
 
     library_root: Path = request.app.state.library_root
+    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     progress = JobProgress(job_type="cluster", running=True, message="Starting…")
     jobs["cluster"] = progress
 
@@ -596,7 +598,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
             open_library_db,  # noqa: PLC0415
         )
 
-        worker_conn = open_library_db(library_root)
+        worker_conn = open_library_db(db_root)
         try:
             if method == "clip":
                 # ── CLIP embedding clustering ────────────────────────────────
@@ -743,6 +745,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
         raise HTTPException(status_code=409, detail="An export job is already running.")
 
     library_root: Path = request.app.state.library_root
+    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     scorer_id = body.scorer_id
     metric_key = body.metric_key
 
@@ -773,7 +776,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
             find_google_photos_root,
         )  # noqa: PLC0415
 
-        worker_conn = open_library_db(library_root)
+        worker_conn = open_library_db(db_root)
         try:
             if count_clusters(worker_conn) == 0:
                 progress.message = "No clusters found. Run 'Cluster' first."
@@ -783,7 +786,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                 return
 
             takeout_root = find_google_photos_root(library_root / "Takeout")
-            export_dir = library_state_dir(library_root) / "exports"
+            export_dir = library_state_dir(db_root) / "exports"
             export_dir.mkdir(parents=True, exist_ok=True)
 
             _BATCH = 200
@@ -904,6 +907,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="mode must be 'missing_only' or 'full'.")
 
     library_root: Path = request.app.state.library_root
+    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     mode = body.mode
     progress = JobProgress(job_type="rescan", running=True, message="Starting…")
     jobs["rescan"] = progress
@@ -918,7 +922,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             list_asset_ids_needing_rescan,
         )
 
-        worker_conn = open_library_db(library_root)
+        worker_conn = open_library_db(db_root)
         try:
             # Try to locate the photos root for sidecar re-parsing and
             # thumbnail regeneration; continue even if the Takeout directory
@@ -933,7 +937,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             except (FileNotFoundError, ValueError, OSError):
                 pass
 
-            thumbs_dir = library_state_dir(library_root) / "thumbs"
+            thumbs_dir = library_state_dir(db_root) / "thumbs"
             thumbs_dir.mkdir(parents=True, exist_ok=True)
 
             rows = list_asset_ids_needing_rescan(worker_conn, full=(mode == "full"))
@@ -1178,6 +1182,7 @@ def start_embed_job(request: Request) -> JSONResponse:
         raise HTTPException(status_code=409, detail="An embed job is already running.")
 
     library_root: Path = request.app.state.library_root
+    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     progress = JobProgress(job_type="embed", running=True, message="Starting…")
     jobs["embed"] = progress
 
@@ -1196,8 +1201,8 @@ def start_embed_job(request: Request) -> JSONResponse:
             thumb_path_for_id,
         )  # noqa: PLC0415
 
-        worker_conn = open_library_db(library_root)
-        thumbs_dir = library_state_dir(library_root) / "thumbs"
+        worker_conn = open_library_db(db_root)
+        thumbs_dir = library_state_dir(db_root) / "thumbs"
         batch_size = 64
         try:
             asset_ids = list_asset_ids_without_embedding(worker_conn)
@@ -1349,6 +1354,7 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
         raise HTTPException(status_code=409, detail="A face detection job is already running.")
 
     library_root: Path = request.app.state.library_root
+    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     model_pack = body.model_pack
     det_thresh = body.det_thresh
     progress = JobProgress(job_type="detect_faces", running=True, message="Starting…")
@@ -1376,8 +1382,8 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             thumb_path_for_id,
         )  # noqa: PLC0415
 
-        worker_conn = open_library_db(library_root)
-        thumbs_dir = library_state_dir(library_root) / "thumbs"
+        worker_conn = open_library_db(db_root)
+        thumbs_dir = library_state_dir(db_root) / "thumbs"
         batch_size = 32
         try:
             params = {
@@ -1515,6 +1521,7 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
         raise HTTPException(status_code=409, detail="A face clustering job is already running.")
 
     library_root: Path = request.app.state.library_root
+    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     eps = body.eps
     min_samples = body.min_samples
     detection_run_id = body.detection_run_id
@@ -1526,7 +1533,7 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
         from takeout_rater.db.queries import count_face_embeddings  # noqa: PLC0415
         from takeout_rater.faces.clustering import cluster_faces  # noqa: PLC0415
 
-        worker_conn = open_library_db(library_root)
+        worker_conn = open_library_db(db_root)
         try:
             n_emb = count_face_embeddings(worker_conn)
             if n_emb == 0:

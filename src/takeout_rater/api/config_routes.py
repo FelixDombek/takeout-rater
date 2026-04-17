@@ -157,6 +157,7 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
 
     request.app.state.db_path = library_db_path(db_root)
+    request.app.state.db_root = db_root
     # photos root is used directly — no Takeout/ resolution needed.
     request.app.state.takeout_root = p
     request.app.state.thumbs_dir = db_root / "takeout-rater" / "thumbs"
@@ -224,6 +225,7 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
     from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
 
     request.app.state.db_path = library_db_path(db_root_path)
+    request.app.state.db_root = db_root_path
     request.app.state.takeout_root = photos_path
     request.app.state.thumbs_dir = db_root_path / "takeout-rater" / "thumbs"
 
