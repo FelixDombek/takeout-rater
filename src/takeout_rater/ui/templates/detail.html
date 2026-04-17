@@ -81,16 +81,71 @@
   .detail-meta td { padding: 0.3rem 0.5rem; vertical-align: top; }
   .detail-meta td:first-child { color: #666; white-space: nowrap; padding-right: 1rem; }
   .detail-meta tr:nth-child(even) td { background: #f9f9f9; }
-  .back-link { margin-bottom: 1rem; display: inline-block; }
+  /* ── Detail page top navigation row ──────────────────────────────── */
+  .back-link { display: inline-block; }
+  .detail-nav-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
 
-  /* ── Info tabs ──────────────────────────────────────────────────────── */
+  /* ── Compact "Search by image" widget (top-right) ─────────────────── */
+  .sbi-drop-zone {
+    border: 1.5px dashed #c0c9d8;
+    border-radius: 6px;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.82rem;
+    color: #666;
+    cursor: pointer;
+    position: relative;
+    white-space: nowrap;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .sbi-drop-zone:hover, .sbi-drop-zone.dragover {
+    background: #eef4ff;
+    border-color: #1a5cdb;
+    color: #1a5cdb;
+  }
+  .sbi-drop-zone input[type=file] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+  .sbi-preview {
+    display: none;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: #555;
+  }
+  .sbi-preview.visible { display: flex; }
+  .sbi-preview-img {
+    width: 28px;
+    height: 28px;
+    object-fit: cover;
+    border-radius: 3px;
+    border: 1px solid #ddd;
+    flex-shrink: 0;
+  }
+  .sbi-preview-label { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sbi-status { color: #888; }
+  .sbi-clear-btn { font-size: 0.75rem; padding: 0.15rem 0.4rem; }
+
+  /* ── Info tabs — light-theme overrides for the shared lb-* component ─ */
   .info-tabs { margin-top: 1.25rem; }
-  .info-tab-bar {
+  .info-tabs .lb-info-tabs { display: block; }
+  .info-tabs .lb-tab-bar {
     display: flex;
     gap: 0;
     border-bottom: 2px solid #ddd;
   }
-  .info-tab-btn {
+  .info-tabs .lb-tab-btn {
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
@@ -104,24 +159,20 @@
     text-transform: uppercase;
     transition: color 0.1s, border-color 0.1s;
   }
-  .info-tab-btn:hover { color: #333; }
-  .info-tab-btn.active { color: #1a5cdb; border-bottom-color: #1a5cdb; }
-  .info-tab-panel { display: none; padding-top: 0.75rem; }
-  .info-tab-panel.active { display: block; }
+  .info-tabs .lb-tab-btn:hover { color: #333; }
+  .info-tabs .lb-tab-btn.active { color: #1a5cdb; border-bottom-color: #1a5cdb; }
+  .info-tabs .lb-tab-panel { display: none; padding-top: 0.75rem; }
+  .info-tabs .lb-tab-panel.active { display: block; flex: unset; min-height: unset; }
+  .info-tabs .lb-empty-note { color: #999; font-size: 0.85rem; margin: 0.5rem 0; }
 
-  /* Scores tab */
-  .scores-table { border-collapse: collapse; width: 100%; }
-  .scores-table th {
-    text-align: left; padding: 0.3rem 0.5rem;
-    color: #666; font-weight: normal; border-bottom: 1px solid #eee;
-  }
-  .scores-table th:last-child { text-align: right; }
-  .scores-table td { padding: 0.3rem 0.5rem; vertical-align: top; }
-  .scores-table tr:nth-child(even) td { background: #f9f9f9; }
-  .muted { color: #999; }
+  /* Scores */
+  .info-tabs .lb-detail-table { border-collapse: collapse; width: 100%; }
+  .info-tabs .lb-detail-table td { padding: 0.3rem 0.5rem; vertical-align: top; }
+  .info-tabs .lb-detail-table tr:nth-child(even) td { background: #f9f9f9; }
+  .info-tabs .lb-muted { color: #999; }
 
-  /* JSON / EXIF tabs */
-  .metadata-pre {
+  /* JSON / EXIF */
+  .info-tabs .lb-sidecar-pre {
     margin: 0;
     padding: 0.75rem;
     background: #f5f5f5;
@@ -131,65 +182,58 @@
     line-height: 1.5;
     overflow-x: auto;
     white-space: pre;
-  }
-  .metadata-subsection { margin-bottom: 1rem; }
-  .metadata-subsection-label {
-    font-size: 0.75rem;
-    color: #888;
-    margin-bottom: 0.25rem;
-    font-style: italic;
+    color: #333;
   }
   .json-key    { color: #0b5394; }
   .json-string { color: #38761d; }
   .json-number { color: #741b47; }
   .json-bool   { color: #b45f06; }
   .json-null   { color: #999; }
+
   /* pHash canvas */
-  .phash-canvas-wrap {
+  .info-tabs .lb-phash-wrap {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 0.4rem;
   }
-  .phash-canvas {
+  .info-tabs .lb-phash-canvas {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     border: 1px solid #ddd;
     border-radius: 3px;
   }
-  .phash-hex {
+  .info-tabs .lb-phash-hex {
     font-family: monospace;
     font-size: 0.75rem;
     color: #888;
     word-break: break-all;
   }
-  /* CLIP embedding grid */
-  .embed-canvas-wrap {
+
+  /* CLIP embedding canvas */
+  .info-tabs .lb-embed-wrap {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 0.3rem;
     margin-top: 0.75rem;
   }
-  .embed-canvas-label {
-    font-size: 0.75rem;
-    color: #666;
-    font-style: italic;
-  }
-  #embed-canvas {
+  .info-tabs .lb-embed-label { font-size: 0.75rem; color: #666; font-style: italic; }
+  .info-tabs .lb-embed-canvas {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     border: 1px solid #ddd;
     border-radius: 3px;
   }
+
   /* CLIP tag cloud */
-  .clip-tag-cloud {
+  .info-tabs .lb-clip-cloud {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
     padding: 0.25rem 0;
   }
-  .clip-tag {
+  .info-tabs .lb-clip-tag {
     display: inline-block;
     padding: 0.2rem 0.55rem;
     border-radius: 999px;
@@ -199,21 +243,40 @@
     white-space: nowrap;
     transition: background 0.1s;
   }
-  .clip-tag:hover { background: #dce6ff; }
-  .clip-tag.user-tag {
+  .info-tabs .lb-clip-tag:hover { background: #dce6ff; }
+  .info-tabs .lb-clip-tag--user {
     background: #f0fdf4;
     color: #166534;
     border: 1px solid #bbf7d0;
   }
-  .clip-tag.user-tag:hover { background: #dcfce7; }
+  .info-tabs .lb-clip-tag--user:hover { background: #dcfce7; }
 
   /* ── More like this panel ──────────────────────────────── (see similarity-panel.css) */
 </style>
 <link rel="stylesheet" href="/static/similarity-panel.css">
 {% endblock %}
 
+{% from "_info_tabs.html" import info_tabs %}
+
 {% block content %}
-<a class="btn back-link" href="javascript:history.back()">← Back</a>
+<div class="detail-nav-row">
+  <a class="btn back-link" href="javascript:history.back()">← Back</a>
+  {# ── Compact search-by-image widget (top-right) ───────────────────────── #}
+  <div id="search-by-image-section">
+    <div class="sbi-drop-zone" id="ref-drop-zone"
+         title="Drop or click to find visually similar photos in your library">
+      <input type="file" id="ref-file-input" accept="image/*"
+             onchange="refOnFileSelected(this.files[0])">
+      <span id="ref-drop-hint">🔍 Search by image</span>
+    </div>
+    <div class="sbi-preview" id="ref-preview-wrap">
+      <img class="sbi-preview-img" id="ref-preview-img" src="" alt="Reference image">
+      <span class="sbi-preview-label" id="ref-preview-label"></span>
+      <span class="sbi-status" id="ref-status"></span>
+      <button class="btn sbi-clear-btn" id="ref-clear-btn" onclick="refClear()">✕</button>
+    </div>
+  </div>
+</div>
 
 <div class="detail-layout">
   <div>
@@ -282,113 +345,9 @@
   <div id="img-overlay-hint">Scroll to zoom · drag to pan · Esc to close</div>
 </div>
 
-{# ── Info tabs: SCORES / JSON / EXIF ─────────────────────────────── #}
+{# ── Info tabs (shared macro) ────────────────────────────────────────── #}
 <div class="info-tabs">
-  <div class="info-tab-bar" role="tablist">
-    <button class="info-tab-btn active" role="tab" aria-selected="true"
-            aria-controls="tab-scores" id="tbtn-scores"
-            onclick="switchTab('scores')">Scores</button>
-    <button class="info-tab-btn" role="tab" aria-selected="false"
-            aria-controls="tab-json" id="tbtn-json"
-            onclick="switchTab('json')">JSON</button>
-    <button class="info-tab-btn" role="tab" aria-selected="false"
-            aria-controls="tab-exif" id="tbtn-exif"
-            onclick="switchTab('exif')">EXIF</button>
-    {% if phash_hex %}
-    <button class="info-tab-btn" role="tab" aria-selected="false"
-            aria-controls="tab-phash" id="tbtn-phash"
-            onclick="switchTab('phash')">pHash</button>
-    {% endif %}
-    <button class="info-tab-btn" role="tab" aria-selected="false"
-            aria-controls="tab-clip" id="tbtn-clip"
-            onclick="switchTab('clip')">CLIP</button>
-  </div>
-
-  {# SCORES tab #}
-  <div id="tab-scores" class="info-tab-panel active" role="tabpanel" aria-labelledby="tbtn-scores">
-    {% if scores %}
-    <table class="scores-table">
-      <tr>
-        <th>Scorer</th>
-        <th>Metric</th>
-        <th style="text-align:right">Value</th>
-      </tr>
-      {% for score in scores %}
-      <tr>
-        <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="muted">({{ score.variant_id }})</span>{% endif %}</td>
-        <td>{{ score.metric_key }}</td>
-        <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No scores recorded yet.</p>
-    {% endif %}
-  </div>
-
-  {# JSON tab #}
-  <div id="tab-json" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-json">
-    {% if sidecar_json %}
-    <pre class="metadata-pre json-highlight">{{ sidecar_json }}</pre>
-    {% else %}
-    <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No sidecar JSON available.</p>
-    {% endif %}
-  </div>
-
-  {# EXIF tab #}
-  <div id="tab-exif" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-exif">
-    {% if exif_data %}
-    <pre class="metadata-pre json-highlight">{{ exif_data }}</pre>
-    {% else %}
-    <p style="color:#999; font-size:0.85rem; margin:0.5rem 0;">No EXIF data available.</p>
-    {% endif %}
-  </div>
-
-  {# pHash tab #}
-  {% if phash_hex %}
-  <div id="tab-phash" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-phash">
-    <div class="phash-canvas-wrap">
-      <canvas id="phash-canvas" class="phash-canvas" width="64" height="64"
-              title="Difference hash (dhash16) – 16×16 grid, each cell shown as a 4×4 px block.
-Bright pixel = left neighbour was brighter; dark pixel = right neighbour was brighter."></canvas>
-      <div class="phash-hex" title="64-character hex encoding of the 256-bit dhash">{{ phash_hex }}</div>
-    </div>
-    <div class="embed-canvas-wrap" id="embed-canvas-wrap" style="display:none">
-      <div class="embed-canvas-label">CLIP embedding (32 × 24, grayscale)</div>
-      <canvas id="embed-canvas" width="128" height="96"
-              title="CLIP image embedding – 768 values arranged as a 32×24 grid of 4×4 px cells, min-max normalised to grayscale."></canvas>
-    </div>
-  </div>
-  {% endif %}
-
-  {# CLIP tab #}
-  <div id="tab-clip" class="info-tab-panel" role="tabpanel" aria-labelledby="tbtn-clip"
-       data-asset-id="{{ asset.id }}">
-    <p class="clip-loading" style="display:none; color:#999; font-size:0.85rem; margin:0.5rem 0;">Loading…</p>
-    <p class="clip-empty" style="color:#999; font-size:0.85rem; margin:0.5rem 0;">Run the Embed job on the <a href="/clip">CLIP page</a> to generate CLIP tags.</p>
-  </div>
-</div>{# /info-tabs #}
-
-{# ── Search by image panel ───────────────────────────────────────────────── #}
-<div class="ref-image-section" id="search-by-image-section">
-  <div class="ref-image-header">
-    <strong>🔍 Search by image</strong>
-    <span style="font-size:0.82rem; color:#666;">
-      Drop or paste any reference image to find visually similar photos in your library.
-    </span>
-    <button class="btn" id="ref-clear-btn" style="display:none;" onclick="refClear()">✕ Clear</button>
-  </div>
-  <div class="ref-drop-zone" id="ref-drop-zone" title="Click to choose a file, or drag and drop an image here">
-    <input type="file" id="ref-file-input" accept="image/*" onchange="refOnFileSelected(this.files[0])">
-    <span id="ref-drop-hint">📂 Drop an image here, or click to select — supports JPEG, PNG, WebP, …</span>
-  </div>
-  <div class="ref-preview-wrap" id="ref-preview-wrap">
-    <img class="ref-preview-img" id="ref-preview-img" src="" alt="Reference image">
-    <div>
-      <div class="ref-preview-label" id="ref-preview-label"></div>
-      <div class="ref-status" id="ref-status"></div>
-    </div>
-  </div>
+  {{ info_tabs(scores, sidecar_json, exif_data, phash_hex, asset.id) }}
 </div>
 
 {# ── More like this panel ──────────────────────────────────────────────────── #}
@@ -473,54 +432,62 @@ Bright pixel = left neighbour was brighter; dark pixel = right neighbour was bri
   });
 })();
 
-function switchTab(name) {
-  document.querySelectorAll(".info-tab-btn").forEach(function (btn) {
-    const active = btn.id === "tbtn-" + name;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-selected", active ? "true" : "false");
+// ── Info tabs (shared lb-* component, light-theme context) ─────────────────
+(function () {
+  var tabsEl = document.querySelector('.info-tabs');
+  if (!tabsEl) return;
+  tabsEl.querySelectorAll('.lb-tab-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var name = btn.dataset.tab;
+      tabsEl.querySelectorAll('.lb-tab-btn').forEach(function (b) {
+        var active = b.dataset.tab === name;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      tabsEl.querySelectorAll('.lb-tab-panel').forEach(function (panel) {
+        panel.classList.toggle('active', panel.dataset.panel === name);
+      });
+      if (name === 'clip') {
+        var clipPanel = tabsEl.querySelector('.lb-tab-panel[data-panel="clip"]');
+        if (clipPanel && !clipPanel.dataset.loaded) {
+          loadClipWords(clipPanel);
+        }
+      }
+    });
   });
-  document.querySelectorAll(".info-tab-panel").forEach(function (panel) {
-    panel.classList.toggle("active", panel.id === "tab-" + name);
-  });
-  if (name === "clip") {
-    var panel = document.getElementById("tab-clip");
-    if (panel && !panel.dataset.loaded) {
-      loadClipWords(panel);
-    }
-  }
-}
+})();
 
 function loadClipWords(panel) {
   var assetId = panel.dataset.assetId;
-  panel.querySelector(".clip-loading").style.display = "";
-  panel.querySelector(".clip-empty").style.display = "none";
-  fetch("/api/assets/" + assetId + "/clip-words?top_k=30")
+  panel.querySelector('.lb-clip-loading').style.display = '';
+  panel.querySelector('.lb-clip-empty').style.display = 'none';
+  fetch('/api/assets/' + assetId + '/clip-words?top_k=30')
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      panel.querySelector(".clip-loading").style.display = "none";
+      panel.querySelector('.lb-clip-loading').style.display = 'none';
       if (!data.words || data.words.length === 0) {
-        panel.querySelector(".clip-empty").style.display = "";
+        panel.querySelector('.lb-clip-empty').style.display = '';
         return;
       }
-      panel.dataset.loaded = "1";
+      panel.dataset.loaded = '1';
       var maxScore = data.words[0].score || 1;
-      var cloud = document.createElement("div");
-      cloud.className = "clip-tag-cloud";
+      var cloud = document.createElement('div');
+      cloud.className = 'lb-clip-cloud';
       data.words.forEach(function (w) {
-        var tag = document.createElement("span");
-        tag.className = w.user_tag ? "clip-tag user-tag" : "clip-tag";
+        var tag = document.createElement('span');
+        tag.className = 'lb-clip-tag' + (w.user_tag ? ' lb-clip-tag--user' : '');
         var rel = w.score / maxScore;
         tag.style.opacity = (0.45 + 0.55 * rel).toFixed(2);
-        tag.style.fontSize = (0.72 + 0.36 * rel).toFixed(2) + "rem";
-        tag.title = (w.user_tag ? "custom tag — " : "") + "score: " + w.score.toFixed(4);
+        tag.style.fontSize = (0.72 + 0.36 * rel).toFixed(2) + 'rem';
+        tag.title = (w.user_tag ? 'custom tag — ' : '') + 'score: ' + w.score.toFixed(4);
         tag.textContent = w.word;
         cloud.appendChild(tag);
       });
       panel.appendChild(cloud);
     })
     .catch(function () {
-      panel.querySelector(".clip-loading").style.display = "none";
-      panel.querySelector(".clip-empty").style.display = "";
+      panel.querySelector('.lb-clip-loading').style.display = 'none';
+      panel.querySelector('.lb-clip-empty').style.display = '';
     });
 }
 
@@ -665,41 +632,41 @@ function loadClipWords(panel) {
 
 {% if phash_hex %}
 (function () {
-  const hex = {{ phash_hex | tojson }};
-  const BITS = 256;
-  const SIDE = 16;
-  const BLOCK = 4;
-  const canvas = document.getElementById("phash-canvas");
+  const BITS = 256, SIDE = 16, BLOCK = 4;
+  const canvas = document.querySelector('.info-tabs .lb-phash-canvas');
   if (!canvas) return;
-  const ctx = canvas.getContext("2d");
+  const hex = canvas.dataset.phash;
+  if (!hex) return;
+  const ctx = canvas.getContext('2d');
   // Convert hex → big integer bits, MSB-first (matches compute_dhash bit layout)
-  const bigInt = BigInt("0x" + hex);
+  const bigInt = BigInt('0x' + hex);
   for (let idx = 0; idx < BITS; idx++) {
     const bit = Number((bigInt >> BigInt(idx)) & 1n);
     const row = Math.floor(idx / SIDE);
     const col = idx % SIDE;
-    ctx.fillStyle = bit ? "#ffffff" : "#1a1a2e";
+    ctx.fillStyle = bit ? '#ffffff' : '#1a1a2e';
     ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
   }
 })();
 
 (function () {
-  const assetId = {{ asset.id }};
   const COLS = 32, ROWS = 24, BLOCK = 4;
-  const wrap = document.getElementById("embed-canvas-wrap");
-  const canvas = document.getElementById("embed-canvas");
-  if (!wrap || !canvas) return;
-  fetch("/api/assets/" + assetId + "/clip-embedding")
+  const wrap = document.querySelector('.info-tabs .lb-embed-wrap');
+  if (!wrap) return;
+  const assetId = parseInt(wrap.dataset.assetId, 10);
+  const canvas = wrap.querySelector('.lb-embed-canvas');
+  if (!canvas) return;
+  fetch('/api/assets/' + assetId + '/clip-embedding')
     .then(function (r) { return r.json(); })
     .then(function (data) {
       if (!data.values || data.values.length !== COLS * ROWS) return;
-      wrap.style.display = "";
-      const ctx = canvas.getContext("2d");
+      wrap.style.display = '';
+      const ctx = canvas.getContext('2d');
       for (let i = 0; i < data.values.length; i++) {
         const gray = Math.round(data.values[i] * 255);
         const col = i % COLS;
         const row = Math.floor(i / COLS);
-        ctx.fillStyle = "rgb(" + gray + "," + gray + "," + gray + ")";
+        ctx.fillStyle = 'rgb(' + gray + ',' + gray + ',' + gray + ')';
         ctx.fillRect(col * BLOCK, row * BLOCK, BLOCK, BLOCK);
       }
     })

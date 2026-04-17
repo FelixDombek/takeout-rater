@@ -145,6 +145,25 @@
     </p>
   </div>
   {% endif %}
+
+  <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e0e0e0;">
+
+  <div>
+    <h2 style="font-size:1rem; margin-bottom:0.3rem;">Load existing library</h2>
+    <p style="font-size:0.85rem; color:#666; margin-bottom:0.75rem;">
+      Switch to a takeout-rater library that has already been indexed, without re-importing.
+      Point to the folder that contains the <code>takeout-rater/</code> sub-directory.
+    </p>
+    <div class="path-row">
+      <input type="text" id="switch-db-root-input" class="path-input"
+             placeholder="/path/to/folder-containing-takeout-rater-dir">
+      <button class="btn" id="btn-pick-switch-db">Browse…</button>
+    </div>
+    <div class="actions" style="margin-top:0.75rem;">
+      <button class="btn btn-primary" id="btn-switch-library">Load library</button>
+    </div>
+    <div id="switch-status-msg"></div>
+  </div>
 </div>
 
 <script>
@@ -270,6 +289,58 @@
         showStatus('Error: ' + err.message, 'error');
         btnSave.disabled = false;
       });
+  });
+
+  // ── Switch to existing library ─────────────────────────────────────────────
+  var btnPickSwitchDb = document.getElementById('btn-pick-switch-db');
+  var switchDbRootInput = document.getElementById('switch-db-root-input');
+  var btnSwitch = document.getElementById('btn-switch-library');
+  var switchStatusMsg = document.getElementById('switch-status-msg');
+
+  function showSwitchStatus(msg, cls) {
+    switchStatusMsg.textContent = msg;
+    switchStatusMsg.className = cls;
+  }
+
+  btnPickSwitchDb.addEventListener('click', function () {
+    btnPickSwitchDb.disabled = true;
+    btnPickSwitchDb.textContent = 'Opening…';
+    openPicker(switchDbRootInput).finally(function () {
+      btnPickSwitchDb.disabled = false;
+      btnPickSwitchDb.textContent = 'Browse…';
+    });
+  });
+
+  btnSwitch.addEventListener('click', function () {
+    var dbRoot = switchDbRootInput.value.trim();
+    if (!dbRoot) {
+      showSwitchStatus('Please enter or select the folder containing takeout-rater/.', 'error');
+      return;
+    }
+    btnSwitch.disabled = true;
+    fetch('/api/config/switch-library', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ db_root: dbRoot })
+    })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (d) { throw new Error(d.detail || r.statusText); });
+        }
+        return r.json();
+      })
+      .then(function () {
+        showSwitchStatus('✓ Library loaded! Redirecting…', 'ok');
+        setTimeout(function () { window.location.href = '/assets'; }, 800);
+      })
+      .catch(function (err) {
+        showSwitchStatus('Error: ' + err.message, 'error');
+        btnSwitch.disabled = false;
+      });
+  });
+
+  switchDbRootInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { btnSwitch.click(); }
   });
 
   // Allow pressing Enter in the text fields to trigger Save

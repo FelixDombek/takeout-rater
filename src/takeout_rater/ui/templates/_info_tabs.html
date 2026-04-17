@@ -1,0 +1,91 @@
+{#
+  Shared macro for the Scores / JSON / EXIF / pHash / CLIP tab panel.
+
+  Rendered with lb-* class names so lightbox.js can handle tab switching and
+  content rendering (pHash canvas, CLIP embedding canvas, CLIP words) in both
+  the full-page detail view and the lightbox panel.
+
+  Parameters
+  ----------
+  scores       : list of score dicts (scorer_id, variant_id, metric_key, value)
+  sidecar_json : str | None  – raw sidecar JSON
+  exif_data    : str | None  – EXIF JSON
+  phash_hex    : str | None  – hex-encoded dhash (omits pHash tab when falsy)
+  asset_id     : int          – asset database ID
+  clip_job_url : str          – URL for the "run CLIP embed" link (default /clip)
+#}
+{% macro info_tabs(scores, sidecar_json, exif_data, phash_hex, asset_id, clip_job_url='/clip') %}
+<div class="lb-info-tabs">
+  <div class="lb-tab-bar" role="tablist">
+    <button class="lb-tab-btn active" role="tab" aria-selected="true"
+            data-tab="scores">Scores</button>
+    <button class="lb-tab-btn" role="tab" aria-selected="false"
+            data-tab="json">JSON</button>
+    <button class="lb-tab-btn" role="tab" aria-selected="false"
+            data-tab="exif">EXIF</button>
+    {% if phash_hex %}
+    <button class="lb-tab-btn" role="tab" aria-selected="false"
+            data-tab="phash">pHash</button>
+    {% endif %}
+    <button class="lb-tab-btn" role="tab" aria-selected="false"
+            data-tab="clip">CLIP</button>
+  </div>
+
+  {# SCORES tab #}
+  <div class="lb-tab-panel active" data-panel="scores">
+    {% if scores %}
+    <table class="lb-detail-table lb-scores-table">
+      {% for score in scores %}
+      <tr>
+        <td>{{ score.scorer_id }}{% if score.variant_id != "default" %} <span class="lb-muted">({{ score.variant_id }})</span>{% endif %} – {{ score.metric_key }}</td>
+        <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ "%.2f"|format(score.value) }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="lb-empty-note">No scores recorded yet.</p>
+    {% endif %}
+  </div>
+
+  {# JSON tab #}
+  <div class="lb-tab-panel" data-panel="json">
+    {% if sidecar_json %}
+    <pre class="lb-sidecar-pre json-highlight">{{ sidecar_json }}</pre>
+    {% else %}
+    <p class="lb-empty-note">No sidecar JSON available.</p>
+    {% endif %}
+  </div>
+
+  {# EXIF tab #}
+  <div class="lb-tab-panel" data-panel="exif">
+    {% if exif_data %}
+    <pre class="lb-sidecar-pre json-highlight">{{ exif_data }}</pre>
+    {% else %}
+    <p class="lb-empty-note">No EXIF data available.</p>
+    {% endif %}
+  </div>
+
+  {# pHash tab — only present when a hash is available #}
+  {% if phash_hex %}
+  <div class="lb-tab-panel" data-panel="phash">
+    <div class="lb-phash-wrap">
+      <canvas class="lb-phash-canvas" width="64" height="64"
+              data-phash="{{ phash_hex }}"
+              title="Difference hash (dhash16) – 16×16 grid. Bright = left neighbour brighter; dark = right neighbour brighter."></canvas>
+      <div class="lb-phash-hex">{{ phash_hex }}</div>
+    </div>
+    <div class="lb-embed-wrap" data-asset-id="{{ asset_id }}" style="display:none">
+      <div class="lb-embed-label">CLIP embedding (32 × 24, grayscale)</div>
+      <canvas class="lb-embed-canvas" width="128" height="96"
+              title="CLIP image embedding – 768 values arranged as a 32×24 grid of 4×4 px cells, min-max normalised to grayscale."></canvas>
+    </div>
+  </div>
+  {% endif %}
+
+  {# CLIP tab #}
+  <div class="lb-tab-panel" data-panel="clip" data-asset-id="{{ asset_id }}">
+    <p class="lb-empty-note lb-clip-loading" style="display:none">Loading…</p>
+    <p class="lb-empty-note lb-clip-empty">Run the Embed job on the <a href="{{ clip_job_url }}">CLIP page</a> to generate CLIP tags.</p>
+  </div>
+</div>{# /lb-info-tabs #}
+{% endmacro %}

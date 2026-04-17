@@ -168,6 +168,72 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "takeout_path": str(p)})
 
 
+
+# ---------------------------------------------------------------------------
+# Config write – switch to an existing library without re-indexing
+# ---------------------------------------------------------------------------
+
+
+class _SwitchLibraryBody(BaseModel):
+    db_root: str
+    photos_root: str | None = None
+
+
+@router.post("/api/config/switch-library")
+def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
+    """Switch to an already-indexed library without starting a new indexing run.
+
+    ``db_root`` must be a directory that already contains a
+    ``takeout-rater/library.sqlite`` database.  ``photos_root`` overrides the
+    photos directory; when not provided it is read from the saved config in the
+    database folder (or falls back to ``db_root`` itself).
+
+    Returns 400 if the database is not found, 200 on success.
+    """
+    from fastapi import HTTPException
+
+    db_root_path = Path(body.db_root).expanduser().resolve()
+    if not db_root_path.exists() or not db_root_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {db_root_path}")
+
+    db_file = db_root_path / "takeout-rater" / "library.sqlite"
+    if not db_file.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"No takeout-rater database found in {db_root_path} — "
+            f"expected {db_file}",
+        )
+
+    # Determine photos root: caller > saved config > fall back to db_root.
+    if body.photos_root:
+        photos_path = Path(body.photos_root).expanduser().resolve()
+        if not photos_path.exists() or not photos_path.is_dir():
+            raise HTTPException(
+                status_code=400, detail=f"Photos root does not exist: {photos_path}"
+            )
+    else:
+        from takeout_rater import config as _cfg  # noqa: PLC0415
+
+        photos_path = _cfg.get_photos_root() or db_root_path
+
+    set_photos_root(photos_path)
+    set_db_root(None if db_root_path == photos_path else db_root_path)
+
+    old_conn = request.app.state.db_conn
+    if old_conn is not None:
+        old_conn.close()
+    conn = open_library_db(db_root_path)
+    request.app.state.db_conn = conn
+    request.app.state.library_root = photos_path
+    from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
+
+    request.app.state.db_path = library_db_path(db_root_path)
+    request.app.state.takeout_root = photos_path
+    request.app.state.thumbs_dir = db_root_path / "takeout-rater" / "thumbs"
+
+    return JSONResponse({"status": "ok", "db_root": str(db_root_path)})
+
+
 # ---------------------------------------------------------------------------
 # Config write – native directory picker
 # ---------------------------------------------------------------------------
