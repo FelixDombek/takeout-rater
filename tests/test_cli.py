@@ -68,30 +68,9 @@ def test_cluster_subcommand_custom_params() -> None:
 def test_index_subcommand_is_registered() -> None:
     """The index sub-command must be listed in the parser."""
     parser = build_parser()
+    # Parse with the index sub-command and a dummy path to confirm it's registered
     args = parser.parse_args(["index", "/tmp/fake"])
     assert args.command == "index"
-
-
-def test_index_subcommand_photos_root_attr() -> None:
-    """photos_root attribute must be set (not library_root)."""
-    parser = build_parser()
-    args = parser.parse_args(["index", "/tmp/fake"])
-    assert args.photos_root == "/tmp/fake"
-    assert not hasattr(args, "library_root")
-
-
-def test_index_subcommand_db_root_default_none() -> None:
-    """--db-root defaults to None when not given."""
-    parser = build_parser()
-    args = parser.parse_args(["index", "/tmp/fake"])
-    assert args.db_root is None
-
-
-def test_index_subcommand_db_root_custom() -> None:
-    """--db-root can be set to a custom path."""
-    parser = build_parser()
-    args = parser.parse_args(["index", "--db-root", "/tmp/state", "/tmp/fake"])
-    assert args.db_root == "/tmp/state"
 
 
 def test_browse_subcommand_is_registered() -> None:
@@ -107,18 +86,6 @@ def test_browse_default_port() -> None:
     assert args.port == 8765
 
 
-def test_score_subcommand_db_root_default_none() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["score", "/tmp/fake"])
-    assert args.db_root is None
-
-
-def test_cluster_subcommand_db_root_custom() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["cluster", "--db-root", "/tmp/state", "/tmp/fake"])
-    assert args.db_root == "/tmp/state"
-
-
 # ---------------------------------------------------------------------------
 # serve sub-command: schema mismatch handling
 # ---------------------------------------------------------------------------
@@ -131,8 +98,7 @@ def test_serve_schema_mismatch_returns_exit_code(tmp_path: Path) -> None:
     db_path.touch()  # file must exist so the existence check passes
 
     with (
-        patch("takeout_rater.config.get_photos_root", return_value=tmp_path),
-        patch("takeout_rater.config.get_db_root", return_value=None),
+        patch("takeout_rater.config.get_takeout_path", return_value=tmp_path),
         patch(
             "takeout_rater.db.connection.open_library_db",
             side_effect=SchemaMismatchError(5),
@@ -152,8 +118,7 @@ def test_serve_schema_mismatch_does_not_start_server(tmp_path: Path) -> None:
     mock_uvicorn = MagicMock()
 
     with (
-        patch("takeout_rater.config.get_photos_root", return_value=tmp_path),
-        patch("takeout_rater.config.get_db_root", return_value=None),
+        patch("takeout_rater.config.get_takeout_path", return_value=tmp_path),
         patch(
             "takeout_rater.db.connection.open_library_db",
             side_effect=SchemaMismatchError(3),

@@ -27,12 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="takeout-rater",
         description=(
-            "Aesthetics scoring orchestrator for photo folders.\n\n"
-            "Point it at the directory that directly contains your album sub-folders\n"
-            "(e.g. the 'Google Photos' directory from a Takeout export, or any\n"
-            "arbitrary folder of albums) and it will build a 'takeout-rater/' state\n"
-            "directory with the library DB, thumbnail cache, and exports.\n\n"
-            "Use --db-root to store the state directory outside the photo folder."
+            "Aesthetics scoring orchestrator for Google Photos Takeout folders.\n\n"
+            "Point it at the directory that *contains* your Takeout/ folder and it\n"
+            "will build a sibling takeout-rater/ directory with the library DB,\n"
+            "thumbnail cache, and exports."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -44,38 +42,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    def _add_db_root(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "--db-root",
-            metavar="DIR",
-            default=None,
-            help=(
-                "Directory where the takeout-rater/ state folder (DB, thumbnails) is stored. "
-                "Defaults to PHOTOS_ROOT when not given."
-            ),
-        )
-
     # index
-    index_parser = sub.add_parser("index", help="Index a photos directory")
+    index_parser = sub.add_parser("index", help="Index a Takeout directory")
     index_parser.add_argument(
-        "photos_root",
-        metavar="PHOTOS_ROOT",
+        "library_root",
+        metavar="LIBRARY_ROOT",
         help=(
-            "Directory that directly contains the album sub-folders. "
-            "All library state is written to a 'takeout-rater/' sub-directory "
-            "(or to --db-root if given)."
+            "Directory that *contains* the Takeout/ folder. "
+            "All library state is written to a sibling takeout-rater/ directory."
         ),
     )
-    _add_db_root(index_parser)
 
     # browse
     browse_parser = sub.add_parser("browse", help="Launch the local web UI")
     browse_parser.add_argument(
-        "photos_root",
-        metavar="PHOTOS_ROOT",
-        help="Directory that directly contains the album sub-folders (same as used with 'index').",
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder (same as used with 'index').",
     )
-    _add_db_root(browse_parser)
     browse_parser.add_argument(
         "--port",
         type=int,
@@ -91,11 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     # score
     score_parser = sub.add_parser("score", help="Run scorer(s) over indexed assets")
     score_parser.add_argument(
-        "photos_root",
-        metavar="PHOTOS_ROOT",
-        help="Directory that directly contains the album sub-folders (same as used with 'index').",
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder (same as used with 'index').",
     )
-    _add_db_root(score_parser)
     score_parser.add_argument(
         "--scorer",
         metavar="SCORER_ID",
@@ -130,11 +113,10 @@ def build_parser() -> argparse.ArgumentParser:
         "cluster", help="Group near-duplicate photos by perceptual hash"
     )
     cluster_parser.add_argument(
-        "photos_root",
-        metavar="PHOTOS_ROOT",
-        help="Directory that directly contains the album sub-folders (same as used with 'index').",
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder (same as used with 'index').",
     )
-    _add_db_root(cluster_parser)
     cluster_parser.add_argument(
         "--threshold",
         type=int,
@@ -166,11 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
     # export
     export_parser = sub.add_parser("export", help="Copy best-of-cluster photos to an export folder")
     export_parser.add_argument(
-        "photos_root",
-        metavar="PHOTOS_ROOT",
-        help="Directory that directly contains the album sub-folders.",
+        "library_root",
+        metavar="LIBRARY_ROOT",
+        help="Directory that *contains* the Takeout/ folder.",
     )
-    _add_db_root(export_parser)
     export_parser.add_argument(
         "--scorer",
         metavar="SCORER_ID",
@@ -193,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Destination directory for exported files.  "
-            "Defaults to <db-root>/takeout-rater/exports/."
+            "Defaults to <library_root>/takeout-rater/exports/."
         ),
     )
 
@@ -201,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = sub.add_parser(
         "serve",
         help=(
-            "Launch the web UI (reads photos path from config; "
+            "Launch the web UI (reads Takeout path from config; "
             "shows setup page when not yet configured)"
         ),
     )
@@ -225,12 +206,10 @@ def _cmd_index(args: argparse.Namespace) -> int:
     from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
     from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
 
-    photos_root = Path(args.photos_root).resolve()
-    if not photos_root.exists():
-        print(f"error: photos root does not exist: {photos_root}", file=sys.stderr)
+    library_root = Path(args.library_root).resolve()
+    if not library_root.exists():
+        print(f"error: library root does not exist: {library_root}", file=sys.stderr)
         return 1
-
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
 
     last_phase: list[str] = ["scanning"]
 
@@ -251,9 +230,9 @@ def _cmd_index(args: argparse.Namespace) -> int:
                 flush=True,
             )
 
-    conn = open_library_db(db_root)
+    conn = open_library_db(library_root)
     try:
-        result = run_index(photos_root, conn, db_root=db_root, on_progress=_on_progress)
+        result = run_index(library_root, conn, on_progress=_on_progress)
     finally:
         conn.close()
 
@@ -264,7 +243,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
         return 1
 
     print(f"Indexed {result.indexed} photo(s).")
-    print(f"Library: {db_root / 'takeout-rater'}")
+    print(f"Library: {library_root / 'takeout-rater'}")
     return 0
 
 
@@ -277,20 +256,19 @@ def _cmd_score(args: argparse.Namespace) -> int:
     )
     from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
 
-    photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
-    db_path = library_db_path(db_root)
+    library_root = Path(args.library_root).resolve()
+    db_path = library_db_path(library_root)
 
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index <library_root>' first.",
             file=sys.stderr,
         )
         return 1
 
-    conn = open_library_db(db_root)
-    thumbs_dir = library_state_dir(db_root) / "thumbs"
+    conn = open_library_db(library_root)
+    thumbs_dir = library_state_dir(library_root) / "thumbs"
 
     exit_code = 0
 
@@ -376,24 +354,23 @@ def _cmd_browse(args: argparse.Namespace) -> int:
         )
         return 1
 
-    photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
+    library_root = Path(args.library_root).resolve()
     from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
 
-    db_path = library_db_path(db_root)
+    db_path = library_db_path(library_root)
 
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index <library_root>' first.",
             file=sys.stderr,
         )
         return 1
 
     from takeout_rater.ui.app import create_app  # noqa: PLC0415
 
-    conn = open_library_db(db_root)
-    app = create_app(photos_root, conn, db_root=db_root)
+    conn = open_library_db(library_root)
+    app = create_app(library_root, conn)
 
     url = f"http://{args.host}:{args.port}/assets"
     print(f"Starting takeout-rater UI at {url}")
@@ -407,21 +384,20 @@ def _cmd_browse(args: argparse.Namespace) -> int:
 def _cmd_cluster(args: argparse.Namespace) -> int:
     """Execute the ``cluster`` sub-command."""
     from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
-    from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
 
-    photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
-    db_path = library_db_path(db_root)
+    library_root = Path(args.library_root).resolve()
+    db_path = library_root / "takeout-rater" / "library.sqlite"
 
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index <library_root>' first.",
             file=sys.stderr,
         )
         return 1
 
-    conn = open_library_db(db_root)
+    conn = open_library_db(library_root)
 
     print(f"Building clusters (threshold={args.threshold} bits, window={args.window}) …")
 
@@ -449,7 +425,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     """
     import shutil  # noqa: PLC0415
 
-    from takeout_rater.db.connection import library_db_path, library_state_dir, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
     from takeout_rater.db.queries import (  # noqa: PLC0415
         get_asset_by_id,
         get_asset_scores,
@@ -457,14 +433,13 @@ def _cmd_export(args: argparse.Namespace) -> int:
         list_clusters_with_representatives,
     )
 
-    photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
-    db_path = library_db_path(db_root)
+    library_root = Path(args.library_root).resolve()
+    db_path = library_root / "takeout-rater" / "library.sqlite"
 
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index <library_root>' first.",
             file=sys.stderr,
         )
         return 1
@@ -476,8 +451,12 @@ def _cmd_export(args: argparse.Namespace) -> int:
         )
         return 1
 
-    conn = open_library_db(db_root)
-    state_dir = library_state_dir(db_root)
+    conn = open_library_db(library_root)
+    state_dir = library_state_dir(library_root)
+
+    from takeout_rater.indexing.scanner import find_google_photos_root  # noqa: PLC0415
+
+    takeout_root = find_google_photos_root(library_root / "Takeout")
 
     export_dir = Path(args.out).resolve() if args.out else state_dir / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -486,7 +465,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     from takeout_rater.db.queries import count_clusters  # noqa: PLC0415
 
     if count_clusters(conn) == 0:
-        print("No clusters found.  Run 'takeout-rater cluster <photos_root>' first.")
+        print("No clusters found.  Run 'takeout-rater cluster <library_root>' first.")
         conn.close()
         return 0
 
@@ -537,7 +516,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
             if asset is None:
                 continue
 
-            src = photos_root / asset.relpath
+            src = takeout_root / asset.relpath
             if not src.exists():
                 skipped += 1
                 continue
@@ -556,7 +535,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Execute the ``serve`` sub-command.
 
-    Unlike ``browse``, this command reads the photos path from the
+    Unlike ``browse``, this command reads the Takeout library path from the
     local config file and starts the server even when no library has been
     configured yet.  In that case the UI shows a setup page that lets the user
     select the folder from their browser.
@@ -573,22 +552,21 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
     print("Loading application modules …", flush=True)
-    from takeout_rater.config import get_db_root, get_photos_root  # noqa: PLC0415
+    from takeout_rater.config import get_takeout_path  # noqa: PLC0415
     from takeout_rater.ui.app import create_app  # noqa: PLC0415
 
-    photos_root = get_photos_root()
-    db_root = get_db_root() or photos_root
+    library_root = get_takeout_path()
     conn = None
 
-    if photos_root is not None and db_root is not None:
+    if library_root is not None:
         from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
         from takeout_rater.db.schema import SchemaMismatchError  # noqa: PLC0415
 
-        db_path = library_db_path(db_root)
+        db_path = library_db_path(library_root)
         if db_path.exists():
             print("Opening library database …", flush=True)
             try:
-                conn = open_library_db(db_root)
+                conn = open_library_db(library_root)
             except SchemaMismatchError as exc:
                 print(
                     f"error: {exc}\n       Database path: {db_path}",
@@ -600,12 +578,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         else:
             print(
                 f"note: library database not found at {db_path}\n"
-                "      Run 'takeout-rater index <photos_root>' to index your photos folder.\n"
+                "      Run 'takeout-rater index <library_root>' to index your Takeout folder.\n"
                 "      The UI will remind you.",
             )
 
     print("Building application …", flush=True)
-    app = create_app(photos_root, conn, db_root=db_root)
+    app = create_app(library_root, conn)
 
     url = f"http://{args.host}:{args.port}/"
     if conn is not None:

@@ -15,19 +15,10 @@
   .setup-card h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
   .setup-card p  { color: #555; margin-bottom: 1.25rem; line-height: 1.6; }
 
-  .field-label {
-    display: block;
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: #333;
-    margin-bottom: 0.3rem;
-  }
-  .field-block { margin-bottom: 1rem; }
-
   .path-row {
     display: flex;
     gap: 0.5rem;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.75rem;
   }
   .path-row input[type=text] {
     flex: 1;
@@ -69,52 +60,29 @@
 
 {% block content %}
 <div class="setup-card">
-  <h1>📁 Select your photos folder</h1>
+  <h1>📁 Select your Takeout folder</h1>
   <p>
-    takeout-rater needs to know where your photo albums live.<br>
-    Point it at the directory that <strong>directly contains</strong> your album sub-folders
-    (e.g. the <code>Google Photos</code> directory inside a Takeout export, or any folder
-    of albums).
+    takeout-rater needs to know where your Google Photos Takeout export lives.<br>
+    Point it at the directory that <strong>contains</strong> the <code>Takeout/</code> folder
+    (not the <code>Takeout/</code> folder itself).
   </p>
 
-  <div class="field-block">
-    <label class="field-label" for="path-input">Photos folder</label>
-    <div class="path-row">
-      <input
-        type="text"
-        id="path-input"
-        placeholder="/Users/you/Pictures/Google Photos"
-        value="{{ current_path or '' }}"
-        autocomplete="off"
-        spellcheck="false"
-      >
-      <button class="btn" id="btn-pick" title="Open folder browser">Browse…</button>
-    </div>
-    <p class="hint">
-      Example: <code>/Users/you/takeout/Takeout/Google Photos</code>
-      or <code>/Users/you/my-photos</code> — the folder that contains your album
-      sub-folders directly.
-    </p>
+  <div class="path-row">
+    <input
+      type="text"
+      id="path-input"
+      placeholder="/Users/you/Downloads/takeout-export"
+      value="{{ current_path or '' }}"
+      autocomplete="off"
+      spellcheck="false"
+    >
+    <button class="btn" id="btn-pick" title="Open folder browser">Browse…</button>
   </div>
-
-  <div class="field-block">
-    <label class="field-label" for="db-root-input">Database location <span style="font-weight:normal;color:#888;">(optional)</span></label>
-    <div class="path-row">
-      <input
-        type="text"
-        id="db-root-input"
-        placeholder="Leave blank to store alongside photos"
-        value="{{ current_db_root or '' }}"
-        autocomplete="off"
-        spellcheck="false"
-      >
-      <button class="btn" id="btn-pick-db" title="Open folder browser for DB location">Browse…</button>
-    </div>
-    <p class="hint">
-      Where to store the <code>takeout-rater/</code> state directory (database, thumbnails).
-      Leave blank to store it inside the photos folder.
-    </p>
-  </div>
+  <p class="hint">
+    Example: if your archive lives at <code>/Users/you/takeout/Takeout/Photos from 2023/…</code>
+    or <code>/Users/you/takeout/Takeout/Google Photos/Photos from 2023/…</code>
+    then enter <code>/Users/you/takeout</code>.
+  </p>
 
   <div class="actions">
     <button class="btn btn-primary" id="btn-save">Save &amp; continue</button>
@@ -134,11 +102,6 @@
     <p style="font-family:monospace; font-size:0.9rem; color:#333; word-break:break-all;">
       {{ current_path }}
     </p>
-    {% if current_db_root %}
-    <p style="font-size:0.85rem; color:#666;">
-      Database stored in: <code>{{ current_db_root }}</code>
-    </p>
-    {% endif %}
     <p style="font-size:0.85rem; color:#666;">
       You can change the folder at any time by entering a new path above and clicking
       <em>Save &amp; continue</em>.
@@ -149,12 +112,10 @@
 
 <script>
 (function () {
-  var btnPick    = document.getElementById('btn-pick');
-  var btnPickDb  = document.getElementById('btn-pick-db');
-  var btnSave    = document.getElementById('btn-save');
-  var pathInput  = document.getElementById('path-input');
-  var dbRootInput = document.getElementById('db-root-input');
-  var statusMsg  = document.getElementById('status-msg');
+  var btnPick  = document.getElementById('btn-pick');
+  var btnSave  = document.getElementById('btn-save');
+  var pathInput = document.getElementById('path-input');
+  var statusMsg = document.getElementById('status-msg');
 
   function showStatus(msg, cls) {
     statusMsg.textContent = msg;
@@ -199,58 +160,42 @@
       });
   }
 
-  // Generic folder picker helper
-  function openPicker(inputEl) {
-    return fetch('/api/config/open-picker', { method: 'POST' })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (data.path) {
-          inputEl.value = data.path;
-        } else if (data.detail) {
-          showStatus('Native picker unavailable: ' + data.detail + '  Please type the path below.', 'error');
-        }
-        return data;
-      })
-      .catch(function () {
-        showStatus('Could not open folder picker. Please type the path manually.', 'error');
-      });
-  }
-
-  // Native folder picker for photos root
+  // Native folder picker (Tkinter on host)
   btnPick.addEventListener('click', function () {
     btnPick.disabled = true;
     btnPick.textContent = 'Opening…';
-    openPicker(pathInput).finally(function () {
-      btnPick.disabled = false;
-      btnPick.textContent = 'Browse…';
-    });
-  });
-
-  // Native folder picker for DB location
-  btnPickDb.addEventListener('click', function () {
-    btnPickDb.disabled = true;
-    btnPickDb.textContent = 'Opening…';
-    openPicker(dbRootInput).finally(function () {
-      btnPickDb.disabled = false;
-      btnPickDb.textContent = 'Browse…';
-    });
+    fetch('/api/config/open-picker', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.path) {
+          pathInput.value = data.path;
+          showStatus('Folder selected: ' + data.path, 'ok');
+        } else if (data.detail) {
+          // Tkinter unavailable — just let the user type
+          showStatus('Native picker unavailable: ' + data.detail + '  Please type the path below.', 'error');
+        }
+      })
+      .catch(function () {
+        showStatus('Could not open folder picker. Please type the path manually.', 'error');
+      })
+      .finally(function () {
+        btnPick.disabled = false;
+        btnPick.textContent = 'Browse…';
+      });
   });
 
   // Save path
   btnSave.addEventListener('click', function () {
     var path = pathInput.value.trim();
     if (!path) {
-      showStatus('Please enter or select a photos folder path first.', 'error');
+      showStatus('Please enter or select a folder path first.', 'error');
       return;
     }
-    var dbRoot = dbRootInput.value.trim();
     btnSave.disabled = true;
-    var body = { path: path };
-    if (dbRoot) { body.db_root = dbRoot; }
     fetch('/api/config/takeout-path', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ path: path })
     })
       .then(function (r) {
         if (!r.ok) {
@@ -272,11 +217,9 @@
       });
   });
 
-  // Allow pressing Enter in the text fields to trigger Save
-  [pathInput, dbRootInput].forEach(function(el) {
-    el.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { btnSave.click(); }
-    });
+  // Allow pressing Enter in the text field to trigger Save
+  pathInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { btnSave.click(); }
   });
 })();
 </script>
