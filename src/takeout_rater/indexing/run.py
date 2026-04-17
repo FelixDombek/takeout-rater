@@ -115,20 +115,28 @@ class IndexProgress:
 
 
 def run_index(
-    library_root: Path,
+    photos_root: Path,
     conn: sqlite3.Connection,
+    db_root: Path | None = None,
     on_progress: Callable[[IndexProgress], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> IndexProgress:
-    """Scan *library_root* and upsert discovered assets into *conn*.
+    """Scan *photos_root* and upsert discovered assets into *conn*.
 
     Processing happens in two phases (scan → processing) for maximum
     throughput.  See the module docstring for a detailed description of each
     sub-step.
 
     Args:
-        library_root: Directory that *contains* the ``Takeout/`` folder.
+        photos_root: The library root directory.  May be the directory that
+            directly contains album sub-folders, or a parent directory that
+            contains a ``Takeout/`` sub-folder (optionally with a localized
+            ``Google Photos/`` nesting).  :func:`resolve_photos_root` is
+            called automatically to find the narrowest photos-only root.
         conn: Open :class:`sqlite3.Connection` for the library database.
+        db_root: Directory where the ``takeout-rater/`` state directory (thumbs,
+            DB) should be written.  Defaults to *photos_root* (the value
+            passed in, before resolution) when not given.
         on_progress: Optional callback invoked after each asset is processed.
             Receives the current :class:`IndexProgress` instance.  Will be
             called from the main thread; implementations must not block.
@@ -148,11 +156,7 @@ def run_index(
         open_db,
     )
     from takeout_rater.db.queries import lookup_sha256, upsert_asset  # noqa: PLC0415
-    from takeout_rater.indexing.scanner import (  # noqa: PLC0415
-        GOOGLE_PHOTOS_DIR_NAMES,
-        find_google_photos_root,
-        scan_takeout,
-    )
+    from takeout_rater.indexing.scanner import scan_takeout  # noqa: PLC0415
     from takeout_rater.indexing.sidecar import parse_sidecar  # noqa: PLC0415
     from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
         generate_thumbnail,
@@ -164,26 +168,17 @@ def run_index(
         compute_dhash_from_image,
     )  # noqa: PLC0415
 
+    if db_root is None:
+        db_root = photos_root
+
+    # Resolve the actual photos directory: handles the common case where
+    # `photos_root` points to a library root that contains a ``Takeout/``
+    # sub-folder (possibly with a localized ``Google Photos/`` nesting).
+    from takeout_rater.indexing.scanner import resolve_photos_root as _resolve  # noqa: PLC0415
+
+    photos_root = _resolve(photos_root)
+
     progress = IndexProgress(running=True)
-
-    # ── Resolve the photos root ───────────────────────────────────────────────
-    takeout_dir = library_root / "Takeout"
-    if not takeout_dir.exists():
-        # Accept the user passing the Takeout/ dir directly (old-format exports).
-        if list(library_root.glob("Photos from *")) or any(
-            (library_root / name).is_dir() for name in GOOGLE_PHOTOS_DIR_NAMES
-        ):
-            takeout_dir = library_root
-        else:
-            progress.running = False
-            progress.done = True
-            progress.error = (
-                f"No Takeout/ directory found inside {library_root}. "
-                "Pass the directory that *contains* your Takeout/ folder."
-            )
-            return progress
-
-    photos_root = find_google_photos_root(takeout_dir)
 
     # ── Phase 1: Scan + concurrent model pre-load ─────────────────────────────
     # The filesystem walk is pure I/O — no file reads, no DB access.
@@ -228,6 +223,9 @@ def run_index(
     progress.found = len(assets)
 
     if not assets:
+        # No assets to index; the warmup thread is a daemon and will be cleaned
+        # up by the process, but attempt a very short join in case it already
+        # finished to avoid leaving unnecessary background work.
         _warmup_thread.join(timeout=0.5)
         progress.running = False
         progress.done = True
@@ -248,9 +246,9 @@ def run_index(
     if on_progress:
         on_progress(progress)
 
-    thumbs_dir = library_state_dir(library_root) / "thumbs"
+    thumbs_dir = library_state_dir(db_root) / "thumbs"
     thumbs_dir.mkdir(parents=True, exist_ok=True)
-    db_path = library_db_path(library_root)
+    db_path = library_db_path(db_root)
     now = int(time.time())
     num_workers = os.cpu_count() or 1
 
