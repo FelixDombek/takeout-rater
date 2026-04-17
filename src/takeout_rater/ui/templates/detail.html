@@ -472,7 +472,7 @@ function buildClipCloud(panel, words) {
       });
       if (name === 'clip') {
         var clipPanel = tabsEl.querySelector('.lb-tab-panel[data-panel="clip"]');
-        if (clipPanel && !clipPanel.dataset.loaded) {
+        if (clipPanel && !clipPanel.dataset.loaded && !tabsEl._externalLoading) {
           loadClipWords(clipPanel);
         }
       }
@@ -715,6 +715,7 @@ var _mltPanel = SimilarityPanel.init({ assetId: {{ asset.id }} });
     if (!phashPanel) return;
     var canvas = phashPanel.querySelector('.lb-phash-canvas');
     if (!canvas) return;
+    if (!hex) return;
     canvas.dataset.phash = hex;
     phashPanel.querySelector('.lb-phash-hex').textContent = hex;
     var BITS = 256, SIDE = 16, BLOCK = 4;
@@ -828,8 +829,9 @@ var _mltPanel = SimilarityPanel.init({ assetId: {{ asset.id }} });
       clipPanel.innerHTML = '<p class="lb-empty-note">No CLIP tags found.</p>';
     }
 
-    // Activate Scores tab
+    // Activate Scores tab and clear the loading guard
     setTabActive('scores');
+    tabsEl._externalLoading = false;
 
     refStatus.textContent = '';
   }
@@ -847,10 +849,8 @@ var _mltPanel = SimilarityPanel.init({ assetId: {{ asset.id }} });
     detailImg.style.opacity = '0.35';
     refStatus.textContent = 'Analyzing…';
 
-    // Mark every tab panel as "loading" so the lazy CLIP fetch won't fire
-    tabsEl.querySelectorAll('.lb-tab-panel').forEach(function (p) {
-      p.dataset.loaded = 'loading';
-    });
+    // Block the lazy CLIP fetch during analysis using a dedicated flag
+    tabsEl._externalLoading = true;
 
     // Show compact widget
     previewLabel.textContent = file.name;
