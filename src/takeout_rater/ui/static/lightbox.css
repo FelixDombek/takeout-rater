@@ -273,6 +273,11 @@
   white-space: nowrap;
 }
 
+.lb-clip-tag--user {
+  background: rgba(134,239,172,0.15);
+  color: #86efac;
+}
+
 @media (max-width: 700px) {
   .lb-container { flex-direction: column; }
   .lb-details-col {

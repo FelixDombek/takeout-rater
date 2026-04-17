@@ -78,11 +78,11 @@ window.SharedLightbox = (function () {
           cloud.className = 'lb-clip-cloud';
           data.words.forEach(function (w) {
             var tag = document.createElement('span');
-            tag.className = 'lb-clip-tag';
+            tag.className = 'lb-clip-tag' + (w.user_tag ? ' lb-clip-tag--user' : '');
             var rel = w.score / maxScore;
             tag.style.opacity    = (0.4 + 0.6 * rel).toFixed(2);
             tag.style.fontSize   = (0.65 + 0.3 * rel).toFixed(2) + 'rem';
-            tag.title            = 'score: ' + w.score.toFixed(4);
+            tag.title            = (w.user_tag ? 'custom tag — ' : '') + 'score: ' + w.score.toFixed(4);
             tag.textContent      = w.word;
             cloud.appendChild(tag);
           });

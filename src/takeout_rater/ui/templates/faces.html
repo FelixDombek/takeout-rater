@@ -107,14 +107,10 @@
     font-size: 0.85rem;
   }
 
-  .license-notice {
-    background: #fffbe6;
-    border: 1px solid #ffe58f;
-    border-radius: 6px;
-    padding: 0.75rem 1rem;
-    font-size: 0.8rem;
-    color: #614700;
-    margin-bottom: 1.5rem;
+  .license-note {
+    font-size: 0.75rem;
+    color: #999;
+    margin-top: 2rem;
   }
 </style>
 {% endblock %}
@@ -126,13 +122,6 @@
     Detect faces, group them into identity clusters, and explore your photo library by person.
     Use the job cards below to run <strong>Face Detection</strong> and then <strong>Cluster Faces</strong>.
   </p>
-
-  <div class="license-notice">
-    ⚠ <strong>License note:</strong> The InsightFace <code>buffalo_l</code> model pack is
-    licensed under <strong>CC BY-NC 4.0</strong> (non-commercial use only). The lighter
-    <code>buffalo_sc</code> uses the same ArcFace recogniser under the same license.
-    All inference is performed locally — no images or embeddings leave your machine.
-  </div>
 
   <!-- ── Face Detection & Clustering jobs ────────────────────────────────── -->
   <div class="job-cards">
@@ -223,6 +212,13 @@
     </div>
   </div>
 </div>
+
+<p class="license-note">
+  License note: The InsightFace <code>buffalo_l</code> model pack is licensed under
+  CC BY-NC 4.0 (non-commercial use only). The lighter <code>buffalo_sc</code> uses the
+  same ArcFace recogniser under the same license. All inference is performed locally —
+  no images or embeddings leave your machine.
+</p>
 
 <script>
 // ── Job polling & launching (shared with /jobs and /clusterings pages) ────

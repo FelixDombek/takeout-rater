@@ -310,8 +310,8 @@ def test_jobs_page_returns_200_with_db(client_with_db: TestClient) -> None:
 
 def test_jobs_page_contains_job_cards(client_with_db: TestClient) -> None:
     resp = client_with_db.get("/jobs")
-    assert "Rehash" in resp.text
     assert "Rescan" in resp.text
+    assert "Rehash" not in resp.text
     assert "Run Clustering" not in resp.text
     assert "Run Export" not in resp.text
     assert "Run Detection" not in resp.text

@@ -213,7 +213,7 @@ var SimilarityPanel = (function () {
         // Reverse-search mode: POST the file
         var fd = new FormData();
         fd.append('file', referenceFile);
-        fetchPromise = fetch('/api/reverse-search' + qs, { method: 'POST', body: fd });
+        fetchPromise = fetch('/api/search-by-image' + qs, { method: 'POST', body: fd });
       } else {
         // Normal mode: GET similar assets for the current asset
         fetchPromise = fetch('/api/assets/' + assetId + '/similar' + qs);

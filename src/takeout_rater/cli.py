@@ -13,6 +13,7 @@ Sub-commands:
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
 from pathlib import Path
 
@@ -21,6 +22,26 @@ from pathlib import Path
 # offers to delete the stale database before restarting.
 # NOTE: keep in sync with _EXIT_SCHEMA_MISMATCH in scripts/launcher.py.
 _EXIT_SCHEMA_MISMATCH: int = 3
+
+
+def _find_free_port(host: str, start_port: int, max_tries: int = 16) -> int:
+    """Return the first free TCP port starting from *start_port*.
+
+    Tries up to *max_tries* consecutive ports and raises :exc:`OSError` if
+    none are available.
+    """
+    for offset in range(max_tries):
+        port = start_port + offset
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, port))
+                return port
+            except OSError:
+                continue
+    raise OSError(
+        f"Could not find a free port in the range "
+        f"{start_port}–{start_port + max_tries - 1} on {host!r}"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -395,11 +416,18 @@ def _cmd_browse(args: argparse.Namespace) -> int:
     conn = open_library_db(db_root)
     app = create_app(photos_root, conn, db_root=db_root)
 
-    url = f"http://{args.host}:{args.port}/assets"
+    try:
+        port = _find_free_port(args.host, args.port)
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if port != args.port:
+        print(f"note: port {args.port} is in use, using port {port} instead.", file=sys.stderr)
+    url = f"http://{args.host}:{port}/assets"
     print(f"Starting takeout-rater UI at {url}")
     print("Press Ctrl+C to stop.")
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=port, log_level="warning")
     conn.close()
     return 0
 
@@ -611,14 +639,21 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     print("Building application …", flush=True)
     app = create_app(photos_root, conn, db_root=db_root)
 
-    url = f"http://{args.host}:{args.port}/"
+    try:
+        port = _find_free_port(args.host, args.port)
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if port != args.port:
+        print(f"note: port {args.port} is in use, using port {port} instead.", file=sys.stderr)
+
     if conn is not None:
-        print(f"Starting takeout-rater UI at {url}assets")
+        print(f"Starting takeout-rater UI at http://{args.host}:{port}/assets")
     else:
-        print(f"Starting takeout-rater UI at {url}setup")
+        print(f"Starting takeout-rater UI at http://{args.host}:{port}/setup")
     print("Press Ctrl+C to stop.")
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(app, host=args.host, port=port, log_level="info")
     if conn is not None:
         conn.close()
     return 0
