@@ -108,9 +108,19 @@ def create_app(
         app.state.db_path = _candidate if _candidate.exists() else None
     else:
         app.state.db_path = None
-    # takeout_root is the photos root (the directory that relpath/sidecar_relpath
-    # values are relative to).  The user now provides this directory directly.
-    app.state.takeout_root = library_root
+    # takeout_root is the narrowest photos-only directory that relpath and
+    # sidecar_relpath values are relative to.  Calling resolve_photos_root
+    # handles the common case where library_root contains a ``Takeout/``
+    # sub-folder (possibly with a localized ``Google Photos/`` nesting), which
+    # is the same resolution logic used by run_index.
+    if library_root is not None:
+        from takeout_rater.indexing.scanner import (  # noqa: PLC0415
+            resolve_photos_root,
+        )
+
+        app.state.takeout_root = resolve_photos_root(library_root)
+    else:
+        app.state.takeout_root = None
     app.state.thumbs_dir = db_root / "takeout-rater" / "thumbs" if db_root else None
     app.state.templates = _make_templates(_TEMPLATES_DIR)
     # Mount static assets (CSS, JS shared across pages)
