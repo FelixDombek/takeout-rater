@@ -162,7 +162,9 @@ def test_get_db_path_returns_none_when_config_absent(tmp_path: Path) -> None:
         assert launcher._get_db_path() is None
 
 
-def test_get_db_path_returns_none_when_config_has_no_takeout_path(tmp_path: Path) -> None:
+def test_get_db_path_returns_none_when_config_has_no_takeout_path(
+    tmp_path: Path,
+) -> None:
     config = tmp_path / ".takeout-rater.json"
     config.write_text("{}", encoding="utf-8")
 

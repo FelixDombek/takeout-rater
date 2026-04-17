@@ -96,3 +96,28 @@
 
 .empty-state { text-align: center; padding: 3rem 1rem; color: #888; }
 .empty-state h2 { font-size: 1.3rem; margin-bottom: 0.5rem; color: #666; }
+
+/* ── Segmented tab buttons (method selector, etc.) ───────────────────── */
+.seg-tabs {
+  display: inline-flex;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.seg-tab {
+  background: #f9fafb;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  padding: 0.28rem 0.85rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #374151;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s;
+}
+.seg-tab:first-child { border-left: none; }
+.seg-tab:hover:not(.active) { background: #f3f4f6; }
+.seg-tab.active {
+  background: #1a5cdb;
+  color: #fff;
+}
