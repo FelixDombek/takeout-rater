@@ -17,7 +17,7 @@ takeout-rater/
 │   ├── history/         ← original chat transcripts
 │   └── tools/           ← helper scripts documentation
 ├── scripts/             ← launcher scripts
-├── .github/workflows/   ← CI (ruff + pytest)
+├── .github/workflows/   ← CI: lint (ruff format + ruff check), test (pytest), slow-tests
 ├── pyproject.toml       ← PEP 621 project config, deps, tool config
 ├── README.md
 ├── CONTRIBUTING.md
