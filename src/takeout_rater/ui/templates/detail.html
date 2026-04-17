@@ -270,7 +270,6 @@
       <span id="ref-drop-hint">🔍 Search by image</span>
     </div>
     <div class="sbi-preview" id="ref-preview-wrap">
-      <img class="sbi-preview-img" id="ref-preview-img" src="" alt="Reference image">
       <span class="sbi-preview-label" id="ref-preview-label"></span>
       <span class="sbi-status" id="ref-status"></span>
       <button class="btn sbi-clear-btn" id="ref-clear-btn" onclick="refClear()">✕</button>
@@ -281,6 +280,7 @@
 <div class="detail-layout">
   <div>
     <img
+      id="detail-img"
       class="detail-img"
       src="/image/{{ asset.id }}"
       alt="{{ asset.title or asset.filename }}"
@@ -291,11 +291,12 @@
   </div>
 
   <div class="detail-meta">
-    <h1>{{ asset.title or asset.filename }}</h1>
+    <h1 id="detail-title">{{ asset.title or asset.filename }}</h1>
     {% if asset.description %}
       <p style="margin-bottom:0.75rem; color:#555">{{ asset.description }}</p>
     {% endif %}
 
+    <div id="detail-meta-library">
     <table>
       <tr><td>Filename</td><td>{{ asset.filename }}</td></tr>
       <tr><td>Type</td><td>{{ asset.mime or asset.ext }}</td></tr>
@@ -334,6 +335,13 @@
         </td>
       </tr>
     </table>
+    </div>{# /detail-meta-library #}
+
+    <table id="detail-meta-external" style="display:none">
+      <tr><td>Filename</td><td id="ext-filename"></td></tr>
+      <tr><td>Type</td><td id="ext-type"></td></tr>
+      <tr><td>Size</td><td id="ext-size"></td></tr>
+    </table>
 
   </div>
 </div>
@@ -346,9 +354,12 @@
 </div>
 
 {# ── Info tabs (shared macro) ────────────────────────────────────────── #}
-<div class="info-tabs">
+<div class="info-tabs" id="info-tabs-panel">
   {{ info_tabs(scores, sidecar_json, exif_data, phash_hex, asset.id) }}
 </div>
+<p id="info-tabs-external-notice" style="display:none; color:#999; font-size:0.85rem; margin:1.25rem 0;">
+  Scores, EXIF and hash data are only available for library assets.
+</p>
 
 {# ── More like this panel ──────────────────────────────────────────────────── #}
 <div class="more-like-this" id="mlt-panel" data-asset-id="{{ asset.id }}">
@@ -682,44 +693,90 @@ var _mltPanel = SimilarityPanel.init({ assetId: {{ asset.id }} });
 
 // ── Search by image (drag-and-drop reference image) ────────────────────────
 (function () {
-  var dropZone   = document.getElementById('ref-drop-zone');
-  var fileInput  = document.getElementById('ref-file-input');
+  var dropZone    = document.getElementById('ref-drop-zone');
   var previewWrap = document.getElementById('ref-preview-wrap');
-  var previewImg = document.getElementById('ref-preview-img');
   var previewLabel = document.getElementById('ref-preview-label');
-  var refStatus  = document.getElementById('ref-status');
-  var clearBtn   = document.getElementById('ref-clear-btn');
-  var dropHint   = document.getElementById('ref-drop-hint');
+  var refStatus   = document.getElementById('ref-status');
+  var clearBtn    = document.getElementById('ref-clear-btn');
+
+  // Hero image elements
+  var detailImg     = document.getElementById('detail-img');
+  var detailTitle   = document.getElementById('detail-title');
+  var metaLibrary   = document.getElementById('detail-meta-library');
+  var metaExternal  = document.getElementById('detail-meta-external');
+  var infoTabsPanel = document.getElementById('info-tabs-panel');
+  var infoTabsNote  = document.getElementById('info-tabs-external-notice');
+
+  // Capture original values so we can restore them on clear
+  var _origSrc   = detailImg ? detailImg.src   : '';
+  var _origAlt   = detailImg ? detailImg.alt   : '';
+  var _origTitle = detailTitle ? detailTitle.textContent : '';
 
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) {
       refStatus.textContent = 'Please drop or select an image file.';
       return;
     }
-    // Show preview via FileReader (data: URL — no blob URL XSS concern)
     var reader = new FileReader();
     reader.onload = function (e) {
-      previewImg.src = e.target.result;
+      var dataUrl = e.target.result;
+
+      // Replace the hero image with the dropped file
+      detailImg.src = dataUrl;
+      detailImg.alt = file.name;
+      detailImg.style.background = '';
+
+      // Update the page title
+      detailTitle.textContent = file.name;
+
+      // Swap the meta table
+      metaLibrary.style.display = 'none';
+      document.getElementById('ext-filename').textContent = file.name;
+      document.getElementById('ext-type').textContent = file.type || '—';
+      document.getElementById('ext-size').textContent =
+        file.size ? (file.size / 1024).toFixed(0) + '\u00a0KB' : '—';
+      metaExternal.style.display = '';
+
+      // Hide library-specific tabs, show brief notice
+      infoTabsPanel.style.display = 'none';
+      infoTabsNote.style.display = '';
     };
     reader.readAsDataURL(file);
-    previewLabel.textContent = file.name + (file.size ? ' (' + (file.size / 1024).toFixed(0) + ' KB)' : '');
+
+    // Show the compact widget preview label + clear button
+    previewLabel.textContent = file.name;
     previewWrap.classList.add('visible');
     dropZone.style.display = 'none';
-    clearBtn.style.display = '';
-    refStatus.textContent = 'Searching…';
-    // Hand off to the similarity panel
-    _mltPanel.setReferenceFile(file);
     refStatus.textContent = '';
+
+    // Trigger similarity search
+    _mltPanel.setReferenceFile(file);
   }
 
   window.refOnFileSelected = function (file) { loadFile(file); };
 
   window.refClear = function () {
-    previewImg.src = '';
+    // Restore hero image
+    detailImg.src = _origSrc;
+    detailImg.alt = _origAlt;
+
+    // Restore title
+    detailTitle.textContent = _origTitle;
+
+    // Restore meta table
+    metaLibrary.style.display = '';
+    metaExternal.style.display = 'none';
+
+    // Restore info tabs
+    infoTabsPanel.style.display = '';
+    infoTabsNote.style.display = 'none';
+
+    // Reset compact widget
+    previewLabel.textContent = '';
     previewWrap.classList.remove('visible');
     dropZone.style.display = '';
-    clearBtn.style.display = 'none';
     refStatus.textContent = '';
+
     _mltPanel.setReferenceFile(null);
   };
 
