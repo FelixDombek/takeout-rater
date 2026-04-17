@@ -23,7 +23,7 @@ from __future__ import annotations
 import sqlite3
 import struct
 
-from takeout_rater.similarity import _CLIP_DIM  # noqa: PLC2701
+_CLIP_DIM = 768
 
 
 def find_similar_photos(
