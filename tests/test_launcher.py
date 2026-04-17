@@ -67,33 +67,23 @@ def test_detect_cuda_version_cuda13() -> None:
 
 
 def test_cuda_to_whl_url_exact_121() -> None:
-    assert (
-        launcher._cuda_to_whl_url((12, 1)) == "https://download.pytorch.org/whl/cu121"
-    )
+    assert launcher._cuda_to_whl_url((12, 1)) == "https://download.pytorch.org/whl/cu121"
 
 
 def test_cuda_to_whl_url_exact_124() -> None:
-    assert (
-        launcher._cuda_to_whl_url((12, 4)) == "https://download.pytorch.org/whl/cu124"
-    )
+    assert launcher._cuda_to_whl_url((12, 4)) == "https://download.pytorch.org/whl/cu124"
 
 
 def test_cuda_to_whl_url_exact_126() -> None:
-    assert (
-        launcher._cuda_to_whl_url((12, 6)) == "https://download.pytorch.org/whl/cu126"
-    )
+    assert launcher._cuda_to_whl_url((12, 6)) == "https://download.pytorch.org/whl/cu126"
 
 
 def test_cuda_to_whl_url_exact_128() -> None:
-    assert (
-        launcher._cuda_to_whl_url((12, 8)) == "https://download.pytorch.org/whl/cu128"
-    )
+    assert launcher._cuda_to_whl_url((12, 8)) == "https://download.pytorch.org/whl/cu128"
 
 
 def test_cuda_to_whl_url_exact_130() -> None:
-    assert (
-        launcher._cuda_to_whl_url((13, 0)) == "https://download.pytorch.org/whl/cu130"
-    )
+    assert launcher._cuda_to_whl_url((13, 0)) == "https://download.pytorch.org/whl/cu130"
 
 
 def test_cuda_to_whl_url_between_versions_uses_lower() -> None:

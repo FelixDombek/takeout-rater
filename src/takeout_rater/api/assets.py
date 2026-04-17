@@ -65,9 +65,7 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     # Fallback for in-memory databases (used in tests).
     conn = request.app.state.db_conn
     if conn is None:
-        raise HTTPException(
-            status_code=503, detail="Library not configured — visit /setup"
-        )
+        raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
     yield conn
 
 
@@ -80,9 +78,7 @@ def _get_thumbs_dir(request: Request) -> Path:
     """Dependency: retrieve the thumbs directory path from the app state."""
     thumbs_dir = request.app.state.thumbs_dir
     if thumbs_dir is None:
-        raise HTTPException(
-            status_code=503, detail="Library not configured — visit /setup"
-        )
+        raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
     return thumbs_dir
 
 
@@ -315,15 +311,11 @@ def browse_assets(
 
         if use_multi_sort:
             criteria = [
-                SortCriterion(
-                    scorer_id, variant_id, metric_key, eff_min, eff_max, eff_desc
-                )
+                SortCriterion(scorer_id, variant_id, metric_key, eff_min, eff_max, eff_desc)
             ]
             for sb_canon, eff_mn, eff_mx, eff_sd in extra_criteria:
                 s_id, v_id, m_key = sb_canon.split(":")
-                criteria.append(
-                    SortCriterion(s_id, v_id, m_key, eff_mn, eff_mx, eff_sd)
-                )
+                criteria.append(SortCriterion(s_id, v_id, m_key, eff_mn, eff_mx, eff_sd))
 
             asset_score_pairs = list_assets_multi_sort(
                 conn,
@@ -360,14 +352,10 @@ def browse_assets(
                 max_score=eff_max,
             )
     elif dedup_enabled:
-        assets = list_assets_deduped(
-            conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter
-        )
+        assets = list_assets_deduped(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
         total = count_assets_deduped(conn, favorited=fav_filter)
     else:
-        assets = list_assets(
-            conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter
-        )
+        assets = list_assets(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
         total = count_assets(conn, favorited=fav_filter)
 
     total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
@@ -383,9 +371,7 @@ def browse_assets(
 
     spec_by_id = {spec.scorer_id: spec for spec in list_specs()}
     variant_by_key = {
-        (spec.scorer_id, v.variant_id): v
-        for spec in list_specs()
-        for v in spec.variants
+        (spec.scorer_id, v.variant_id): v for spec in list_specs() for v in spec.variants
     }
     sort_options = []
     for scorer_id, variant_id, metric_key in sorted(available_triples):
@@ -409,9 +395,7 @@ def browse_assets(
 
     # When sorting by score, also fetch the total indexed count so the
     # template can distinguish "no indexed photos" from "no scored photos".
-    total_indexed = (
-        count_assets(conn) if sort_parsed is not None and total == 0 else None
-    )
+    total_indexed = count_assets(conn) if sort_parsed is not None and total == 0 else None
 
     templates = request.app.state.templates
     if partial == "1":
@@ -762,9 +746,7 @@ def get_similar_assets(
         # Distinguish "no data" from "no matches above threshold"
         if method == "phash":
             no_data = (
-                conn.execute(
-                    "SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)
-                ).fetchone()
+                conn.execute("SELECT 1 FROM phash WHERE asset_id = ?", (asset_id,)).fetchone()
                 is None
             )
             if no_data:
@@ -817,9 +799,7 @@ async def search_by_image(
     _MAX_BYTES = 50 * 1024 * 1024
     image_bytes = await file.read(_MAX_BYTES + 1)
     if len(image_bytes) > _MAX_BYTES:
-        raise HTTPException(
-            status_code=413, detail="Uploaded file too large (max 50 MB)."
-        )
+        raise HTTPException(status_code=413, detail="Uploaded file too large (max 50 MB).")
 
     try:
         from PIL import Image  # noqa: PLC0415
@@ -827,9 +807,7 @@ async def search_by_image(
         img = Image.open(io.BytesIO(image_bytes))
         img.load()
     except Exception as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Could not open image: {exc}"
-        ) from exc
+        raise HTTPException(status_code=400, detail=f"Could not open image: {exc}") from exc
 
     base = {"method": method, "metric": metric if method == "clip" else None}
 
@@ -844,9 +822,7 @@ async def search_by_image(
         try:
             phash_hex = compute_dhash_from_image(img)
         except Exception as exc:
-            raise HTTPException(
-                status_code=500, detail=f"pHash computation failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"pHash computation failed: {exc}") from exc
 
         results = find_similar_by_phash_hex(conn, phash_hex, threshold=threshold)
         return JSONResponse({**base, "results": results})
@@ -875,18 +851,14 @@ async def search_by_image(
             detail="CLIP dependencies not available. Install torch and open_clip.",
         ) from exc
     except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail=f"CLIP embedding failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"CLIP embedding failed: {exc}") from exc
 
     from takeout_rater.similarity import (
         find_similar_by_embedding,
     )  # noqa: PLC0415
 
     ref_blob = struct.pack(f"{EMBEDDING_DIM}f", *vec)
-    results = find_similar_by_embedding(
-        conn, ref_blob, metric=metric, threshold=threshold
-    )
+    results = find_similar_by_embedding(conn, ref_blob, metric=metric, threshold=threshold)
     return JSONResponse({**base, "results": results})
 
 
@@ -935,9 +907,7 @@ def serve_thumbnail(
     """
     thumb = thumb_path_for_id(thumbs_dir, asset_id)
     if not thumb.exists():
-        raise HTTPException(
-            status_code=404, detail=f"Thumbnail for asset {asset_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Thumbnail for asset {asset_id} not found")
     return FileResponse(str(thumb), media_type="image/jpeg")
 
 
@@ -963,9 +933,7 @@ def serve_image(
             media_type = asset.mime or "application/octet-stream"
             return FileResponse(str(image_path), media_type=media_type)
 
-    raise HTTPException(
-        status_code=404, detail=f"Original image for asset {asset_id} not found"
-    )
+    raise HTTPException(status_code=404, detail=f"Original image for asset {asset_id} not found")
 
 
 @router.get("/api/timeline")
