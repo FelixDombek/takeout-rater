@@ -740,7 +740,7 @@ def get_similar_assets(
 
     On error an ``"error"`` key is added: ``"no_embedding"`` or ``"no_phash"``.
     """
-    from takeout_rater.faces.similarity import find_similar_by_asset  # noqa: PLC0415
+    from takeout_rater.similarity import find_similar_by_asset  # noqa: PLC0415
 
     if method not in ("clip", "phash"):
         method = "clip"
@@ -834,11 +834,11 @@ async def search_by_image(
     base = {"method": method, "metric": metric if method == "clip" else None}
 
     if method == "phash":
-        from takeout_rater.faces.similarity import (
-            find_similar_by_phash_hex,
-        )  # noqa: PLC0415
         from takeout_rater.scoring.phash import (
             compute_dhash_from_image,
+        )  # noqa: PLC0415
+        from takeout_rater.similarity import (
+            find_similar_by_phash_hex,
         )  # noqa: PLC0415
 
         try:
@@ -879,7 +879,7 @@ async def search_by_image(
             status_code=500, detail=f"CLIP embedding failed: {exc}"
         ) from exc
 
-    from takeout_rater.faces.similarity import (
+    from takeout_rater.similarity import (
         find_similar_by_embedding,
     )  # noqa: PLC0415
 
