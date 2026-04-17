@@ -422,7 +422,7 @@ def _cmd_browse(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     if port != args.port:
-        print(f"note: port {args.port} is in use, using port {port} instead.")
+        print(f"note: port {args.port} is in use, using port {port} instead.", file=sys.stderr)
     url = f"http://{args.host}:{port}/assets"
     print(f"Starting takeout-rater UI at {url}")
     print("Press Ctrl+C to stop.")
@@ -645,7 +645,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     if port != args.port:
-        print(f"note: port {args.port} is in use, using port {port} instead.")
+        print(f"note: port {args.port} is in use, using port {port} instead.", file=sys.stderr)
 
     if conn is not None:
         print(f"Starting takeout-rater UI at http://{args.host}:{port}/assets")

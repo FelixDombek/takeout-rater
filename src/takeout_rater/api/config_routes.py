@@ -204,13 +204,13 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
             f"expected {db_file}",
         )
 
-    # Determine photos root: caller > saved config > fall back to db_root.
+    # Determine photos root: caller-provided > fall back to db_root itself.
+    # We intentionally do NOT read from the global config here — that config
+    # reflects the *currently active* library, not the one being switched to.
     if body.photos_root:
         photos_path = _resolve_user_dir(body.photos_root, "Photos root")
     else:
-        from takeout_rater import config as _cfg  # noqa: PLC0415
-
-        photos_path = _cfg.get_photos_root() or db_root_path
+        photos_path = db_root_path
 
     set_photos_root(photos_path)
     set_db_root(None if db_root_path == photos_path else db_root_path)
