@@ -449,7 +449,11 @@ def _cmd_export(args: argparse.Namespace) -> int:
     """
     import shutil  # noqa: PLC0415
 
-    from takeout_rater.db.connection import library_db_path, library_state_dir, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import (  # noqa: PLC0415
+        library_db_path,
+        library_state_dir,
+        open_library_db,
+    )
     from takeout_rater.db.queries import (  # noqa: PLC0415
         get_asset_by_id,
         get_asset_scores,

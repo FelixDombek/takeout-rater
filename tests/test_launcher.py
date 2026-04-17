@@ -149,9 +149,7 @@ def test_get_db_path_uses_db_root_when_present(tmp_path: Path) -> None:
     photos = tmp_path / "photos"
     db_root = tmp_path / "state"
     config = tmp_path / ".takeout-rater.json"
-    config.write_text(
-        f'{{"photos_root": "{photos}", "db_root": "{db_root}"}}', encoding="utf-8"
-    )
+    config.write_text(f'{{"photos_root": "{photos}", "db_root": "{db_root}"}}', encoding="utf-8")
 
     with patch.object(launcher, "ROOT", tmp_path):
         result = launcher._get_db_path()

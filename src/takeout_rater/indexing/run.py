@@ -128,12 +128,15 @@ def run_index(
     sub-step.
 
     Args:
-        photos_root: The directory that directly contains the album sub-folders
-            (e.g. ``Google Photos/``, or any arbitrary photo folder).  No
-            ``Takeout/`` wrapper is assumed.
+        photos_root: The library root directory.  May be the directory that
+            directly contains album sub-folders, or a parent directory that
+            contains a ``Takeout/`` sub-folder (optionally with a localized
+            ``Google Photos/`` nesting).  :func:`resolve_photos_root` is
+            called automatically to find the narrowest photos-only root.
         conn: Open :class:`sqlite3.Connection` for the library database.
         db_root: Directory where the ``takeout-rater/`` state directory (thumbs,
-            DB) should be written.  Defaults to *photos_root* when not given.
+            DB) should be written.  Defaults to *photos_root* (the value
+            passed in, before resolution) when not given.
         on_progress: Optional callback invoked after each asset is processed.
             Receives the current :class:`IndexProgress` instance.  Will be
             called from the main thread; implementations must not block.
@@ -167,6 +170,13 @@ def run_index(
 
     if db_root is None:
         db_root = photos_root
+
+    # Resolve the actual photos directory: handles the common case where
+    # `photos_root` points to a library root that contains a ``Takeout/``
+    # sub-folder (possibly with a localized ``Google Photos/`` nesting).
+    from takeout_rater.indexing.scanner import resolve_photos_root as _resolve  # noqa: PLC0415
+
+    photos_root = _resolve(photos_root)
 
     progress = IndexProgress(running=True)
 
