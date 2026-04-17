@@ -32,6 +32,36 @@ jobs:
       - name: Lint (ruff check)
         run: ruff check src/ tests/
 
+  ruff-cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Essential for pushing the fixes back to the PR
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Check out the head branch of the PR so we can push back to it
+          ref: ${{ github.head_ref }}
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff (Fix and Format)
+        run: |
+          # 1. Fix linting errors (unused imports, etc.)
+          ruff check --fix .
+          # 2. Reformat the code (indentation, quotes, etc.)
+          ruff format .
+
+      - name: Commit and Push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: ruff auto-fix and format"
+          commit_user_name: github-actions[bot]
+          commit_user_email: github-actions[bot]@users.noreply.github.com
+          # This ensures the step succeeds even if no changes were needed
+          skip_dirty_check: false
+
   test:
     runs-on: ubuntu-latest
     permissions:
