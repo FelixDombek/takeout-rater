@@ -38,9 +38,9 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     db_path = request.app.state.db_path
     if db_path is None:
         raise HTTPException(status_code=503, detail="Library not configured.")
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import open_db  # noqa: PLC0415
 
-    conn = open_library_db(request.app.state.library_root)
+    conn = open_db(db_path)
     try:
         yield conn
     finally:
