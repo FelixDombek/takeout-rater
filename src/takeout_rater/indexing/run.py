@@ -228,7 +228,7 @@ def run_index(
     progress.found = len(assets)
 
     if not assets:
-        _warmup_thread.join(timeout=300)
+        _warmup_thread.join(timeout=0.5)
         progress.running = False
         progress.done = True
         return progress
