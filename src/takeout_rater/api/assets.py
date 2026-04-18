@@ -1,4 +1,4 @@
-"""FastAPI router for asset listing, detail, and thumbnail serving."""
+"""FastAPI router for asset listing, detail, thumbnail and image serving."""
 
 from __future__ import annotations
 
