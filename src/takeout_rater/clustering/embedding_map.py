@@ -102,21 +102,27 @@ def _cap_hdbscan_clusters(coords: Any, labels: Any, max_clusters: int) -> Any:
 
     sizes = {cid: int((labels == cid).sum()) for cid in cluster_ids}
     retained = sorted(cluster_ids, key=lambda cid: (-sizes[cid], cid))[:max_clusters]
-    retained_centroids = {cid: coords[labels == cid].mean(axis=0) for cid in retained}
+    retained_array = np.asarray(retained, dtype=labels.dtype)
+    retained_centroids = np.stack(
+        [coords[labels == cid].mean(axis=0) for cid in retained],
+        axis=0,
+    )
 
     capped = labels.copy()
+    retained_set = set(retained)
     for cid in cluster_ids:
-        if cid in retained:
+        if cid in retained_set:
             continue
         indices = np.where(labels == cid)[0]
-        for idx in indices:
-            nearest = min(
-                retained,
-                key=lambda keep_id: float(
-                    np.linalg.norm(coords[idx] - retained_centroids[keep_id])
-                ),
-            )
-            capped[idx] = nearest
+        if indices.size == 0:
+            continue
+        cluster_points = coords[indices]
+        distances = np.linalg.norm(
+            cluster_points[:, np.newaxis, :] - retained_centroids[np.newaxis, :, :],
+            axis=2,
+        )
+        nearest = np.argmin(distances, axis=1)
+        capped[indices] = retained_array[nearest]
     return capped
 
 
