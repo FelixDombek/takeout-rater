@@ -37,7 +37,7 @@ class SimpleScorer(BaseScorer):
     def spec(cls) -> ScorerSpec:
         return ScorerSpec(
             scorer_id="simple",
-            display_name="Simple Heuristics",
+            display_name="Simple",
             description=(
                 "Three fast, Pillow-only image checks that need no model download: "
                 "sharpness (how in-focus the image is), luminosity (brightness and tonal "
