@@ -118,9 +118,12 @@ class TestBuildEmbeddingMap:
         from takeout_rater.clustering.embedding_map import build_embedding_map
 
         result = build_embedding_map([])
-        assert result == {"points": [], "clusters": [], "total": 0,  "params": {
-           "clustering_method": "kmeans",
-           "max_clusters": 24}}
+        assert result == {
+            "points": [],
+            "clusters": [],
+            "total": 0,
+            "params": {"clustering_method": "kmeans", "max_clusters": 24},
+        }
 
     def test_single_point(self) -> None:
         from takeout_rater.clustering.embedding_map import build_embedding_map
