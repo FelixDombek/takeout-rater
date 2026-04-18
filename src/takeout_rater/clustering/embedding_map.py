@@ -261,7 +261,10 @@ def build_embedding_map(
         *rows* is empty.
     """
     if not rows:
-        return {"points": [], "clusters": [], "total": 0}
+        return {"points": [], "clusters": [], "total": 0, "params": {
+            "clustering_method": clustering_method,
+            "max_clusters": max_clusters,
+        }}
     if clustering_method not in _CLUSTERING_METHODS:
         raise ValueError(f"Unsupported clustering method: {clustering_method}")
     if max_clusters < 1:
