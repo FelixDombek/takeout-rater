@@ -8,8 +8,8 @@ Pipeline
    remove noise before the expensive UMAP step.
 3. **UMAP** – project the 50-D output to 3 dimensions using cosine metric for
    the nearest-neighbour graph (CLIP embeddings are already unit-normalised).
-4. **KMeans** – cluster the 3-D coordinates so each point can be coloured by
-   group in the frontend.
+4. **Clustering** – cluster the 3-D coordinates with K-Means or HDBSCAN so
+   each point can be coloured by group in the frontend.
 5. **Representative selection** – for each cluster the asset whose 3-D
    coordinate is closest to the cluster centroid is chosen as the
    representative thumbnail.
@@ -46,27 +46,125 @@ _UMAP_COMPONENTS = 3
 _UMAP_METRIC = "cosine"
 _MIN_UMAP_N = 15  # UMAP needs at least this many samples to be meaningful
 _MIN_CLUSTERS = 2  # always create at least 2 clusters when n ≥ 2
-_MAX_CLUSTERS = 24  # cap to keep the legend readable
+_DEFAULT_MAX_CLUSTERS = 24  # cap to keep the legend readable
+_CLUSTERING_METHODS = {"kmeans", "hdbscan"}
 
 # Progress fractions at the end of each stage (cumulative).
 _FRAC_LOADED = 0.03
 _FRAC_SCALED = 0.07
 _FRAC_PCA = 0.15
 _FRAC_UMAP = 0.90  # epoch-level sub-progress fills _FRAC_PCA → _FRAC_UMAP
-_FRAC_KMEANS = 0.96
+_FRAC_CLUSTERING = 0.96
 _FRAC_DONE = 1.00
 
 
-def _n_clusters(n: int) -> int:
+def _n_clusters(n: int, max_clusters: int = _DEFAULT_MAX_CLUSTERS) -> int:
     """Return a sensible number of KMeans clusters for *n* points.
 
-    Uses the common heuristic ``k ≈ √(n/2)``, capped at ``_MAX_CLUSTERS`` to
+    Uses the common heuristic ``k ≈ √n``, capped at ``max_clusters`` to
     keep the legend readable and at ``n`` so KMeans never asks for more
     clusters than there are data points.
     """
+    if max_clusters < 1:
+        raise ValueError("max_clusters must be at least 1")
     if n < 2:
         return 1
-    return min(_MAX_CLUSTERS, max(_MIN_CLUSTERS, int(math.sqrt(n))), n)
+    return min(max_clusters, max(_MIN_CLUSTERS, int(math.sqrt(n))), n)
+
+
+def _normalise_cluster_labels(labels: Any) -> Any:
+    """Renumber non-noise cluster labels to stable ``0..N`` ids.
+
+    HDBSCAN uses ``-1`` for noise; that label is preserved so the frontend can
+    display noise separately.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    normalised = np.full(labels.shape, -1, dtype=int)
+    cluster_ids = sorted(int(label) for label in np.unique(labels) if int(label) >= 0)
+    for new_id, old_id in enumerate(cluster_ids):
+        normalised[labels == old_id] = new_id
+    return normalised
+
+
+def _cap_hdbscan_clusters(coords: Any, labels: Any, max_clusters: int) -> Any:
+    """Merge excess HDBSCAN clusters into the nearest retained cluster.
+
+    HDBSCAN does not expose a hard maximum-cluster parameter.  We keep the
+    largest clusters up to ``max_clusters`` and reassign points from smaller
+    clusters to the nearest retained centroid.  Noise (``-1``) remains noise.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    cluster_ids = [int(label) for label in np.unique(labels) if int(label) >= 0]
+    if len(cluster_ids) <= max_clusters:
+        return labels
+
+    sizes = {cid: int((labels == cid).sum()) for cid in cluster_ids}
+    retained = sorted(cluster_ids, key=lambda cid: (-sizes[cid], cid))[:max_clusters]
+    retained_array = np.asarray(retained, dtype=labels.dtype)
+    retained_centroids = np.stack(
+        [coords[labels == cid].mean(axis=0) for cid in retained],
+        axis=0,
+    )
+
+    capped = labels.copy()
+    retained_set = set(retained)
+    for cid in cluster_ids:
+        if cid in retained_set:
+            continue
+        indices = np.where(labels == cid)[0]
+        if indices.size == 0:
+            continue
+        cluster_points = coords[indices]
+        distances = np.linalg.norm(
+            cluster_points[:, np.newaxis, :] - retained_centroids[np.newaxis, :, :],
+            axis=2,
+        )
+        nearest = np.argmin(distances, axis=1)
+        capped[indices] = retained_array[nearest]
+    return capped
+
+
+def _cluster_coords(
+    coords: Any,
+    method: str,
+    max_clusters: int,
+) -> tuple[Any, dict[int, Any]]:
+    """Cluster 3-D coordinates and return labels plus representative centroids."""
+    import numpy as np  # noqa: PLC0415
+
+    n = coords.shape[0]
+    if max_clusters < 1:
+        raise ValueError("max_clusters must be at least 1")
+    if method not in _CLUSTERING_METHODS:
+        raise ValueError(f"Unsupported clustering method: {method}")
+    if n == 0:
+        return np.array([], dtype=int), {}
+    if n == 1:
+        return np.zeros(1, dtype=int), {0: coords[0]}
+
+    if method == "kmeans":
+        from sklearn.cluster import KMeans  # noqa: PLC0415
+
+        k = _n_clusters(n, max_clusters=max_clusters)
+        km = KMeans(n_clusters=k, random_state=42, n_init="auto")
+        labels = km.fit_predict(coords)
+        centroids = {cid: km.cluster_centers_[cid] for cid in range(k)}
+        return labels, centroids
+
+    from sklearn.cluster import HDBSCAN  # noqa: PLC0415
+
+    min_cluster_size = max(2, math.ceil(n / max_clusters))
+    clusterer = HDBSCAN(min_cluster_size=min_cluster_size, copy=True)
+    labels = clusterer.fit_predict(coords)
+    labels = _cap_hdbscan_clusters(coords, labels, max_clusters=max_clusters)
+    labels = _normalise_cluster_labels(labels)
+
+    centroids: dict[int, Any] = {}
+    for cid in sorted(int(label) for label in np.unique(labels)):
+        centroids[cid] = coords[labels == cid].mean(axis=0)
+    return labels, centroids
 
 
 @contextlib.contextmanager
@@ -142,6 +240,8 @@ def _track_umap_epochs(
 def build_embedding_map(
     rows: list[tuple[int, bytes, str]],
     progress_callback: Callable[[float, str], None] | None = None,
+    clustering_method: str = "kmeans",
+    max_clusters: int = _DEFAULT_MAX_CLUSTERS,
 ) -> dict[str, Any]:
     """Compute a 3-D embedding map from raw CLIP embedding rows.
 
@@ -152,6 +252,8 @@ def build_embedding_map(
         progress_callback: Optional callable ``(fraction, message)`` invoked
             at each pipeline stage.  *fraction* is in ``[0.0, 1.0]``.
             During the UMAP step it is called once per epoch.
+        clustering_method: ``"kmeans"`` or ``"hdbscan"``.
+        max_clusters: Maximum number of non-noise clusters to show.
 
     Returns:
         A dict with keys ``"points"``, ``"clusters"``, and ``"total"`` as
@@ -159,14 +261,25 @@ def build_embedding_map(
         *rows* is empty.
     """
     if not rows:
-        return {"points": [], "clusters": [], "total": 0}
+        return {
+            "points": [],
+            "clusters": [],
+            "total": 0,
+            "params": {
+                "clustering_method": clustering_method,
+                "max_clusters": max_clusters,
+            },
+        }
+    if clustering_method not in _CLUSTERING_METHODS:
+        raise ValueError(f"Unsupported clustering method: {clustering_method}")
+    if max_clusters < 1:
+        raise ValueError("max_clusters must be at least 1")
 
     def _cb(frac: float, msg: str) -> None:
         if progress_callback is not None:
             progress_callback(frac, msg)
 
     import numpy as np
-    from sklearn.cluster import KMeans
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import StandardScaler
 
@@ -186,7 +299,10 @@ def build_embedding_map(
 
     # 2. PCA
     pca_components = min(_PCA_COMPONENTS, n - 1, mat_scaled.shape[1])
-    mat_pca = PCA(n_components=pca_components, random_state=42).fit_transform(mat_scaled)
+    if pca_components < 1:
+        mat_pca = np.zeros((n, 1), dtype=float)
+    else:
+        mat_pca = PCA(n_components=pca_components, random_state=42).fit_transform(mat_scaled)
     _cb(_FRAC_PCA, "UMAP projection…")
 
     # 3. UMAP (skip when too few samples — fall back to PCA[:3])
@@ -212,16 +328,18 @@ def build_embedding_map(
             coords = mat_pca[:, :_UMAP_COMPONENTS].astype(float)
     _cb(_FRAC_UMAP, "Clustering…")
 
-    # 4. KMeans clustering on 3-D coords
-    k = _n_clusters(n)
-    km = KMeans(n_clusters=k, random_state=42, n_init="auto")
-    cluster_labels = km.fit_predict(coords)
-    centroids = km.cluster_centers_  # shape (k, 3)
-    _cb(_FRAC_KMEANS, "Finalizing…")
+    # 4. Clustering on 3-D coords
+    cluster_labels, centroids = _cluster_coords(
+        coords,
+        method=clustering_method,
+        max_clusters=max_clusters,
+    )
+    _cb(_FRAC_CLUSTERING, "Finalizing…")
 
     # 5. Representative per cluster: asset closest to its centroid
     representative: dict[int, int] = {}  # cluster_id → index into rows
-    for cid in range(k):
+    cluster_ids = sorted(int(cid) for cid in centroids)
+    for cid in cluster_ids:
         mask = cluster_labels == cid
         if not mask.any():
             continue
@@ -250,7 +368,15 @@ def build_embedding_map(
             else None,
             "size": int((cluster_labels == cid).sum()),
         }
-        for cid in range(k)
+        for cid in cluster_ids
     ]
 
-    return {"points": points, "clusters": clusters, "total": n}
+    return {
+        "points": points,
+        "clusters": clusters,
+        "total": n,
+        "params": {
+            "clustering_method": clustering_method,
+            "max_clusters": max_clusters,
+        },
+    }

@@ -111,6 +111,23 @@
     margin-bottom: 0.75rem;
     flex-wrap: wrap;
   }
+  .viz-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    color: #444;
+  }
+  .viz-control select,
+  .viz-control input {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 0.35rem 0.45rem;
+    font-size: 0.85rem;
+  }
+  .viz-control input {
+    width: 5rem;
+  }
   .viz-controls .viz-info {
     font-size: 0.8rem;
     color: #666;
@@ -233,6 +250,19 @@
       Click any point to open that photo.
     </p>
     <div class="viz-controls">
+      <label class="viz-control" for="viz-method">
+        Method
+        <select id="viz-method">
+          <option value="kmeans" selected>K-Means</option>
+          <option value="hdbscan">HDBSCAN</option>
+        </select>
+      </label>
+      <label class="viz-control" for="viz-max-clusters">
+        Max clusters
+        <input id="viz-max-clusters" type="number" min="1" max="200" step="1"
+               value="{{ max_clusters_default|default(24) }}"
+               data-default-max-clusters="{{ max_clusters_default|default(24) }}">
+      </label>
       <button class="btn btn-primary" id="btn-build-viz" onclick="loadViz(true)">Build / Refresh</button>
       <span class="viz-info" id="viz-info-text"></span>
     </div>
@@ -289,7 +319,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     0x59a14f, 0xedc948, 0xb07aa1, 0xff9da7,
     0x9c755f, 0xbab0ac, 0x499894, 0xd37295,
   ];
-  function clusterColor(id) { return PALETTE[id % PALETTE.length]; }
+  function clusterColor(id) {
+    if (id < 0) return 0x8a8f98;
+    return PALETTE[id % PALETTE.length];
+  }
   function clusterColorHex(id) {
     var c = clusterColor(id);
     return '#' + ('000000' + c.toString(16)).slice(-6);
@@ -425,7 +458,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
       }
 
       var label = document.createElement('span');
-      label.textContent = 'Cluster\u00a0' + cl.cluster_id + '\u00a0(' + cl.size + ')';
+      label.textContent = (cl.cluster_id < 0 ? 'Noise' : 'Cluster\u00a0' + cl.cluster_id)
+        + '\u00a0(' + cl.size + ')';
       item.appendChild(label);
 
       el.appendChild(item);
@@ -549,6 +583,20 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     }
   }
 
+  function getVizParams() {
+    var methodEl = document.getElementById('viz-method');
+    var maxEl = document.getElementById('viz-max-clusters');
+    var method = methodEl ? methodEl.value : 'kmeans';
+    var maxClusters = parseInt(maxEl ? maxEl.value : '24', 10);
+    if (!Number.isFinite(maxClusters) || maxClusters < 1) maxClusters = 1;
+    if (maxClusters > 200) maxClusters = 200;
+    if (maxEl) maxEl.value = String(maxClusters);
+    return {
+      method: method,
+      maxClusters: maxClusters
+    };
+  }
+
   // ── Main entry point ─────────────────────────────────────────────────────
   window.loadViz = function(forceRefresh) {
     var btn = document.getElementById('btn-build-viz');
@@ -572,7 +620,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
       console.log('initializing point cloud');
     }
 
-    var url = '/api/clip/embedding-map' + (forceRefresh ? '?refresh=true' : '');
+    var params = getVizParams();
+    var qs = new URLSearchParams({
+      clustering_method: params.method,
+      max_clusters: String(params.maxClusters)
+    });
+    if (forceRefresh) qs.set('refresh', 'true');
+    var url = '/api/clip/embedding-map?' + qs.toString();
     fetch(url)
       .then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -591,8 +645,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         buildPointCloud(data);
         buildLegend(data);
         hideOverlay();
-        if (info) info.textContent =
-          data.total + ' images · ' + data.clusters.length + ' clusters';
+        if (info) {
+          var methodLabel = params.method === 'hdbscan' ? 'HDBSCAN' : 'K-Means';
+          info.textContent = data.total + ' images · ' + data.clusters.length
+            + ' clusters · ' + methodLabel;
+        }
         if (btn) btn.disabled = false;
       })
       .catch(function(err) {
