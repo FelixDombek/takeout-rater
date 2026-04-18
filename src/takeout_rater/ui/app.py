@@ -66,27 +66,23 @@ def _make_templates(templates_dir: Path) -> Environment:
 
 
 def create_app(
-    library_root: Path | None,
+    photos_root: Path | None,
     db_conn: sqlite3.Connection | None,
     db_root: Path | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
-        library_root: The photos root directory (directly containing album
+        photos_root: The photos root directory (directly containing album
             sub-folders), or *None* when the library path has not been
             configured yet.
         db_conn: An open SQLite connection to the library database, or *None*
             when the library is not available yet.
         db_root: Directory where the ``takeout-rater/`` state dir lives.
-            Defaults to *library_root* when not given.
 
     Returns:
         A configured :class:`FastAPI` application instance.
     """
-    if db_root is None:
-        db_root = library_root
-
     app = FastAPI(
         title="takeout-rater",
         description="Local photo library browser",
@@ -97,7 +93,7 @@ def create_app(
 
     # Attach shared state (may be None when not yet configured)
     app.state.db_conn = db_conn
-    app.state.library_root = library_root
+    app.state.photos_root = photos_root
     app.state.db_root = db_root
     # Path to the SQLite database file — used by per-request connections to
     # avoid sharing a single sqlite3.Connection across threads.
@@ -108,20 +104,12 @@ def create_app(
         app.state.db_path = _candidate if _candidate.exists() else None
     else:
         app.state.db_path = None
-    # takeout_root is the narrowest photos-only directory that relpath and
-    # sidecar_relpath values are relative to.  Calling resolve_photos_root
-    # handles the common case where library_root contains a ``Takeout/``
-    # sub-folder (possibly with a localized ``Google Photos/`` nesting), which
-    # is the same resolution logic used by run_index.
-    if library_root is not None:
-        from takeout_rater.indexing.scanner import (  # noqa: PLC0415
-            resolve_photos_root,
-        )
+    if db_root is not None:
+        from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
 
-        app.state.takeout_root = resolve_photos_root(library_root)
+        app.state.thumbs_dir = library_state_dir(db_root) / "thumbs"
     else:
-        app.state.takeout_root = None
-    app.state.thumbs_dir = db_root / "takeout-rater" / "thumbs" if db_root else None
+        app.state.thumbs_dir = None
     app.state.templates = _make_templates(_TEMPLATES_DIR)
     # Mount static assets (CSS, JS shared across pages)
     _STATIC_DIR = Path(__file__).parent / "static"

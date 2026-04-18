@@ -571,7 +571,7 @@
         stopProgressPoll();
         vizData = data;
         if (!data.total || data.total === 0) {
-          showOverlay('<span>No CLIP embeddings found. Run the <strong>Embed</strong> job first.</span>');
+          showOverlay('<span>No CLIP embeddings found. Run indexing or rescan first.</span>');
           if (info) info.textContent = '';
           if (btn) btn.disabled = false;
           return;

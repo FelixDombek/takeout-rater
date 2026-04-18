@@ -69,7 +69,7 @@ def client_with_db(tmp_path: Path) -> TestClient:
     from takeout_rater.db.connection import open_library_db
 
     conn = open_library_db(tmp_path)
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=False)
 
 
@@ -188,7 +188,7 @@ class TestEmbeddingMapEndpoint:
             aid = _insert_asset(conn, f"img{i}.jpg")
             rows.append((aid, _make_embedding(i)))
         bulk_upsert_clip_embeddings(conn, rows)
-        app = create_app(tmp_path, conn)
+        app = create_app(tmp_path, conn, db_root=tmp_path)
         client = TestClient(app, follow_redirects=False)
 
         r = client.get("/api/clip/embedding-map")
@@ -209,7 +209,7 @@ class TestEmbeddingMapEndpoint:
             aid = _insert_asset(conn, f"img{i}.jpg")
             rows_db.append((aid, _make_embedding(i)))
         bulk_upsert_clip_embeddings(conn, rows_db)
-        app = create_app(tmp_path, conn)
+        app = create_app(tmp_path, conn, db_root=tmp_path)
         client = TestClient(app, follow_redirects=False)
 
         r1 = client.get("/api/clip/embedding-map")
@@ -226,7 +226,7 @@ class TestEmbeddingMapEndpoint:
         for i in range(n):
             aid = _insert_asset(conn, f"img{i}.jpg")
             bulk_upsert_clip_embeddings(conn, [(aid, _make_embedding(i))])
-        app = create_app(tmp_path, conn)
+        app = create_app(tmp_path, conn, db_root=tmp_path)
         client = TestClient(app, follow_redirects=False)
 
         client.get("/api/clip/embedding-map")

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from takeout_rater.cli import _EXIT_SCHEMA_MISMATCH, build_parser, main
 from takeout_rater.db.schema import SchemaMismatchError
 
@@ -22,45 +24,47 @@ def test_no_command_returns_zero() -> None:
 def test_score_subcommand_is_registered() -> None:
     """The score sub-command must be listed in the parser."""
     parser = build_parser()
-    args = parser.parse_args(["score", "/tmp/fake"])
+    args = parser.parse_args(["score", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.command == "score"
 
 
 def test_score_subcommand_default_batch_size() -> None:
     parser = build_parser()
-    args = parser.parse_args(["score", "/tmp/fake"])
+    args = parser.parse_args(["score", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.batch_size == 32
 
 
 def test_export_subcommand_is_registered() -> None:
     """The export sub-command must be listed in the parser."""
     parser = build_parser()
-    args = parser.parse_args(["export", "/tmp/fake"])
+    args = parser.parse_args(["export", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.command == "export"
 
 
 def test_cluster_subcommand_is_registered() -> None:
     """The cluster sub-command must be listed in the parser."""
     parser = build_parser()
-    args = parser.parse_args(["cluster", "/tmp/fake"])
+    args = parser.parse_args(["cluster", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.command == "cluster"
 
 
 def test_cluster_subcommand_default_threshold() -> None:
     parser = build_parser()
-    args = parser.parse_args(["cluster", "/tmp/fake"])
+    args = parser.parse_args(["cluster", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.threshold == 10
 
 
 def test_cluster_subcommand_default_window() -> None:
     parser = build_parser()
-    args = parser.parse_args(["cluster", "/tmp/fake"])
+    args = parser.parse_args(["cluster", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.window == 200
 
 
 def test_cluster_subcommand_custom_params() -> None:
     parser = build_parser()
-    args = parser.parse_args(["cluster", "--threshold", "5", "--window", "50", "/tmp/fake"])
+    args = parser.parse_args(
+        ["cluster", "--db-root", "/tmp/state", "--threshold", "5", "--window", "50", "/tmp/fake"]
+    )
     assert args.threshold == 5
     assert args.window == 50
 
@@ -68,23 +72,23 @@ def test_cluster_subcommand_custom_params() -> None:
 def test_index_subcommand_is_registered() -> None:
     """The index sub-command must be listed in the parser."""
     parser = build_parser()
-    args = parser.parse_args(["index", "/tmp/fake"])
+    args = parser.parse_args(["index", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.command == "index"
 
 
 def test_index_subcommand_photos_root_attr() -> None:
     """photos_root attribute must be set (not library_root)."""
     parser = build_parser()
-    args = parser.parse_args(["index", "/tmp/fake"])
+    args = parser.parse_args(["index", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.photos_root == "/tmp/fake"
     assert not hasattr(args, "library_root")
 
 
-def test_index_subcommand_db_root_default_none() -> None:
-    """--db-root defaults to None when not given."""
+def test_index_subcommand_db_root_required() -> None:
+    """--db-root is required because state is separate from photos."""
     parser = build_parser()
-    args = parser.parse_args(["index", "/tmp/fake"])
-    assert args.db_root is None
+    with pytest.raises(SystemExit):
+        parser.parse_args(["index", "/tmp/fake"])
 
 
 def test_index_subcommand_db_root_custom() -> None:
@@ -97,20 +101,20 @@ def test_index_subcommand_db_root_custom() -> None:
 def test_browse_subcommand_is_registered() -> None:
     """The browse sub-command must be listed in the parser."""
     parser = build_parser()
-    args = parser.parse_args(["browse", "/tmp/fake"])
+    args = parser.parse_args(["browse", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.command == "browse"
 
 
 def test_browse_default_port() -> None:
     parser = build_parser()
-    args = parser.parse_args(["browse", "/tmp/fake"])
+    args = parser.parse_args(["browse", "--db-root", "/tmp/state", "/tmp/fake"])
     assert args.port == 8765
 
 
-def test_score_subcommand_db_root_default_none() -> None:
+def test_score_subcommand_db_root_required() -> None:
     parser = build_parser()
-    args = parser.parse_args(["score", "/tmp/fake"])
-    assert args.db_root is None
+    with pytest.raises(SystemExit):
+        parser.parse_args(["score", "/tmp/fake"])
 
 
 def test_cluster_subcommand_db_root_custom() -> None:
@@ -132,7 +136,7 @@ def test_serve_schema_mismatch_returns_exit_code(tmp_path: Path) -> None:
 
     with (
         patch("takeout_rater.config.get_photos_root", return_value=tmp_path),
-        patch("takeout_rater.config.get_db_root", return_value=None),
+        patch("takeout_rater.config.get_db_root", return_value=tmp_path),
         patch(
             "takeout_rater.db.connection.open_library_db",
             side_effect=SchemaMismatchError(5),
@@ -153,7 +157,7 @@ def test_serve_schema_mismatch_does_not_start_server(tmp_path: Path) -> None:
 
     with (
         patch("takeout_rater.config.get_photos_root", return_value=tmp_path),
-        patch("takeout_rater.config.get_db_root", return_value=None),
+        patch("takeout_rater.config.get_db_root", return_value=tmp_path),
         patch(
             "takeout_rater.db.connection.open_library_db",
             side_effect=SchemaMismatchError(3),

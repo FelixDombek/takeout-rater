@@ -25,7 +25,9 @@ POST /api/jobs/rescan/start      – start library rescan (update indexer_versio
 
 from __future__ import annotations
 
+import sqlite3
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -122,12 +124,51 @@ def _require_db(request: Request) -> None:
         raise HTTPException(status_code=503, detail="Library not configured.")
 
 
-def _require_library_root(request: Request) -> Path:
+def _require_photos_root(request: Request) -> Path:
     _require_db(request)
-    lr: Path | None = request.app.state.library_root
-    if lr is None:
+    photos_root: Path | None = request.app.state.photos_root
+    if photos_root is None:
         raise HTTPException(status_code=503, detail="Library not configured.")
-    return lr
+    return photos_root
+
+
+def _open_worker_conn(app: object) -> sqlite3.Connection:
+    """Open the exact configured library DB for a background worker.
+
+    Prefer ``app.state.db_path`` because it is the canonical DB selected by
+    setup/switch-library.  If only ``db_root`` is present, derive the configured
+    DB from that state root.
+    """
+    db_path: Path | None = getattr(app.state, "db_path", None)  # type: ignore[union-attr]
+    if db_path is not None:
+        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+
+        return open_db(db_path)
+
+    db_root: Path | None = getattr(app.state, "db_root", None)  # type: ignore[union-attr]
+    if db_root is None:
+        raise RuntimeError("Library DB root is not configured.")
+    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+
+    return open_library_db(db_root)
+
+
+def _configured_thumbs_dir(app: object) -> Path:
+    thumbs_dir: Path | None = getattr(app.state, "thumbs_dir", None)  # type: ignore[union-attr]
+    if thumbs_dir is not None:
+        return thumbs_dir
+
+    db_root: Path | None = getattr(app.state, "db_root", None)  # type: ignore[union-attr]
+    if db_root is None:
+        raise RuntimeError("Library DB root is not configured.")
+    from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
+
+    return library_state_dir(db_root) / "thumbs"
+
+
+def _configured_photos_root(app: object) -> Path | None:
+    """Return the root that asset relpaths are relative to, when accessible."""
+    return getattr(app.state, "photos_root", None)  # type: ignore[no-any-return,union-attr]
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +237,7 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-def _start_index_job(app: object, photos_root: Path, db_root: Path | None = None) -> None:
+def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
     """Launch a background thread that indexes *photos_root*.
 
     Progress is stored in ``app.state.jobs["index"]`` as a :class:`JobProgress`
@@ -206,14 +247,10 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path | None = None
     Args:
         app: The FastAPI application instance.
         photos_root: The directory that directly contains the album sub-folders.
-        db_root: Optional separate directory for the ``takeout-rater/`` state
-            (DB, thumbnails).  Defaults to *photos_root* when not given.
+        db_root: Directory for the ``takeout-rater/`` state (DB, thumbnails).
 
     If an indexing run is already active, this call is a no-op.
     """
-    if db_root is None:
-        db_root = photos_root
-
     jobs = _get_jobs(app)
     existing = jobs.get("index")
     if existing is not None and existing.running:
@@ -307,7 +344,7 @@ def start_index_job(request: Request) -> JSONResponse:
 
     Returns ``409`` if an index job is already running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     existing = jobs.get("index")
@@ -316,8 +353,8 @@ def start_index_job(request: Request) -> JSONResponse:
 
     _start_index_job(
         request.app,
-        request.app.state.library_root,
-        db_root=getattr(request.app.state, "db_root", None),
+        request.app.state.photos_root,
+        db_root=request.app.state.db_root,
     )
     return JSONResponse({"status": "started"})
 
@@ -399,15 +436,13 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     ``scorer_id`` is supplied).  Returns ``409`` if a score job is already
     running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     existing = jobs.get("score")
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="A score job is already running.")
 
-    library_root: Path = request.app.state.library_root
-    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     progress = JobProgress(job_type="score", running=True, message="Starting…")
     jobs["score"] = progress
 
@@ -416,15 +451,11 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     rerun = body.rerun
 
     def _worker() -> None:
-        from takeout_rater.db.connection import (
-            library_state_dir,  # noqa: PLC0415
-            open_library_db,  # noqa: PLC0415
-        )
         from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
         from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
 
-        worker_conn = open_library_db(db_root)
-        thumbs_dir = library_state_dir(db_root) / "thumbs"
+        worker_conn = _open_worker_conn(request.app)
+        thumbs_dir = _configured_thumbs_dir(request.app)
         try:
             # ── Run scorers ──────────────────────────────────────────────────
             # Build the list of (scorer_id, variant_id) pairs to run.
@@ -560,7 +591,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
     Returns ``409`` if a cluster job is already running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     if body.method not in ("phash", "clip"):
@@ -579,8 +610,6 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="A cluster job is already running.")
 
-    library_root: Path = request.app.state.library_root
-    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     progress = JobProgress(job_type="cluster", running=True, message="Starting…")
     jobs["cluster"] = progress
 
@@ -594,11 +623,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
     clip_threshold = body.clip_threshold
 
     def _worker() -> None:
-        from takeout_rater.db.connection import (
-            open_library_db,  # noqa: PLC0415
-        )
-
-        worker_conn = open_library_db(db_root)
+        worker_conn = _open_worker_conn(request.app)
         try:
             if method == "clip":
                 # ── CLIP embedding clustering ────────────────────────────────
@@ -611,7 +636,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 
                 n_emb = count_clip_embeddings(worker_conn)
                 if n_emb == 0:
-                    progress.message = "No CLIP embeddings found. Run the Embed job first."
+                    progress.message = "No CLIP embeddings found. Run indexing or rescan first."
                     progress.running = False
                     progress.done = True
                     return
@@ -737,15 +762,13 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
     Copies the best representative from each cluster to the exports folder.
     Returns ``409`` if an export job is already running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     existing = jobs.get("export")
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="An export job is already running.")
 
-    library_root: Path = request.app.state.library_root
-    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     scorer_id = body.scorer_id
     metric_key = body.metric_key
 
@@ -761,10 +784,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
     def _worker() -> None:
         import shutil  # noqa: PLC0415
 
-        from takeout_rater.db.connection import (  # noqa: PLC0415
-            library_state_dir,
-            open_library_db,
-        )
+        from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
         from takeout_rater.db.queries import (  # noqa: PLC0415
             count_clusters,
             get_asset_by_id,
@@ -772,11 +792,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
             get_cluster_members,
             list_clusters_with_representatives,
         )
-        from takeout_rater.indexing.scanner import (
-            find_google_photos_root,
-        )  # noqa: PLC0415
-
-        worker_conn = open_library_db(db_root)
+        worker_conn = _open_worker_conn(request.app)
         try:
             if count_clusters(worker_conn) == 0:
                 progress.message = "No clusters found. Run 'Cluster' first."
@@ -785,7 +801,18 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                 worker_conn.close()
                 return
 
-            takeout_root = find_google_photos_root(library_root / "Takeout")
+            photos_root = _configured_photos_root(request.app)
+            if photos_root is None:
+                progress.message = "Original photos folder is not available."
+                progress.running = False
+                progress.done = True
+                return
+            db_root: Path | None = getattr(request.app.state, "db_root", None)
+            if db_root is None:
+                progress.message = "Library DB root is not configured."
+                progress.running = False
+                progress.done = True
+                return
             export_dir = library_state_dir(db_root) / "exports"
             export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -839,7 +866,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                     if asset is None:
                         continue
 
-                    src = takeout_root / asset.relpath
+                    src = photos_root / asset.relpath
                     if not src.exists():
                         skipped += 1
                         continue
@@ -896,7 +923,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
     Returns ``409`` if a rescan job is already running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     existing = jobs.get("rescan")
@@ -906,38 +933,24 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
     if body.mode not in ("missing_only", "full"):
         raise HTTPException(status_code=400, detail="mode must be 'missing_only' or 'full'.")
 
-    library_root: Path = request.app.state.library_root
-    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     mode = body.mode
     progress = JobProgress(job_type="rescan", running=True, message="Starting…")
     jobs["rescan"] = progress
 
     def _worker() -> None:
-        from takeout_rater.db.connection import (  # noqa: PLC0415
-            library_state_dir,
-            open_library_db,
-        )
         from takeout_rater.db.queries import (  # noqa: PLC0415
             CURRENT_INDEXER_VERSION,
             list_asset_ids_needing_rescan,
         )
 
-        worker_conn = open_library_db(db_root)
+        worker_conn = _open_worker_conn(request.app)
         try:
-            # Try to locate the photos root for sidecar re-parsing and
-            # thumbnail regeneration; continue even if the Takeout directory
-            # is not present (e.g. in tests).
-            photos_root = None
-            try:
-                from takeout_rater.indexing.scanner import (  # noqa: PLC0415
-                    find_google_photos_root,
-                )
+            # Use the same relpath root as browsing/indexing. Continue even if
+            # original files are not accessible; metadata-only rescan still
+            # updates DB rows and album links.
+            photos_root = _configured_photos_root(request.app)
 
-                photos_root = find_google_photos_root(library_root / "Takeout")
-            except (FileNotFoundError, ValueError, OSError):
-                pass
-
-            thumbs_dir = library_state_dir(db_root) / "thumbs"
+            thumbs_dir = _configured_thumbs_dir(request.app)
             thumbs_dir.mkdir(parents=True, exist_ok=True)
 
             rows = list_asset_ids_needing_rescan(worker_conn, full=(mode == "full"))
@@ -950,6 +963,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             thumbs_ok = 0
             thumbs_skip = 0
             phash_ok = 0
+            clip_ok = 0
 
             from takeout_rater.indexing.thumbnailer import (
                 thumb_path_for_id,
@@ -961,10 +975,17 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             # is intentionally empty.
             if mode == "full":
                 _assets_with_phash: set[int] = set()
+                _assets_with_clip: set[int] = set()
             else:
                 _assets_with_phash = {
                     r[0] for r in worker_conn.execute("SELECT asset_id FROM phash").fetchall()
                 }
+                _assets_with_clip = {
+                    r[0]
+                    for r in worker_conn.execute("SELECT asset_id FROM clip_embeddings").fetchall()
+                }
+
+            _clip_bundle = None
 
             for asset_id, _relpath, sidecar_relpath in rows:
                 progress.current_item = sidecar_relpath or _relpath
@@ -1123,6 +1144,40 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                         except Exception:  # noqa: BLE001
                             pass
 
+                    needs_clip = asset_id not in _assets_with_clip
+                    if needs_clip:
+                        try:
+                            import io  # noqa: PLC0415
+                            import struct  # noqa: PLC0415
+
+                            import torch  # noqa: PLC0415
+                            from PIL import Image  # noqa: PLC0415
+
+                            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+                                get_clip_model,
+                            )
+
+                            if _clip_bundle is None:
+                                _clip_bundle = get_clip_model()
+                            model, preprocess, _tokenizer, device = _clip_bundle
+                            thumb_img = Image.open(io.BytesIO(thumb.read_bytes())).convert("RGB")
+                            img_tensor = preprocess(thumb_img).unsqueeze(0).to(device)
+                            with torch.no_grad():
+                                embedding = model.encode_image(img_tensor)
+                                embedding = embedding / embedding.norm(dim=-1, keepdim=True)
+                                embedding = embedding.cpu().float().numpy()[0]
+                            blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
+                            worker_conn.execute(
+                                "INSERT OR REPLACE INTO clip_embeddings"
+                                " (asset_id, embedding, computed_at) VALUES (?, ?, ?)",
+                                (asset_id, blob, int(time.time())),
+                            )
+                            clip_ok += 1
+                        except ImportError:
+                            pass
+                        except Exception:  # noqa: BLE001
+                            pass
+
                 processed += 1
                 progress.processed = processed
                 progress.message = f"Rescanning {processed}\u202f/\u202f{total}\u2026"
@@ -1139,6 +1194,8 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 extras.append(f"{thumbs_ok} thumbnail(s) regenerated")
             if phash_ok:
                 extras.append(f"{phash_ok} pHash(es) computed")
+            if clip_ok:
+                extras.append(f"{clip_ok} CLIP embedding(s) computed")
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
                 f" ({', '.join(extras)})" if extras else ""
             )
@@ -1174,25 +1231,19 @@ def start_embed_job(request: Request) -> JSONResponse:
 
     Returns ``409`` if an embed job is already running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     existing = jobs.get("embed")
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="An embed job is already running.")
 
-    library_root: Path = request.app.state.library_root
-    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     progress = JobProgress(job_type="embed", running=True, message="Starting…")
     jobs["embed"] = progress
 
     def _worker() -> None:
         import struct  # noqa: PLC0415
 
-        from takeout_rater.db.connection import (
-            library_state_dir,  # noqa: PLC0415
-            open_library_db,  # noqa: PLC0415
-        )
         from takeout_rater.db.queries import (
             bulk_upsert_clip_embeddings,  # noqa: PLC0415
             list_asset_ids_without_embedding,  # noqa: PLC0415
@@ -1201,8 +1252,8 @@ def start_embed_job(request: Request) -> JSONResponse:
             thumb_path_for_id,
         )  # noqa: PLC0415
 
-        worker_conn = open_library_db(db_root)
-        thumbs_dir = library_state_dir(db_root) / "thumbs"
+        worker_conn = _open_worker_conn(request.app)
+        thumbs_dir = _configured_thumbs_dir(request.app)
         batch_size = 64
         try:
             asset_ids = list_asset_ids_without_embedding(worker_conn)
@@ -1341,7 +1392,7 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
 
     Returns ``409`` if a detect_faces job is already running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     if body.model_pack not in ("buffalo_l", "buffalo_sc"):
@@ -1353,8 +1404,6 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="A face detection job is already running.")
 
-    library_root: Path = request.app.state.library_root
-    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     model_pack = body.model_pack
     det_thresh = body.det_thresh
     progress = JobProgress(job_type="detect_faces", running=True, message="Starting…")
@@ -1364,10 +1413,6 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
         import json as _json  # noqa: PLC0415
         import struct  # noqa: PLC0415
 
-        from takeout_rater.db.connection import (
-            library_state_dir,  # noqa: PLC0415
-            open_library_db,  # noqa: PLC0415
-        )
         from takeout_rater.db.queries import (
             bulk_insert_face_embeddings,  # noqa: PLC0415
             finish_face_detection_run,  # noqa: PLC0415
@@ -1382,8 +1427,8 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             thumb_path_for_id,
         )  # noqa: PLC0415
 
-        worker_conn = open_library_db(db_root)
-        thumbs_dir = library_state_dir(db_root) / "thumbs"
+        worker_conn = _open_worker_conn(request.app)
+        thumbs_dir = _configured_thumbs_dir(request.app)
         batch_size = 32
         try:
             params = {
@@ -1513,15 +1558,13 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
 
     Returns ``409`` if a cluster_faces job is already running.
     """
-    _require_library_root(request)
+    _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
     existing = jobs.get("cluster_faces")
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="A face clustering job is already running.")
 
-    library_root: Path = request.app.state.library_root
-    db_root: Path = getattr(request.app.state, "db_root", None) or library_root
     eps = body.eps
     min_samples = body.min_samples
     detection_run_id = body.detection_run_id
@@ -1529,11 +1572,10 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
     jobs["cluster_faces"] = progress
 
     def _worker() -> None:
-        from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
         from takeout_rater.db.queries import count_face_embeddings  # noqa: PLC0415
         from takeout_rater.faces.clustering import cluster_faces  # noqa: PLC0415
 
-        worker_conn = open_library_db(db_root)
+        worker_conn = _open_worker_conn(request.app)
         try:
             n_emb = count_face_embeddings(worker_conn)
             if n_emb == 0:

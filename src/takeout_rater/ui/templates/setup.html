@@ -159,6 +159,11 @@
              placeholder="/path/to/folder-containing-takeout-rater-dir">
       <button class="btn" id="btn-pick-switch-db">Browse…</button>
     </div>
+    <div class="path-row" style="margin-top:0.5rem;">
+      <input type="text" id="switch-photos-root-input" class="path-input"
+             placeholder="/path/to/google-photos-folder">
+      <button class="btn" id="btn-pick-switch-photos">Browse…</button>
+    </div>
     <div class="actions" style="margin-top:0.75rem;">
       <button class="btn btn-primary" id="btn-switch-library">Load library</button>
     </div>
@@ -263,10 +268,14 @@
       return;
     }
     var dbRoot = dbRootInput.value.trim();
+    if (!dbRoot) {
+      showStatus('Please enter or select where takeout-rater should store its library data.', 'error');
+      return;
+    }
     btnSave.disabled = true;
     var body = { path: path };
-    if (dbRoot) { body.db_root = dbRoot; }
-    fetch('/api/config/takeout-path', {
+    body.db_root = dbRoot;
+    fetch('/api/config/photos-root', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -293,7 +302,9 @@
 
   // ── Switch to existing library ─────────────────────────────────────────────
   var btnPickSwitchDb = document.getElementById('btn-pick-switch-db');
+  var btnPickSwitchPhotos = document.getElementById('btn-pick-switch-photos');
   var switchDbRootInput = document.getElementById('switch-db-root-input');
+  var switchPhotosRootInput = document.getElementById('switch-photos-root-input');
   var btnSwitch = document.getElementById('btn-switch-library');
   var switchStatusMsg = document.getElementById('switch-status-msg');
 
@@ -311,17 +322,33 @@
     });
   });
 
+  btnPickSwitchPhotos.addEventListener('click', function () {
+    btnPickSwitchPhotos.disabled = true;
+    btnPickSwitchPhotos.textContent = 'Opening…';
+    openPicker(switchPhotosRootInput).finally(function () {
+      btnPickSwitchPhotos.disabled = false;
+      btnPickSwitchPhotos.textContent = 'Browse…';
+    });
+  });
+
   btnSwitch.addEventListener('click', function () {
     var dbRoot = switchDbRootInput.value.trim();
     if (!dbRoot) {
       showSwitchStatus('Please enter or select the folder containing takeout-rater/.', 'error');
       return;
     }
+    var photosRoot = switchPhotosRootInput.value.trim();
+    if (!photosRoot) {
+      showSwitchStatus('Please enter or select the photos folder for this library.', 'error');
+      return;
+    }
     btnSwitch.disabled = true;
+    var switchBody = { db_root: dbRoot };
+    switchBody.photos_root = photosRoot;
     fetch('/api/config/switch-library', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ db_root: dbRoot })
+      body: JSON.stringify(switchBody)
     })
       .then(function (r) {
         if (!r.ok) {
@@ -339,8 +366,10 @@
       });
   });
 
-  switchDbRootInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { btnSwitch.click(); }
+  [switchDbRootInput, switchPhotosRootInput].forEach(function(el) {
+    el.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { btnSwitch.click(); }
+    });
   });
 
   // Allow pressing Enter in the text fields to trigger Save

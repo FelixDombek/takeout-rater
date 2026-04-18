@@ -68,8 +68,6 @@ def test_get_config_unconfigured(client: TestClient, monkeypatch: pytest.MonkeyP
     resp = client.get("/api/config")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["configured"] is False
-    assert data["takeout_path"] is None
     assert data["photos_root"] is None
 
 
@@ -84,8 +82,6 @@ def test_get_config_configured(
     resp = client.get("/api/config")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["configured"] is True
-    assert data["takeout_path"] == str(tmp_path)
     assert data["photos_root"] == str(tmp_path)
 
 
@@ -113,8 +109,7 @@ def test_library_status_unconfigured(client: TestClient) -> None:
     resp = client.get("/api/library/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["configured"] is False
-    assert data["library_path"] is None
+    assert data["photos_root"] is None
     assert data["db_schema_version"] is None
 
 
@@ -131,14 +126,13 @@ def test_library_status_configured(tmp_path: Path) -> None:
     from takeout_rater.db.queries import CURRENT_INDEXER_VERSION  # noqa: E402
 
     conn = open_library_db(tmp_path)
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     c = TestClient(app, follow_redirects=False)
 
     resp = c.get("/api/library/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["configured"] is True
-    assert data["library_path"] == str(tmp_path)
+    assert data["photos_root"] == str(tmp_path)
     assert isinstance(data["db_schema_version"], int)
     assert data["db_schema_version"] > 0
     assert data["db_scan_version"] == CURRENT_INDEXER_VERSION
@@ -146,7 +140,7 @@ def test_library_status_configured(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/config/takeout-path
+# POST /api/config/photos-root
 # ---------------------------------------------------------------------------
 
 
@@ -154,13 +148,18 @@ def test_set_path_valid(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     saved: list[Path] = []
+    db_root = tmp_path / "state"
+    db_root.mkdir()
 
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
     monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: saved.append(p))
     monkeypatch.setattr(routes_mod, "set_db_root", lambda p: None)
 
-    resp = client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
+    resp = client.post(
+        "/api/config/photos-root",
+        json={"path": str(tmp_path), "db_root": str(db_root)},
+    )
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
     assert len(saved) == 1
@@ -183,7 +182,7 @@ def test_set_path_with_db_root(
     monkeypatch.setattr(routes_mod, "set_db_root", lambda p: db_saved.append(p))
 
     resp = client.post(
-        "/api/config/takeout-path",
+        "/api/config/photos-root",
         json={"path": str(tmp_path), "db_root": str(db_root_dir)},
     )
     assert resp.status_code == 200
@@ -193,14 +192,17 @@ def test_set_path_with_db_root(
 
 
 def test_set_path_nonexistent_returns_400(client: TestClient) -> None:
-    resp = client.post("/api/config/takeout-path", json={"path": "/this/path/does/not/exist/xyz"})
+    resp = client.post(
+        "/api/config/photos-root",
+        json={"path": "/this/path/does/not/exist/xyz", "db_root": "/this/path/does/not/exist/xyz"},
+    )
     assert resp.status_code == 400
 
 
 def test_set_path_not_a_directory(client: TestClient, tmp_path: Path) -> None:
     f = tmp_path / "file.txt"
     f.write_text("hello")
-    resp = client.post("/api/config/takeout-path", json={"path": str(f)})
+    resp = client.post("/api/config/photos-root", json={"path": str(f), "db_root": str(tmp_path)})
     assert resp.status_code == 400
 
 
@@ -263,21 +265,26 @@ def test_assets_returns_503_when_no_db(client: TestClient) -> None:
 def test_set_path_updates_app_state(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """After POST /api/config/takeout-path the app state must have a live DB connection."""
+    """After POST /api/config/photos-root the app state must have a live DB connection."""
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
     monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: None)
     monkeypatch.setattr(routes_mod, "set_db_root", lambda p: None)
+    db_root = tmp_path / "state"
+    db_root.mkdir()
 
     # Before setting the path the app is unconfigured
     assert client.app.state.db_conn is None  # type: ignore[union-attr]
 
-    resp = client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
+    resp = client.post(
+        "/api/config/photos-root",
+        json={"path": str(tmp_path), "db_root": str(db_root)},
+    )
     assert resp.status_code == 200
 
     # After setting the path the app state must be updated
     assert client.app.state.db_conn is not None  # type: ignore[union-attr]
-    assert client.app.state.library_root == tmp_path.resolve()  # type: ignore[union-attr]
+    assert client.app.state.photos_root == tmp_path.resolve()  # type: ignore[union-attr]
 
 
 def test_set_path_then_assets_accessible(
@@ -288,8 +295,13 @@ def test_set_path_then_assets_accessible(
 
     monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: None)
     monkeypatch.setattr(routes_mod, "set_db_root", lambda p: None)
+    db_root = tmp_path / "state"
+    db_root.mkdir()
 
-    client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
+    client.post(
+        "/api/config/photos-root",
+        json={"path": str(tmp_path), "db_root": str(db_root)},
+    )
 
     # Now /assets should be reachable (follow_redirects=False, so expect the HTML directly)
     resp = client.get("/assets")
@@ -316,7 +328,7 @@ def test_assets_redirects_to_setup_for_html_client(client: TestClient) -> None:
 def test_set_path_triggers_index_job(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """After POST /api/config/takeout-path an index job is started."""
+    """After POST /api/config/photos-root an index job is started."""
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
     monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: None)
@@ -325,15 +337,20 @@ def test_set_path_triggers_index_job(
     # Capture that _start_index_job is called
     calls: list[Path] = []
 
-    def _fake_start(app: object, photos_root: Path, db_root: Path | None = None) -> None:
+    def _fake_start(app: object, photos_root: Path, db_root: Path) -> None:
         calls.append(photos_root)
         # Don't actually spawn a thread in unit tests
 
     import takeout_rater.api.jobs as jobs_mod  # noqa: E402
 
     monkeypatch.setattr(jobs_mod, "_start_index_job", _fake_start)
+    db_root = tmp_path / "state"
+    db_root.mkdir()
 
-    resp = client.post("/api/config/takeout-path", json={"path": str(tmp_path)})
+    resp = client.post(
+        "/api/config/photos-root",
+        json={"path": str(tmp_path), "db_root": str(db_root)},
+    )
     assert resp.status_code == 200
     assert len(calls) == 1
     assert calls[0] == tmp_path.resolve()

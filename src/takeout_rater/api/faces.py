@@ -22,20 +22,17 @@ router = APIRouter()
 
 
 def _require_db(request: Request) -> None:
-    if request.app.state.db_conn is None:
+    if request.app.state.db_conn is None and getattr(request.app.state, "db_path", None) is None:
         raise HTTPException(status_code=503, detail="Library not configured.")
 
 
 def _get_conn(request: Request):  # noqa: ANN202
     """Return a DB connection, preferring the thread-safe db_path."""
-    import sqlite3  # noqa: PLC0415
-
     db_path = getattr(request.app.state, "db_path", None)
     if db_path is not None:
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+
+        return open_db(db_path)
     return request.app.state.db_conn
 
 

@@ -16,66 +16,6 @@ IMAGE_EXTENSIONS: frozenset[str] = frozenset(
 # Sidecar suffix used by Google Photos Takeout
 SIDECAR_SUFFIX = ".supplemental-metadata.json"
 
-# Known localized names for the Google Photos subdirectory inside a Takeout export.
-# Google Takeout sometimes nests all photo albums under one of these subdirectories
-# instead of placing them directly inside ``Takeout/``.  Scanning only this
-# subdirectory avoids accidentally indexing images from other Google products
-# (Drive, Chat, etc.) that may also be present in the same Takeout archive.
-GOOGLE_PHOTOS_DIR_NAMES: tuple[str, ...] = (
-    "Google Photos",  # English
-    "Google Fotos",  # German, Spanish, Portuguese
-    "Google Foto",  # Italian
-)
-
-
-def find_google_photos_root(takeout_dir: Path) -> Path:
-    """Return the directory that contains the Google Photos album folders.
-
-    A Google Takeout export may place all photo albums directly inside the
-    ``Takeout/`` directory (old format with ``Photos from YYYY/`` subdirs), or
-    it may nest them inside a localized subdirectory such as ``Google Photos/``
-    (English) or ``Google Fotos/`` (German).  Scanning the entire ``Takeout/``
-    tree would incorrectly include images from other Google products like Drive
-    or Chat.  This function finds the narrowest root that covers only Google
-    Photos content.
-
-    Args:
-        takeout_dir: The ``Takeout/`` directory (or the top-level scan root).
-
-    Returns:
-        The subdirectory to pass to :func:`scan_takeout`.  Returns a known
-        localized Google Photos subdirectory when one exists, otherwise returns
-        *takeout_dir* unchanged (for old-format exports).
-    """
-    for name in GOOGLE_PHOTOS_DIR_NAMES:
-        candidate = takeout_dir / name
-        if candidate.is_dir():
-            return candidate
-    return takeout_dir
-
-
-def resolve_photos_root(library_root: Path) -> Path:
-    """Return the photos root directory for *library_root*.
-
-    Asset ``relpath`` and ``sidecar_relpath`` values are stored relative to
-    this directory.  Handles both the common nested structure
-    (``library_root/Takeout/Google Photos/``) and older flat exports where
-    ``Takeout/`` does not exist.
-
-    Args:
-        library_root: The top-level directory configured by the user (the one
-            that contains the ``Takeout/`` subfolder, or the ``Takeout/``
-            directory itself for older exports).
-
-    Returns:
-        The narrowest directory that covers all Google Photos albums.
-    """
-    takeout_dir = library_root / "Takeout"
-    if not takeout_dir.is_dir():
-        takeout_dir = library_root
-    return find_google_photos_root(takeout_dir)
-
-
 @dataclass(frozen=True)
 class AssetFile:
     """One image asset discovered during scanning.
@@ -116,11 +56,11 @@ def _find_sidecar(image_path: Path) -> Path | None:
     return None
 
 
-def scan_takeout(
-    takeout_root: Path,
+def scan_photos_tree(
+    photos_root: Path,
     on_dir_scanned: Callable[[int, int, str], None] | None = None,
 ) -> list[AssetFile]:
-    """Walk *takeout_root* recursively and return all image assets found.
+    """Walk *photos_root* recursively and return all image assets found.
 
     The scan runs in two phases to enable progress reporting on large libraries:
 
@@ -135,7 +75,7 @@ def scan_takeout(
     been processed.
 
     Args:
-        takeout_root: The directory to scan.  Typically the ``Takeout/``
+        photos_root: The directory to scan.  Typically the ``Takeout/``
             directory itself, or the directory that *contains* ``Takeout/``.
         on_dir_scanned: Optional callback invoked once per directory during
             **phase 2**, after that directory's files have been stat'd.
@@ -146,10 +86,10 @@ def scan_takeout(
         Sorted list of :class:`AssetFile` instances.
 
     Raises:
-        FileNotFoundError: If *takeout_root* does not exist.
+        FileNotFoundError: If *photos_root* does not exist.
     """
-    if not takeout_root.exists():
-        raise FileNotFoundError(f"Takeout root does not exist: {takeout_root}")
+    if not photos_root.exists():
+        raise FileNotFoundError(f"Photos root does not exist: {photos_root}")
 
     # ------------------------------------------------------------------
     # Phase 1: enumerate directories and image filenames via os.walk.
@@ -157,7 +97,7 @@ def scan_takeout(
     # no extra stat() call is needed per file at this stage.
     # ------------------------------------------------------------------
     dir_images: list[tuple[Path, list[str]]] = []
-    for dirpath_str, _subdirs, filenames in os.walk(takeout_root):
+    for dirpath_str, _subdirs, filenames in os.walk(photos_root):
         dp = Path(dirpath_str)
         images = sorted(
             f
@@ -178,7 +118,7 @@ def scan_takeout(
     for i, (dp, image_names) in enumerate(dir_images):
         for fname in image_names:
             abspath = dp / fname
-            relpath = str(abspath.relative_to(takeout_root))
+            relpath = abspath.relative_to(photos_root).as_posix()
             mime, _ = mimetypes.guess_type(str(abspath))
             mime = mime or "application/octet-stream"
             sidecar_path = _find_sidecar(abspath)

@@ -53,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
             "(e.g. the 'Google Photos' directory from a Takeout export, or any\n"
             "arbitrary folder of albums) and it will build a 'takeout-rater/' state\n"
             "directory with the library DB, thumbnail cache, and exports.\n\n"
-            "Use --db-root to store the state directory outside the photo folder."
+            "Pass --db-root to choose where that state directory is stored."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -69,10 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--db-root",
             metavar="DIR",
-            default=None,
+            required=True,
             help=(
                 "Directory where the takeout-rater/ state folder (DB, thumbnails) is stored. "
-                "Defaults to PHOTOS_ROOT when not given."
+                "This is separate from PHOTOS_ROOT."
             ),
         )
 
@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Directory that directly contains the album sub-folders. "
             "All library state is written to a 'takeout-rater/' sub-directory "
-            "(or to --db-root if given)."
+            "under --db-root."
         ),
     )
     _add_db_root(index_parser)
@@ -243,7 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_index(args: argparse.Namespace) -> int:
     """Execute the ``index`` sub-command."""
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
     from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
 
     photos_root = Path(args.photos_root).resolve()
@@ -251,7 +251,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
         print(f"error: photos root does not exist: {photos_root}", file=sys.stderr)
         return 1
 
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
+    db_root = Path(args.db_root).resolve()
 
     last_phase: list[str] = ["scanning"]
 
@@ -285,7 +285,7 @@ def _cmd_index(args: argparse.Namespace) -> int:
         return 1
 
     print(f"Indexed {result.indexed} photo(s).")
-    print(f"Library: {db_root / 'takeout-rater'}")
+    print(f"Library: {library_state_dir(db_root)}")
     return 0
 
 
@@ -298,14 +298,13 @@ def _cmd_score(args: argparse.Namespace) -> int:
     )
     from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
 
-    photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
+    db_root = Path(args.db_root).resolve()
     db_path = library_db_path(db_root)
 
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index --db-root <db_root> <photos_root>' first.",
             file=sys.stderr,
         )
         return 1
@@ -398,7 +397,7 @@ def _cmd_browse(args: argparse.Namespace) -> int:
         return 1
 
     photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
+    db_root = Path(args.db_root).resolve()
     from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
 
     db_path = library_db_path(db_root)
@@ -406,7 +405,7 @@ def _cmd_browse(args: argparse.Namespace) -> int:
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index --db-root <db_root> <photos_root>' first.",
             file=sys.stderr,
         )
         return 1
@@ -437,14 +436,13 @@ def _cmd_cluster(args: argparse.Namespace) -> int:
     from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
     from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
 
-    photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
+    db_root = Path(args.db_root).resolve()
     db_path = library_db_path(db_root)
 
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index --db-root <db_root> <photos_root>' first.",
             file=sys.stderr,
         )
         return 1
@@ -488,15 +486,14 @@ def _cmd_export(args: argparse.Namespace) -> int:
         get_cluster_members,
         list_clusters_with_representatives,
     )
-
     photos_root = Path(args.photos_root).resolve()
-    db_root = Path(args.db_root).resolve() if args.db_root else photos_root
+    db_root = Path(args.db_root).resolve()
     db_path = library_db_path(db_root)
 
     if not db_path.exists():
         print(
             f"error: no library database found at {db_path}\n"
-            "       Run 'takeout-rater index <photos_root>' first.",
+            "       Run 'takeout-rater index --db-root <db_root> <photos_root>' first.",
             file=sys.stderr,
         )
         return 1
@@ -609,7 +606,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     from takeout_rater.ui.app import create_app  # noqa: PLC0415
 
     photos_root = get_photos_root()
-    db_root = get_db_root() or photos_root
+    db_root = get_db_root()
     conn = None
 
     if photos_root is not None and db_root is not None:
@@ -632,7 +629,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         else:
             print(
                 f"note: library database not found at {db_path}\n"
-                "      Run 'takeout-rater index <photos_root>' to index your photos folder.\n"
+                "      Run 'takeout-rater index --db-root <db_root> <photos_root>' "
+                "to index your photos folder.\n"
                 "      The UI will remind you.",
             )
 

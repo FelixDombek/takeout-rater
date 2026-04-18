@@ -121,27 +121,17 @@ def test_cuda_to_whl_url_just_below_minimum() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_db_path_returns_path_when_config_exists(tmp_path: Path) -> None:
-    library_root = tmp_path / "my_photos"
+def test_get_db_path_returns_none_without_db_root(tmp_path: Path) -> None:
+    photos_root = tmp_path / "my_photos"
     config = tmp_path / ".takeout-rater.json"
-    config.write_text(f'{{"photos_root": "{library_root}"}}', encoding="utf-8")
+    import json
+
+    config.write_text(json.dumps({"photos_root": str(photos_root)}), encoding="utf-8")
 
     with patch.object(launcher, "ROOT", tmp_path):
         result = launcher._get_db_path()
 
-    assert result == library_root / "takeout-rater" / "library.sqlite"
-
-
-def test_get_db_path_legacy_takeout_path(tmp_path: Path) -> None:
-    """Old config key takeout_path is still supported."""
-    library_root = tmp_path / "my_photos"
-    config = tmp_path / ".takeout-rater.json"
-    config.write_text(f'{{"takeout_path": "{library_root}"}}', encoding="utf-8")
-
-    with patch.object(launcher, "ROOT", tmp_path):
-        result = launcher._get_db_path()
-
-    assert result == library_root / "takeout-rater" / "library.sqlite"
+    assert result is None
 
 
 def test_get_db_path_uses_db_root_when_present(tmp_path: Path) -> None:
@@ -149,7 +139,12 @@ def test_get_db_path_uses_db_root_when_present(tmp_path: Path) -> None:
     photos = tmp_path / "photos"
     db_root = tmp_path / "state"
     config = tmp_path / ".takeout-rater.json"
-    config.write_text(f'{{"photos_root": "{photos}", "db_root": "{db_root}"}}', encoding="utf-8")
+    import json
+
+    config.write_text(
+        json.dumps({"photos_root": str(photos), "db_root": str(db_root)}),
+        encoding="utf-8",
+    )
 
     with patch.object(launcher, "ROOT", tmp_path):
         result = launcher._get_db_path()
@@ -162,7 +157,7 @@ def test_get_db_path_returns_none_when_config_absent(tmp_path: Path) -> None:
         assert launcher._get_db_path() is None
 
 
-def test_get_db_path_returns_none_when_config_has_no_takeout_path(
+def test_get_db_path_returns_none_when_config_has_no_paths(
     tmp_path: Path,
 ) -> None:
     config = tmp_path / ".takeout-rater.json"

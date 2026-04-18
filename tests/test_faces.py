@@ -357,7 +357,7 @@ class TestFaceClusteringAlgorithm:
 @pytest.fixture()
 def face_client(tmp_path: Path) -> TestClient:
     conn = _make_db()
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 
@@ -409,7 +409,7 @@ def face_client_with_data(tmp_path: Path) -> TestClient:
     )
     conn.commit()
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 

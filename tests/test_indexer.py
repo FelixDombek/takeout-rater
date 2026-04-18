@@ -16,13 +16,15 @@ from takeout_rater.db.connection import open_library_db
 
 
 def test_index_command_nonexistent_path_returns_nonzero(tmp_path: Path) -> None:
-    rc = main(["index", str(tmp_path / "does_not_exist")])
+    rc = main(["index", "--db-root", str(tmp_path / "state"), str(tmp_path / "does_not_exist")])
     assert rc == 1
 
 
 def test_index_command_empty_dir_returns_zero(tmp_path: Path) -> None:
     """An empty photos directory should succeed (just index 0 photos)."""
-    rc = main(["index", str(tmp_path)])
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    rc = main(["index", "--db-root", str(tmp_path / "state"), str(photos)])
     assert rc == 0
 
 

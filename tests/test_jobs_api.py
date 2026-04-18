@@ -27,7 +27,7 @@ def client_with_db(tmp_path: Path) -> TestClient:
     from takeout_rater.db.connection import open_library_db  # noqa: E402
 
     conn = open_library_db(tmp_path)
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=False)
 
 
@@ -185,7 +185,7 @@ def test_score_worker_runs_to_completion_with_empty_library(tmp_path: Path) -> N
     from takeout_rater.db.connection import open_library_db  # noqa: E402
     from takeout_rater.ui.app import create_app  # noqa: E402
 
-    app = create_app(tmp_path, open_library_db(tmp_path))
+    app = create_app(tmp_path, open_library_db(tmp_path), db_root=tmp_path)
     client = TestClient(app, follow_redirects=False)
 
     threads: list[threading.Thread] = []
@@ -603,7 +603,7 @@ def test_rescan_worker_sets_indexer_version(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    app = create_app(tmp_path, open_library_db(tmp_path))
+    app = create_app(tmp_path, open_library_db(tmp_path), db_root=tmp_path)
     from fastapi.testclient import TestClient  # noqa: E402
 
     client = TestClient(app, follow_redirects=False)
@@ -637,6 +637,70 @@ def test_rescan_worker_sets_indexer_version(tmp_path: Path) -> None:
     check_conn.close()
     assert row is not None
     assert row[0] == CURRENT_INDEXER_VERSION
+
+
+def test_rescan_full_regenerates_thumbnail_for_direct_photos_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Full rescan must use the configured photos root, not only root/Takeout."""
+    import threading  # noqa: E402
+    import time  # noqa: E402
+
+    from PIL import Image  # noqa: E402
+
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.db.queries import upsert_asset  # noqa: E402
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: E402
+
+    album_dir = tmp_path / "Album"
+    album_dir.mkdir()
+    image_path = album_dir / "scan_test.jpg"
+    Image.new("RGB", (64, 64), color=(200, 100, 50)).save(image_path, "JPEG")
+
+    conn = open_library_db(tmp_path)
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": "Album/scan_test.jpg",
+            "filename": "scan_test.jpg",
+            "ext": ".jpg",
+            "mime": "image/jpeg",
+            "size_bytes": image_path.stat().st_size,
+        },
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "takeout_rater.scorers.adapters.clip_backbone.get_clip_model",
+        lambda: (_ for _ in ()).throw(ImportError("clip unavailable in test")),
+    )
+
+    app = create_app(tmp_path, open_library_db(tmp_path), db_root=tmp_path)
+    client = TestClient(app, follow_redirects=False)
+
+    done_event = threading.Event()
+    original_thread = threading.Thread
+
+    class _SyncThread(original_thread):
+        def start(self) -> None:
+            super().start()
+            done_event.set()
+
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
+
+    orig = jobs_mod.threading.Thread
+    jobs_mod.threading.Thread = _SyncThread  # type: ignore[assignment]
+    try:
+        resp = client.post("/api/jobs/rescan/start", json={"mode": "full"})
+        assert resp.status_code == 200
+        done_event.wait(timeout=5)
+        time.sleep(0.5)
+    finally:
+        jobs_mod.threading.Thread = orig  # type: ignore[assignment]
+
+    thumb = thumb_path_for_id(tmp_path / "takeout-rater" / "thumbs", asset_id)
+    assert thumb.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -694,7 +758,7 @@ def _run_rescan_worker(tmp_path: Path) -> None:
     from takeout_rater.db.connection import open_library_db  # noqa: E402
     from takeout_rater.ui.app import create_app  # noqa: E402
 
-    app = create_app(tmp_path, open_library_db(tmp_path))
+    app = create_app(tmp_path, open_library_db(tmp_path), db_root=tmp_path)
     client = TestClient(app, follow_redirects=False)
 
     done_event = threading.Event()
@@ -810,7 +874,7 @@ def test_run_index_fills_missing_phash_for_existing_asset(
 
     from PIL import Image  # noqa: E402
 
-    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: E402
     from takeout_rater.db.queries import upsert_asset  # noqa: E402
     from takeout_rater.db.schema import migrate  # noqa: E402
     from takeout_rater.indexing.run import run_index  # noqa: E402
@@ -821,15 +885,18 @@ def test_run_index_fills_missing_phash_for_existing_asset(
         lambda: False,
     )
 
-    # Build a minimal Takeout tree with one image
-    photos_dir = tmp_path / "Takeout" / "Photos from 2023"
+    photos_root = tmp_path / "photos"
+    db_root = tmp_path / "state"
+
+    # Build a minimal photos tree with one image
+    photos_dir = photos_root / "Photos from 2023"
     photos_dir.mkdir(parents=True)
     img_path = photos_dir / "test.jpg"
     Image.new("RGB", (64, 64), color=(200, 100, 50)).save(img_path, "JPEG")
 
     # Pre-populate the DB with the asset row (simulating a completed upsert
     # from a previous indexing run that was aborted before phash was saved).
-    lib_db = tmp_path / "takeout-rater" / "library.db"
+    lib_db = library_db_path(db_root)
     lib_db.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(lib_db))
     conn.row_factory = sqlite3.Row
@@ -848,14 +915,14 @@ def test_run_index_fills_missing_phash_for_existing_asset(
     conn.close()
 
     # Confirm no phash exists yet
-    conn2 = open_library_db(tmp_path)
+    conn2 = open_library_db(db_root)
     assert conn2.execute("SELECT COUNT(*) FROM phash").fetchone()[0] == 0
 
     # Re-index — the existing asset row must NOT prevent phash from being computed
-    run_index(tmp_path, conn2)
+    run_index(photos_root, conn2, db_root=db_root)
     conn2.close()
 
-    check_conn = open_library_db(tmp_path)
+    check_conn = open_library_db(db_root)
     phash_count = check_conn.execute("SELECT COUNT(*) FROM phash").fetchone()[0]
     check_conn.close()
     assert phash_count == 1, "phash must be computed even for assets already in the DB"

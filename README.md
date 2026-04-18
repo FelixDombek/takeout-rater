@@ -1,10 +1,17 @@
 # takeout-rater
 
-Aesthetics scoring orchestrator for Google Photos Takeout folders.
+Aesthetics scoring orchestrator for image libraries, e.g. Google Photos Takeout folders.
 
-Point it at the directory containing your `Takeout/` export and it will build
-a sibling `takeout-rater/` directory with a SQLite library, thumbnail cache,
-and exports — without ever modifying the original archive.
+Point it at the directory containing your images or albums of images, e.g. `Takeout/Google Fotos`,
+and give it a location to build its database, a directory called `takeout-rater/` with a SQLite library, thumbnail cache,
+and exports, and it will give you access to tools such as:
+
+ - Library and album browsing
+ - Several aesthetics scorers
+ - CLIP-based semantic search
+ - Face detection and grouping
+
+and much more.
 
 ---
 

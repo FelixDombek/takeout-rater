@@ -73,7 +73,7 @@ class IndexProgress:
         error: Human-readable error message, or *None* on success.
         found: Total number of image files discovered during scanning.
         indexed: Number of assets upserted into the database so far.
-        phase: Current phase — ``"scanning"`` while :func:`scan_takeout` is
+        phase: Current phase — ``"scanning"`` while :func:`scan_photos_tree` is
             running; ``"processing"`` for the parallel per-file worker phase.
         total_dirs: Total number of directories to scan (filled during scan).
         dirs_scanned: Number of directories fully processed so far.
@@ -117,7 +117,7 @@ class IndexProgress:
 def run_index(
     photos_root: Path,
     conn: sqlite3.Connection,
-    db_root: Path | None = None,
+    db_root: Path,
     on_progress: Callable[[IndexProgress], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> IndexProgress:
@@ -129,14 +129,11 @@ def run_index(
 
     Args:
         photos_root: The library root directory.  May be the directory that
-            directly contains album sub-folders, or a parent directory that
-            contains a ``Takeout/`` sub-folder (optionally with a localized
-            ``Google Photos/`` nesting).  :func:`resolve_photos_root` is
-            called automatically to find the narrowest photos-only root.
+            directly contains album sub-folders.
         conn: Open :class:`sqlite3.Connection` for the library database.
         db_root: Directory where the ``takeout-rater/`` state directory (thumbs,
-            DB) should be written.  Defaults to *photos_root* (the value
-            passed in, before resolution) when not given.
+            DB) should be written.  This must be supplied by callers; it is not
+            inferred from *photos_root*.
         on_progress: Optional callback invoked after each asset is processed.
             Receives the current :class:`IndexProgress` instance.  Will be
             called from the main thread; implementations must not block.
@@ -156,7 +153,7 @@ def run_index(
         open_db,
     )
     from takeout_rater.db.queries import lookup_sha256, upsert_asset  # noqa: PLC0415
-    from takeout_rater.indexing.scanner import scan_takeout  # noqa: PLC0415
+    from takeout_rater.indexing.scanner import scan_photos_tree  # noqa: PLC0415
     from takeout_rater.indexing.sidecar import parse_sidecar  # noqa: PLC0415
     from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
         generate_thumbnail,
@@ -169,14 +166,7 @@ def run_index(
     )  # noqa: PLC0415
 
     if db_root is None:
-        db_root = photos_root
-
-    # Resolve the actual photos directory: handles the common case where
-    # `photos_root` points to a library root that contains a ``Takeout/``
-    # sub-folder (possibly with a localized ``Google Photos/`` nesting).
-    from takeout_rater.indexing.scanner import resolve_photos_root as _resolve  # noqa: PLC0415
-
-    photos_root = _resolve(photos_root)
+        raise ValueError("db_root is required")
 
     progress = IndexProgress(running=True)
 
@@ -219,7 +209,7 @@ def run_index(
         if on_progress:
             on_progress(progress)
 
-    assets = scan_takeout(photos_root, on_dir_scanned=_on_dir_scanned)
+    assets = scan_photos_tree(photos_root, on_dir_scanned=_on_dir_scanned)
     progress.found = len(assets)
 
     if not assets:

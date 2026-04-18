@@ -334,9 +334,9 @@ def count_assets(
     return conn.execute(sql, params).fetchone()[0]
 
 
-def asset_relpath_to_path(asset: AssetRow, takeout_root: Path) -> Path:
-    """Return the absolute path to an asset given its database row and the takeout root."""
-    return takeout_root / asset.relpath
+def asset_relpath_to_path(asset: AssetRow, photos_root: Path) -> Path:
+    """Return the absolute path to an asset given its database row and photos root."""
+    return photos_root / asset.relpath
 
 
 # ---------------------------------------------------------------------------

@@ -399,7 +399,7 @@
           var card = document.createElement('div');
           card.className = 'person-card';
           card.onclick = function() { openDetail(c.cluster_id, c.label); };
-          var thumbUrl = c.rep_asset_id ? '/api/assets/' + c.rep_asset_id + '/thumb' : '';
+          var thumbUrl = c.rep_asset_id ? '/thumbs/' + c.rep_asset_id : '';
           card.innerHTML =
             '<img src="' + thumbUrl + '" alt="Person" onerror="this.style.display=\'none\'">' +
             '<div class="label">' + (c.label || 'Person #' + c.cluster_id) + '</div>' +
@@ -425,7 +425,7 @@
         grid.innerHTML = '';
         data.assets.forEach(function(a) {
           var img = document.createElement('img');
-          img.src = '/api/assets/' + a.asset_id + '/thumb';
+          img.src = '/thumbs/' + a.asset_id;
           img.title = a.filename + ' (score: ' + (a.det_score || 0).toFixed(2) + ')';
           img.onclick = function() { window.open('/assets?highlight=' + a.asset_id, '_blank'); };
           grid.appendChild(img);
@@ -448,7 +448,7 @@
         }
         results.forEach(function(r) {
           var img = document.createElement('img');
-          img.src = '/api/assets/' + r.asset_id + '/thumb';
+          img.src = '/thumbs/' + r.asset_id;
           img.title = 'Similarity: ' + r.similarity;
           img.onclick = function() { window.open('/assets?highlight=' + r.asset_id, '_blank'); };
           simGrid.appendChild(img);

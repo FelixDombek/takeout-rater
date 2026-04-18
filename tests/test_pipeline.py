@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -242,7 +243,7 @@ def test_run_scorer_error_includes_asset_path(tmp_path: Path) -> None:
     scorer = SimpleScorer.create(variant_id="blur")
     with (
         patch.object(scorer, "score_batch", side_effect=RuntimeError("inner boom")),
-        pytest.raises(RuntimeError, match=str(thumb)),
+        pytest.raises(RuntimeError, match=re.escape(str(thumb))),
     ):
         run_scorer(conn, scorer, thumbs_dir)
 

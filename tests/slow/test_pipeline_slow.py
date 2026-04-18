@@ -30,11 +30,12 @@ def test_index_then_score_pipeline(tmp_path: Path) -> None:
     from takeout_rater.cli import main  # noqa: PLC0415
     from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
 
-    # Link fixture Takeout tree into the temp library root.
-    (tmp_path / "Takeout").symlink_to(FIXTURE_TAKEOUT.resolve(), target_is_directory=True)
+    # Link fixture photos tree into the temp photos root.
+    photos_root = tmp_path / "photos"
+    photos_root.symlink_to(FIXTURE_TAKEOUT.resolve(), target_is_directory=True)
 
     # Step 1: index (scans files, populates DB, generates thumbnails).
-    rc = main(["index", str(tmp_path)])
+    rc = main(["index", str(photos_root), "--db-root", str(tmp_path)])
     assert rc == 0
 
     # Step 2: open the DB the indexer just created.

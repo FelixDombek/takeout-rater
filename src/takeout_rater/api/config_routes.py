@@ -5,7 +5,7 @@ Endpoints
 GET  /health                   – liveness probe (always returns 200)
 GET  /api/config               – current config state
 GET  /api/library/status       – library path, DB schema version, and scan version
-POST /api/config/takeout-path  – save a photos root path (and optional db_root) and start indexing
+POST /api/config/photos-root   – save photos and DB roots, then start indexing
 POST /api/config/open-picker   – open a native OS directory picker (Tkinter)
 """
 
@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from takeout_rater.config import get_db_root, get_photos_root, set_db_root, set_photos_root
-from takeout_rater.db.connection import open_library_db
+from takeout_rater.db.connection import library_state_dir, open_library_db
 from takeout_rater.db.queries import CURRENT_INDEXER_VERSION
 
 router = APIRouter()
@@ -47,10 +47,8 @@ def get_config() -> JSONResponse:
     db_root = get_db_root()
     return JSONResponse(
         {
-            "takeout_path": str(photos_root) if photos_root else None,
             "photos_root": str(photos_root) if photos_root else None,
             "db_root": str(db_root) if db_root else None,
-            "configured": photos_root is not None,
         }
     )
 
@@ -68,7 +66,7 @@ def library_status(request: Request) -> JSONResponse:
     ``db_schema_version`` will be ``null``.
     """
     db_path = request.app.state.db_path
-    library_root = request.app.state.library_root
+    photos_root = request.app.state.photos_root
     db_schema_version: int | None = None
     if db_path is not None:
         from takeout_rater.db.connection import open_db  # noqa: PLC0415
@@ -83,10 +81,9 @@ def library_status(request: Request) -> JSONResponse:
         db_schema_version = request.app.state.db_conn.execute("PRAGMA user_version").fetchone()[0]
     return JSONResponse(
         {
-            "library_path": str(library_root) if library_root else None,
+            "photos_root": str(photos_root) if photos_root else None,
             "db_schema_version": db_schema_version,
             "db_scan_version": CURRENT_INDEXER_VERSION,
-            "configured": library_root is not None,
         }
     )
 
@@ -96,7 +93,7 @@ def library_status(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_user_dir(value: str, label: str) -> "Path":
+def _resolve_user_dir(value: str, label: str) -> Path:
     """Canonicalise and validate a user-supplied directory path.
 
     Resolves symlinks and ``~`` expansion, then asserts the path is an
@@ -116,20 +113,19 @@ def _resolve_user_dir(value: str, label: str) -> "Path":
     return p
 
 
-class _TakeoutPathBody(BaseModel):
+class _PhotosPathBody(BaseModel):
     path: str
-    db_root: str | None = None
+    db_root: str
 
 
-@router.post("/api/config/takeout-path")
-def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
+@router.post("/api/config/photos-root")
+def set_path(body: _PhotosPathBody, request: Request) -> JSONResponse:
     """Validate and persist a photos root path, then start indexing.
 
     The ``path`` field must point to an existing directory that directly
     contains the album sub-folders (no ``Takeout/`` wrapper assumed).
-    The optional ``db_root`` field overrides where the ``takeout-rater/``
-    state directory (DB, thumbnails) is created; it defaults to ``path``
-    when not supplied.
+    The ``db_root`` field selects where the ``takeout-rater/`` state directory
+    (DB, thumbnails) is created.
 
     Returns 400 if either path does not exist, 200 with the saved path on
     success.
@@ -141,34 +137,38 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
     to track progress.
     """
     p = _resolve_user_dir(body.path, "Photos root")
-    db_root: Path = _resolve_user_dir(body.db_root, "DB root") if body.db_root else p
+    if not body.db_root:
+        from fastapi import HTTPException  # noqa: PLC0415
 
-    set_photos_root(p)
-    set_db_root(None if db_root == p else db_root)
+        raise HTTPException(status_code=400, detail="DB root is required.")
+    db_root: Path = _resolve_user_dir(body.db_root, "DB root")
+
+    photos_root = p
+    set_photos_root(photos_root)
+    set_db_root(db_root)
 
     # Open (or create) the library DB and update the live app state so that
     # all subsequent requests see the new configuration immediately.
     old_conn = request.app.state.db_conn
     if old_conn is not None:
         old_conn.close()
+    state_dir = library_state_dir(db_root)
     conn = open_library_db(db_root)
     request.app.state.db_conn = conn
-    request.app.state.library_root = p
     from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
 
     request.app.state.db_path = library_db_path(db_root)
     request.app.state.db_root = db_root
-    # photos root is used directly — no Takeout/ resolution needed.
-    request.app.state.takeout_root = p
-    request.app.state.thumbs_dir = db_root / "takeout-rater" / "thumbs"
+    request.app.state.photos_root = photos_root
+    request.app.state.thumbs_dir = state_dir / "thumbs"
 
     # Start background indexing so the library is populated without the user
     # needing to run a separate CLI command.
     from takeout_rater.api.jobs import _start_index_job
 
-    _start_index_job(request.app, p, db_root=db_root)
+    _start_index_job(request.app, photos_root, db_root=db_root)
 
-    return JSONResponse({"status": "ok", "takeout_path": str(p)})
+    return JSONResponse({"status": "ok", "photos_root": str(photos_root)})
 
 
 
@@ -179,7 +179,7 @@ def set_path(body: _TakeoutPathBody, request: Request) -> JSONResponse:
 
 class _SwitchLibraryBody(BaseModel):
     db_root: str
-    photos_root: str | None = None
+    photos_root: str
 
 
 @router.post("/api/config/switch-library")
@@ -187,9 +187,8 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
     """Switch to an already-indexed library without starting a new indexing run.
 
     ``db_root`` must be a directory that already contains a
-    ``takeout-rater/library.sqlite`` database.  ``photos_root`` overrides the
-    photos directory; when not provided it is read from the saved config in the
-    database folder (or falls back to ``db_root`` itself).
+    ``takeout-rater/library.sqlite`` database.  ``photos_root`` is the
+    directory whose paths asset relpaths are relative to.
 
     Returns 400 if the database is not found, 200 on success.
     """
@@ -205,29 +204,24 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
             f"expected {db_file}",
         )
 
-    # Determine photos root: caller-provided > fall back to db_root itself.
-    # We intentionally do NOT read from the global config here — that config
-    # reflects the *currently active* library, not the one being switched to.
-    if body.photos_root:
-        photos_path = _resolve_user_dir(body.photos_root, "Photos root")
-    else:
-        photos_path = db_root_path
+    photos_path = _resolve_user_dir(body.photos_root, "Photos root")
+    photos_root = photos_path
 
-    set_photos_root(photos_path)
-    set_db_root(None if db_root_path == photos_path else db_root_path)
+    set_photos_root(photos_root)
+    set_db_root(db_root_path)
 
     old_conn = request.app.state.db_conn
     if old_conn is not None:
         old_conn.close()
+    state_dir = library_state_dir(db_root_path)
     conn = open_library_db(db_root_path)
     request.app.state.db_conn = conn
-    request.app.state.library_root = photos_path
     from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
 
     request.app.state.db_path = library_db_path(db_root_path)
     request.app.state.db_root = db_root_path
-    request.app.state.takeout_root = photos_path
-    request.app.state.thumbs_dir = db_root_path / "takeout-rater" / "thumbs"
+    request.app.state.photos_root = photos_root
+    request.app.state.thumbs_dir = state_dir / "thumbs"
 
     return JSONResponse({"status": "ok", "db_root": str(db_root_path)})
 

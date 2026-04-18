@@ -1,7 +1,7 @@
 """Generate thumbnail images for indexed assets.
 
 Thumbnails are stored as JPEG files in a bucketed directory structure
-under ``<library_root>/takeout-rater/thumbs/``.
+under ``<db_root>/takeout-rater/thumbs/``.
 """
 
 from __future__ import annotations

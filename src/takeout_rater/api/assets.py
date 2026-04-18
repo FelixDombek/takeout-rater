@@ -69,9 +69,9 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     yield conn
 
 
-def _get_takeout_root(request: Request) -> Path:
-    """Dependency: retrieve the takeout root path from the app state."""
-    return request.app.state.takeout_root
+def _get_photos_root(request: Request) -> Path:
+    """Dependency: retrieve the photos root path from the app state."""
+    return request.app.state.photos_root
 
 
 def _get_thumbs_dir(request: Request) -> Path:
@@ -82,16 +82,16 @@ def _get_thumbs_dir(request: Request) -> Path:
     return thumbs_dir
 
 
-def _read_sidecar_json(takeout_root: Path | None, asset: AssetRow) -> str | None:
+def _read_sidecar_json(photos_root: Path | None, asset: AssetRow) -> str | None:
     """Return the pretty-printed raw sidecar JSON for *asset*, or ``None``.
 
-    Reads ``takeout_root / asset.sidecar_relpath`` when both values are
+    Reads ``photos_root / asset.sidecar_relpath`` when both values are
     available and the file exists.  Returns ``None`` on any I/O or parse error
     so that the UI can gracefully degrade.
     """
-    if takeout_root is None or asset.sidecar_relpath is None:
+    if photos_root is None or asset.sidecar_relpath is None:
         return None
-    sidecar_path = takeout_root / asset.sidecar_relpath
+    sidecar_path = photos_root / asset.sidecar_relpath
     try:
         raw = json.loads(sidecar_path.read_text(encoding="utf-8"))
         return json.dumps(raw, indent=2, ensure_ascii=False)
@@ -161,7 +161,7 @@ def _extract_exif_from_image(img: object) -> str | None:
         return None
 
 
-def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
+def _read_exif_data(photos_root: Path | None, asset: AssetRow) -> str | None:
     """Return a pretty-printed JSON string of all EXIF data for *asset*, or ``None``.
 
     Reads EXIF tags from the original image file using Pillow, including the
@@ -169,9 +169,9 @@ def _read_exif_data(takeout_root: Path | None, asset: AssetRow) -> str | None:
     human-readable names where possible.  Returns ``None`` on any error so
     that the UI can gracefully degrade.
     """
-    if takeout_root is None or asset.relpath is None:
+    if photos_root is None or asset.relpath is None:
         return None
-    image_path = takeout_root / asset.relpath
+    image_path = photos_root / asset.relpath
     if not image_path.exists():
         return None
     try:
@@ -449,7 +449,7 @@ def asset_detail(
     request: Request,
     partial: str = "0",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
-    takeout_root: Path | None = Depends(_get_takeout_root),  # noqa: B008
+    photos_root: Path | None = Depends(_get_photos_root),  # noqa: B008
 ) -> HTMLResponse:
     """Render the detail page for a single asset.
 
@@ -468,10 +468,10 @@ def asset_detail(
     alias_paths: list[str] = get_asset_alias_paths(conn, asset_id)
 
     # Load raw sidecar JSON for the main asset.
-    sidecar_json = _read_sidecar_json(takeout_root, asset)
+    sidecar_json = _read_sidecar_json(photos_root, asset)
 
     # Load EXIF data from the original image file.
-    exif_data = _read_exif_data(takeout_root, asset)
+    exif_data = _read_exif_data(photos_root, asset)
 
     # Load pHash for the asset (used in both partial and full views).
     phash_row = get_phash(conn, asset_id)
@@ -958,8 +958,6 @@ async def analyze_uploaded_image(
 
     # ── CLIP embedding + words ─────────────────────────────────────────────
     try:
-        import struct  # noqa: PLC0415
-
         import numpy as np  # noqa: PLC0415
         import torch  # noqa: PLC0415
 
@@ -1051,7 +1049,7 @@ def serve_image(
     asset_id: int,
     request: Request,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
-    takeout_root: Path | None = Depends(_get_takeout_root),  # noqa: B008
+    photos_root: Path | None = Depends(_get_photos_root),  # noqa: B008
 ) -> FileResponse:
     """Serve the original full-size image for an asset.
 
@@ -1062,8 +1060,8 @@ def serve_image(
     if asset is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
 
-    if takeout_root is not None and asset.relpath is not None:
-        image_path = takeout_root / asset.relpath
+    if photos_root is not None and asset.relpath is not None:
+        image_path = photos_root / asset.relpath
         if image_path.exists():
             media_type = asset.mime or "application/octet-stream"
             return FileResponse(str(image_path), media_type=media_type)

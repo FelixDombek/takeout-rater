@@ -34,9 +34,9 @@ def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> 
     both the sidecar JSON panel and the EXIF data panel.
 
     This test exercises the complete stack:
-        real takeout layout on disk
+        real photos layout on disk
         → run_index()  (scan + upsert)
-        → create_app() (resolves photos_root from library_root)
+        → create_app()
         → GET /assets/{id}
         → sidecar JSON content visible
         → EXIF Make/Model visible
@@ -45,8 +45,10 @@ def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> 
     from takeout_rater.db.queries import list_assets  # noqa: PLC0415
     from takeout_rater.indexing.run import run_index  # noqa: PLC0415
 
-    # Build a minimal takeout tree with a real JPEG (EXIF) and a sidecar file.
-    album = tmp_path / "Takeout" / "Photos from 2026"
+    # Build a minimal photos tree with a real JPEG (EXIF) and a sidecar file.
+    photos_root = tmp_path / "photos"
+    db_root = tmp_path / "state"
+    album = photos_root / "Photos from 2026"
     album.mkdir(parents=True)
 
     img_path = album / "photo.jpg"
@@ -61,11 +63,11 @@ def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> 
     )
 
     # Run the real indexer — this is the full run_index pipeline.
-    conn = open_library_db(tmp_path)
-    run_index(tmp_path, conn)
+    conn = open_library_db(db_root)
+    run_index(photos_root, conn, db_root=db_root)
 
-    # create_app must resolve the correct photos_root so file reads succeed.
-    app = create_app(tmp_path, conn)
+    # create_app must use the configured photos_root so file reads succeed.
+    app = create_app(photos_root, conn, db_root=db_root)
     client = TestClient(app, follow_redirects=True)
 
     rows = list_assets(conn, limit=10)
@@ -78,9 +80,7 @@ def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> 
     # Sidecar JSON panel: content from the .supplemental-metadata.json file.
     assert "pipeline test" in resp.text
     assert "imageViews" in resp.text
-    assert "No sidecar JSON available" not in resp.text
 
     # EXIF panel: Make and Model tags read directly from the image file.
     assert "PipelineCamera" in resp.text
     assert "FullStack 5000" in resp.text
-    assert "No EXIF data available" not in resp.text

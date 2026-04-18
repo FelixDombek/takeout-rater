@@ -292,18 +292,14 @@ def _get_db_path() -> Path | None:
     """Return the path to the library database as stored in the local config.
 
     Returns ``None`` if the config file is absent, malformed, or does not
-    contain a ``photos_root`` (or legacy ``takeout_path``) entry.
+    contain a ``db_root`` entry.
     """
     config_file = ROOT / ".takeout-rater.json"
     try:
         data = json.loads(config_file.read_text(encoding="utf-8"))
-        # Prefer the new db_root key, then photos_root, then legacy takeout_path.
         raw_db_root = data.get("db_root")
         if raw_db_root:
             return Path(raw_db_root) / _STATE_SUBDIR / _DB_FILENAME
-        raw = data.get("photos_root") or data.get("takeout_path")
-        if raw:
-            return Path(raw) / _STATE_SUBDIR / _DB_FILENAME
     except (FileNotFoundError, json.JSONDecodeError):
         pass
     return None

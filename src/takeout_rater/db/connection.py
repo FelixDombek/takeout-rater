@@ -29,8 +29,7 @@ def library_state_dir(db_root: Path) -> Path:
     Args:
         db_root: The directory under which the ``takeout-rater/`` state
             sub-directory should be created.  Previously this was called
-            ``library_root``; it may now differ from the photos root when
-            the user stores DB state in a separate location.
+            ``photos_root``; DB state is stored separately from the photos root.
     """
     state_dir = db_root / _STATE_DIR
     state_dir.mkdir(parents=True, exist_ok=True)

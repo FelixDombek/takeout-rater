@@ -90,7 +90,7 @@
   <header>
     <a href="/assets">📷 takeout-rater</a>
     <a href="/search" style="font-size:0.95rem; color:#aac4ff; font-weight:normal;">🔍 Search</a>
-    <a href="/albums" style="font-size:0.95rem; color:#aac4ff; font-weight:normal;">🗂 Albums</a>
+    <a href="/albums" style="font-size:0.95rem; color:#aac4ff; font-weight:normal;">🖼️ Albums</a>
     <a href="/clusterings" style="font-size:0.95rem; color:#aac4ff; font-weight:normal;">🔗 Clustering</a>
     <a href="/faces" style="font-size:0.95rem; color:#aac4ff; font-weight:normal;">👤 Faces</a>
     <a href="/clip" style="font-size:0.95rem; color:#aac4ff; font-weight:normal;">✂ CLIP</a>
@@ -106,12 +106,12 @@
         .then(function (d) {
           var el = document.getElementById('lib-status');
           if (!el) return;
-          if (!d.configured) {
+          if (!d.photos_root) {
             el.textContent = 'local photo library · not configured';
             return;
           }
           el.textContent =
-            'library: ' + d.library_path +
+            'library: ' + d.photos_root +
             ' · schema v' + d.db_schema_version +
             ' · scan v' + d.db_scan_version;
         })

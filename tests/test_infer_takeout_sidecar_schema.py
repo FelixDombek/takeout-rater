@@ -187,24 +187,24 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument(
-        "takeout_dir",
+        "photos_dir",
         metavar="TAKEOUT_DIR",
         help="Root directory of the Takeout folder to scan.",
     )
     args = ap.parse_args()
 
-    takeout_path = Path(args.takeout_dir)
-    if not takeout_path.exists():
-        print(f"error: path does not exist: {takeout_path}", file=sys.stderr)
+    photos_path = Path(args.photos_dir)
+    if not photos_path.exists():
+        print(f"error: path does not exist: {photos_path}", file=sys.stderr)
         return 1
-    if not takeout_path.is_dir():
-        print(f"error: path is not a directory: {takeout_path}", file=sys.stderr)
+    if not photos_path.is_dir():
+        print(f"error: path is not a directory: {photos_path}", file=sys.stderr)
         return 1
 
     mod = _load_script()
 
     original_argv = sys.argv
-    sys.argv = ["infer_takeout_sidecar_schema.py", str(takeout_path)]
+    sys.argv = ["infer_takeout_sidecar_schema.py", str(photos_path)]
 
     buf = io.StringIO()
     try:

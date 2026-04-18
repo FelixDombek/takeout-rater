@@ -41,7 +41,7 @@ def _add_asset(conn: sqlite3.Connection, relpath: str = "Photos/img.jpg") -> int
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
     conn = _make_db()
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 
@@ -50,7 +50,7 @@ def client_with_assets(tmp_path: Path) -> TestClient:
     conn = _make_db()
     for i in range(3):
         _add_asset(conn, f"Photos/img{i}.jpg")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 
@@ -62,7 +62,7 @@ def client_with_clusters(tmp_path: Path) -> TestClient:
     upsert_phash(conn, id1, "0000000000000000")
     upsert_phash(conn, id2, "0000000000000001")  # 1 bit diff
     build_clusters(conn, threshold=5)
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 
@@ -139,7 +139,7 @@ def test_browse_partial_no_sentinel_when_single_page(tmp_path: Path) -> None:
     # Add fewer assets than one full page so total_pages == 1
     for i in range(min(3, _PAGE_SIZE - 1)):
         _add_asset(conn, f"Photos/img{i}.jpg")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets?partial=1")
     assert "scroll-sentinel" not in resp.text
@@ -156,7 +156,7 @@ def test_browse_partial_has_meta_when_multi_page(tmp_path: Path) -> None:
     # Add more assets than one page can hold
     for i in range(_PAGE_SIZE + 1):
         _add_asset(conn, f"Photos/img{i}.jpg")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets?partial=1&page=1")
     assert "scroll-sentinel" not in resp.text
@@ -247,7 +247,7 @@ def test_thumbnail_serves_jpeg(tmp_path: Path) -> None:
     thumb.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (32, 32), color=(100, 150, 200)).save(thumb, "JPEG")
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app)
     resp = client.get(f"/thumbs/{asset_id}")
     assert resp.status_code == 200
@@ -378,7 +378,7 @@ def client_with_scores(tmp_path: Path) -> TestClient:
         "default",
         [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)],
     )
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 
@@ -447,7 +447,7 @@ def test_sort_options_only_include_scored_metrics(tmp_path: Path) -> None:
     for i in range(3):
         _add_asset(conn, f"Photos/img{i}.jpg")
     # No scores at all — dropdown should have no scorer options
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets")
     assert resp.status_code == 200
@@ -467,7 +467,7 @@ def test_sort_options_appear_after_scoring(tmp_path: Path) -> None:
         "blur",
         [(aid, "sharpness", float(i * 20)) for i, aid in enumerate(ids)],
     )
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get("/assets")
     assert resp.status_code == 200
@@ -479,7 +479,7 @@ def test_sort_by_unscored_metric_shows_helpful_message(tmp_path: Path) -> None:
     conn = _make_db()
     for i in range(3):
         _add_asset(conn, f"Photos/img{i}.jpg")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     # Force sort_by via URL for a metric with no scores
     resp = client.get("/assets?sort_by=blur:default:sharpness")
@@ -570,7 +570,7 @@ def test_browse_shows_save_preset_button_when_sort_active(
 @pytest.fixture()
 def client_unconfigured(tmp_path: Path) -> TestClient:
     """Client with no DB connection, simulating the initial setup state."""
-    app = create_app(library_root=None, db_conn=None)
+    app = create_app(photos_root=None, db_conn=None)
     return TestClient(app, follow_redirects=False)
 
 
@@ -636,7 +636,7 @@ def client_with_duplicates(tmp_path: Path) -> TestClient:
     _add_asset_with_sha256(conn, "Photos/album1/img.jpg", "cafebabe")
     _add_asset_with_sha256(conn, "Photos/album2/img.jpg", "cafebabe")
     _add_asset_with_sha256(conn, "Photos/unique.jpg", "deadbeef")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 
@@ -677,7 +677,7 @@ def test_asset_detail_shows_duplicate_paths(tmp_path: Path) -> None:
     conn = _make_db()
     id1 = _add_asset_with_sha256(conn, "Photos/album1/img.jpg", "cafebabe")
     _add_asset_with_sha256(conn, "Photos/album2/img.jpg", "cafebabe")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{id1}")
     assert resp.status_code == 200
@@ -690,7 +690,7 @@ def test_asset_detail_no_duplicate_section_for_unique(tmp_path: Path) -> None:
     """Detail page for a unique image should NOT show the duplicates section."""
     conn = _make_db()
     id1 = _add_asset_with_sha256(conn, "Photos/unique.jpg", "deadbeef")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{id1}")
     assert resp.status_code == 200
@@ -721,7 +721,7 @@ def test_asset_detail_shows_sidecar_json_panel(tmp_path: Path) -> None:
             "indexed_at": int(time.time()),
         },
     )
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
@@ -733,7 +733,7 @@ def test_asset_detail_no_sidecar_panel_when_missing(tmp_path: Path) -> None:
     """Detail page should show 'No sidecar JSON available' when no sidecar is indexed."""
     conn = _make_db()
     asset_id = _add_asset(conn, "Photos/nosidecar.jpg")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
@@ -786,7 +786,7 @@ def test_asset_detail_shows_only_canonical_sidecar(tmp_path: Path) -> None:
         },
     )
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{id1}")
     assert resp.status_code == 200
@@ -829,7 +829,7 @@ def test_asset_detail_shows_exif_data(tmp_path: Path) -> None:
             "indexed_at": int(time.time()),
         },
     )
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
@@ -856,7 +856,7 @@ def test_asset_detail_shows_exif_data_partial(tmp_path: Path) -> None:
             "indexed_at": int(time.time()),
         },
     )
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}?partial=1")
     assert resp.status_code == 200
@@ -869,7 +869,7 @@ def test_asset_detail_no_exif_when_image_missing(tmp_path: Path) -> None:
     """Detail page should show 'No EXIF data available' when the image file does not exist."""
     conn = _make_db()
     asset_id = _add_asset(conn, "Photos/ghost.jpg")
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
@@ -897,7 +897,7 @@ def test_asset_detail_no_exif_when_image_has_none(tmp_path: Path) -> None:
             "indexed_at": int(time.time()),
         },
     )
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
@@ -907,11 +907,11 @@ def test_asset_detail_no_exif_when_image_has_none(tmp_path: Path) -> None:
 def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> None:
     """Detail page should find sidecar when the caller passes the Google Photos directory directly.
 
-    Relpaths are stored relative to the photos root, and app.state.takeout_root
+    Relpaths are stored relative to the photos root, and app.state.photos_root
     must point to that same root for file reads to succeed.
     """
     conn = _make_db()
-    # Simulate the real on-disk structure: library_root/Takeout/Google Photos/...
+    # Simulate a photos directory nested inside a larger export folder.
     google_photos = tmp_path / "Takeout" / "Google Photos"
     sidecar_relpath = "Photos from 2026/img.jpg.supplemental-metadata.json"
     sidecar_path = google_photos / sidecar_relpath
@@ -934,7 +934,7 @@ def test_asset_detail_sidecar_with_nested_google_photos_dir(tmp_path: Path) -> N
         },
     )
     # Pass google_photos directly as the photos root (new design: no Takeout/ assumed).
-    app = create_app(google_photos, conn)
+    app = create_app(google_photos, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}")
     assert resp.status_code == 200
@@ -966,7 +966,7 @@ def test_asset_detail_sidecar_partial_with_nested_google_photos_dir(tmp_path: Pa
             "indexed_at": int(time.time()),
         },
     )
-    app = create_app(google_photos, conn)
+    app = create_app(google_photos, conn, db_root=tmp_path)
     client = TestClient(app, follow_redirects=True)
     resp = client.get(f"/assets/{asset_id}?partial=1")
     assert resp.status_code == 200
@@ -1019,7 +1019,7 @@ def test_timeline_returns_year_range(tmp_path: Path) -> None:
         },
     )
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     cl = TestClient(app, follow_redirects=True)
     resp = cl.get("/api/timeline")
     assert resp.status_code == 200
@@ -1067,7 +1067,7 @@ def test_timeline_seek_returns_page_1_for_newest_timestamp(tmp_path: Path) -> No
         },
     )
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     cl = TestClient(app, follow_redirects=True)
 
     # Seeking to a time before all photos → no photos are newer → page 1
@@ -1106,7 +1106,7 @@ def test_timeline_seek_page_advances_for_older_timestamp(tmp_path: Path) -> None
             },
         )
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     cl = TestClient(app, follow_redirects=True)
 
     ts_recent = int(calendar.timegm((2020, 7, 1, 0, 0, 0, 0, 0, 0)))
@@ -1136,7 +1136,7 @@ def client_with_albums(tmp_path: Path) -> TestClient:
     link_asset_to_album(conn, album1, id1)
     link_asset_to_album(conn, album1, id2)
     link_asset_to_album(conn, album2, id3)
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True)
 
 
@@ -1280,7 +1280,7 @@ def test_similar_assets_with_embedding_returns_results(tmp_path: Path) -> None:
 
     bulk_upsert_clip_embeddings(conn, [(id1, blob1), (id2, blob2)])
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     from fastapi.testclient import TestClient as TC  # noqa: PLC0415
 
     client = TC(app)
@@ -1323,7 +1323,7 @@ def test_similar_assets_euclidean_metric(tmp_path: Path) -> None:
         conn, [(id1, struct.pack(f"{DIM}f", *base)), (id2, struct.pack(f"{DIM}f", *close))]
     )
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     from fastapi.testclient import TestClient as TC  # noqa: PLC0415
 
     client = TC(app)
@@ -1347,7 +1347,7 @@ def test_similar_assets_phash_returns_results(tmp_path: Path) -> None:
     upsert_phash(conn, id1, "0" * 64)
     upsert_phash(conn, id2, "0" * 63 + "1")  # last hex digit 0→1 = 1 bit change
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     from fastapi.testclient import TestClient as TC  # noqa: PLC0415
 
     client = TC(app)
@@ -1386,7 +1386,7 @@ def test_similar_assets_threshold_filters_results(tmp_path: Path) -> None:
     blob2 = struct.pack(f"{DIM}f", *moderate)
     bulk_upsert_clip_embeddings(conn, [(id1, blob1), (id2, blob2)])
 
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     from fastapi.testclient import TestClient as TC  # noqa: PLC0415
 
     client = TC(app)

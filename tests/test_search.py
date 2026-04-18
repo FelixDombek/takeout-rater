@@ -77,7 +77,7 @@ def client_with_db(tmp_path: Path) -> TestClient:
     from takeout_rater.db.connection import open_library_db
 
     conn = open_library_db(tmp_path)
-    app = create_app(tmp_path, conn)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=False)
 
 
