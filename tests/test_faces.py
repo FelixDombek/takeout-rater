@@ -27,7 +27,7 @@ from takeout_rater.db.queries import (
     upsert_asset,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.faces.detector import EMBEDDING_DIM
+from takeout_rater.faces.detector import EMBEDDING_DIM, FaceDetector
 from takeout_rater.ui.app import create_app
 
 # ---------------------------------------------------------------------------
@@ -533,11 +533,34 @@ class TestFacesUIRoutes:
         resp = face_client.get("/faces")
         assert "Detect Faces" in resp.text
         assert "Run Detection" in resp.text
+        assert 'name="face-accelerator"' in resp.text
+        assert "TensorRT" in resp.text
 
     def test_faces_page_has_face_clustering_card(self, face_client: TestClient) -> None:
         resp = face_client.get("/faces")
         assert "Cluster Faces" in resp.text
         assert "Run Face Clustering" in resp.text
+
+
+class TestFaceDetectorAccelerator:
+    def test_rejects_unknown_accelerator(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported accelerator"):
+            FaceDetector(accelerator="cpu")
+
+    def test_gpu_uses_cuda_before_cpu(self) -> None:
+        detector = FaceDetector(accelerator="gpu")
+        assert detector._providers() == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    def test_tensorrt_uses_tensorrt_before_cuda_and_cpu(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "mkdir", lambda *args, **kwargs: None)
+        detector = FaceDetector(accelerator="tensorrt", trt_cache_dir=Path("trt-cache"))
+
+        providers = detector._providers()
+
+        assert providers[0][0] == "TensorrtExecutionProvider"
+        assert providers[1:] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 
 # ---------------------------------------------------------------------------

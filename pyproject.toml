@@ -31,9 +31,9 @@ dependencies = [
     "pyiqa>=0.1.12",
     # HEIC image support
     "pillow-heif>=0.16",
-    # Facial detection & recognition (InsightFace + ONNX Runtime)
+    # Facial detection & recognition (InsightFace + GPU-capable ONNX Runtime)
     "insightface>=0.7",
-    "onnxruntime>=1.17",
+    "onnxruntime-gpu>=1.17",
     # Clustering (DBSCAN for face embeddings)
     "scikit-learn>=1.4",
     # UMAP dimensionality reduction (embedding visualization)
