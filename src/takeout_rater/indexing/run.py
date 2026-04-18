@@ -379,7 +379,16 @@ def run_index(
         thumb = thumb_path_for_id(thumbs_dir, asset_id)
         thumb_img = None  # PIL thumbnail image, reused for phash + CLIP
 
-        if not thumb.exists():
+        # Always regenerate the thumbnail for new assets, even if a file
+        # already exists at the expected path.  When the user deletes the
+        # database but keeps the thumbs directory, the old thumbnail files
+        # remain on disk.  Because auto-increment IDs restart from 1, a
+        # freshly assigned asset_id can collide with an ID that previously
+        # belonged to a completely different photo, causing the stale
+        # thumbnail to be served for the wrong asset.  Unconditionally
+        # overwriting for new assets is cheap (one extra write) and
+        # guarantees correctness after a database reset.
+        if is_new or not thumb.exists():
             if file_bytes:
                 try:
                     import io  # noqa: PLC0415

@@ -318,6 +318,62 @@ def test_index_command_sha256_is_valid_hex(library_root: Path) -> None:
             int(row.sha256, 16)  # raises ValueError if not valid hex
 
 
+def test_stale_thumbnail_overwritten_after_db_reset(tmp_path: Path) -> None:
+    """Stale thumbnails left over from a deleted DB must be overwritten.
+
+    Regression test for: thumbnails appearing wrong after creating a fresh
+    database without clearing the thumbs directory.  When auto-increment IDs
+    restart from 1, a new asset may be assigned the same ID that a different
+    photo held in the previous database.  If the old thumbnail file still
+    exists on disk the indexer must not reuse it — it must overwrite it with
+    a thumbnail generated from the actual current asset.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+
+    # ── First database: index "photo_A" so asset_id=1 maps to a red image ─────
+    photos_root = tmp_path / "photos"
+    album = photos_root / "Album"
+    album.mkdir(parents=True)
+    db_root = tmp_path / "state"
+    db_root.mkdir()
+
+    red_img = Image.new("RGB", (64, 64), color=(255, 0, 0))
+    red_img.save(album / "photo_A.jpg", "JPEG")
+
+    main(["index", "--db-root", str(db_root), str(photos_root)])
+
+    # Confirm the thumbnail for asset_id=1 exists and looks red.
+    thumbs_dir = library_state_dir(db_root) / "thumbs"
+    thumb_1 = thumb_path_for_id(thumbs_dir, 1)
+    assert thumb_1.exists(), "thumbnail for asset_id=1 should be created"
+    with Image.open(thumb_1) as t:
+        r, g, b = t.getpixel((0, 0))
+    assert r > 200 and g < 50 and b < 50, "first thumbnail should be red"
+
+    # ── Simulate a DB reset: delete the database but keep the thumbs dir ──────
+    db_file = db_root / "takeout-rater" / "library.sqlite"
+    db_file.unlink()
+
+    # Replace photo_A with a completely different (blue) photo.
+    (album / "photo_A.jpg").unlink()
+    blue_img = Image.new("RGB", (64, 64), color=(0, 0, 255))
+    blue_img.save(album / "photo_B.jpg", "JPEG")
+
+    # ── Second database: re-index; photo_B gets asset_id=1 again ─────────────
+    main(["index", "--db-root", str(db_root), str(photos_root)])
+
+    # The thumbnail at asset_id=1 must now reflect photo_B (blue), not the
+    # stale red thumbnail from the old database.
+    with Image.open(thumb_1) as t:
+        r, g, b = t.getpixel((0, 0))
+    assert b > 200 and r < 50 and g < 50, (
+        "stale thumbnail was not overwritten: expected blue pixel after re-index with new DB"
+    )
+
+
 def test_index_command_identical_files_deduplicated(tmp_path: Path) -> None:
     """Two physically identical files (same bytes) produce a single assets row.
 
