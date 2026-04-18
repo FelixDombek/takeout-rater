@@ -45,6 +45,7 @@ jobs:
         with:
           # Check out the head branch of the PR so we can push back to it
           ref: ${{ github.head_ref }}
+          token: ${{ secrets.CI_WRITE_PAT }}
 
       - name: Install Ruff
         run: pip install ruff
