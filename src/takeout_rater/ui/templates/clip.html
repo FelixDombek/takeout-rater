@@ -259,7 +259,9 @@
       </label>
       <label class="viz-control" for="viz-max-clusters">
         Max clusters
-        <input id="viz-max-clusters" type="number" min="1" max="200" step="1" value="24">
+        <input id="viz-max-clusters" type="number" min="1" max="200" step="1"
+               value="{{ max_clusters_default|default(24) }}"
+               data-default-max-clusters="{{ max_clusters_default|default(24) }}">
       </label>
       <button class="btn btn-primary" id="btn-build-viz" onclick="loadViz(true)">Build / Refresh</button>
       <span class="viz-info" id="viz-info-text"></span>
