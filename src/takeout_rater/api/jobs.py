@@ -1373,6 +1373,7 @@ def start_embed_job(request: Request) -> JSONResponse:
 class _DetectFacesStartBody(BaseModel):
     model_pack: str = "buffalo_l"  # "buffalo_l" | "buffalo_sc"
     det_thresh: float = 0.5
+    accelerator: str = "gpu"  # "gpu" | "tensorrt"
 
 
 @router.post("/api/jobs/detect_faces/start")
@@ -1390,6 +1391,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
         ~350 MB download) or ``"buffalo_sc"`` (smaller, faster).
     det_thresh : float
         Minimum detection confidence.  Default ``0.5``.
+    accelerator : str
+        ONNX Runtime GPU backend. ``"gpu"`` uses CUDA directly; ``"tensorrt"``
+        tries TensorRT first, with CUDA and CPU fallbacks.
 
     Returns ``409`` if a detect_faces job is already running.
     """
@@ -1400,6 +1404,10 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
         raise HTTPException(
             status_code=400, detail="model_pack must be 'buffalo_l' or 'buffalo_sc'."
         )
+    if body.accelerator not in ("gpu", "tensorrt"):
+        raise HTTPException(
+            status_code=400, detail="accelerator must be 'gpu' or 'tensorrt'."
+        )
 
     existing = jobs.get("detect_faces")
     if existing is not None and existing.running:
@@ -1407,6 +1415,7 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
 
     model_pack = body.model_pack
     det_thresh = body.det_thresh
+    accelerator = body.accelerator
     progress = JobProgress(job_type="detect_faces", running=True, message="Starting…")
     jobs["detect_faces"] = progress
 
@@ -1435,6 +1444,7 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             params = {
                 "model_pack": model_pack,
                 "det_thresh": det_thresh,
+                "accelerator": accelerator,
             }
             params_json = _json.dumps(params, separators=(",", ":"), sort_keys=True)
             run_id = insert_face_detection_run(worker_conn, model_pack, params_json)
@@ -1450,11 +1460,13 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
                 worker_conn.close()
                 return
 
-            progress.message = f"Loading InsightFace ({model_pack})…"
+            progress.message = f"Loading InsightFace ({model_pack}, {accelerator})…"
 
             detector = FaceDetector(
                 model_pack=model_pack,
                 det_thresh=det_thresh,
+                accelerator=accelerator,
+                trt_cache_dir=thumbs_dir.parent / "onnxruntime-trt",
             )
 
             processed = 0

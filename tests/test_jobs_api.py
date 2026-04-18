@@ -297,6 +297,12 @@ def test_start_export_job_conflicts_when_running(
     assert resp.status_code == 409
 
 
+def test_start_detect_faces_rejects_unknown_accelerator(client_with_db: TestClient) -> None:
+    resp = client_with_db.post("/api/jobs/detect_faces/start", json={"accelerator": "cpu"})
+    assert resp.status_code == 400
+    assert "accelerator" in resp.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # GET /jobs page
 # ---------------------------------------------------------------------------
