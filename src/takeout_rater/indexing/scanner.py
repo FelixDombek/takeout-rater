@@ -16,6 +16,7 @@ IMAGE_EXTENSIONS: frozenset[str] = frozenset(
 # Sidecar suffix used by Google Photos Takeout
 SIDECAR_SUFFIX = ".supplemental-metadata.json"
 
+
 @dataclass(frozen=True)
 class AssetFile:
     """One image asset discovered during scanning.

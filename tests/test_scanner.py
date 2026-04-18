@@ -232,5 +232,3 @@ def test_on_dir_scanned_none_does_not_crash(tmp_path: Path) -> None:
     (tmp_path / "photo.jpg").write_bytes(b"\xff\xd8\xff")
     result = scan_photos_tree(tmp_path, on_dir_scanned=None)
     assert len(result) == 1
-
-

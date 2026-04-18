@@ -171,7 +171,6 @@ def set_path(body: _PhotosPathBody, request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "photos_root": str(photos_root)})
 
 
-
 # ---------------------------------------------------------------------------
 # Config write – switch to an existing library without re-indexing
 # ---------------------------------------------------------------------------
@@ -200,8 +199,7 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
     if not db_file.exists():
         raise HTTPException(
             status_code=400,
-            detail=f"No takeout-rater database found in {db_root_path} — "
-            f"expected {db_file}",
+            detail=f"No takeout-rater database found in {db_root_path} — expected {db_file}",
         )
 
     photos_path = _resolve_user_dir(body.photos_root, "Photos root")

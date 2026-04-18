@@ -34,29 +34,9 @@ The launcher will:
 3. Open your browser automatically.
 
 **First time:** the browser will show a setup page.
-Click **Browse…** (or type the path) to select the directory that *contains*
-your `Takeout/` folder, then click **Save & continue**.
-
-> **Note:** Depending on your export settings, your photos may be nested under
-> `Takeout/Photos from YYYY/` directly, or under a localized subdirectory such
-> as `Takeout/Google Photos/` or `Takeout/Google Fotos/`.  Either way, point
-> takeout-rater at the folder that *contains* `Takeout/` — it will find your
-> photos automatically and skip unrelated Google product data.
+Click **Browse…** (or type the path) to select the directory that contains your photos or album folders, then click **Save & continue**.
 
 After indexing (see below), the browser shows your full photo library.
-
-### Indexing your Takeout folder
-
-The launcher starts the UI but does not index your photos automatically.
-Run this once after setting the Takeout path:
-
-```bash
-# macOS / Linux  (uses the venv Python)
-.venv/bin/python -m takeout_rater index /path/to/folder-containing-Takeout
-
-# Windows
-.venv\Scripts\python -m takeout_rater index C:\path\to\folder-containing-Takeout
-```
 
 ### Changing the Takeout folder path
 
@@ -68,8 +48,8 @@ Enter the new path and click **Save & continue**.
 
 ## What it does
 
-- **Indexes** your Google Photos Takeout in place (read-only)
-- **Scores** photos using pluggable scorers (aesthetic quality, perceptual hash, …)
+- **Indexes** your photo library in place (read-only)
+- **Scores** photos using pluggable scorers (aesthetic quality, media type, …)
 - **Browses** your library via a local web UI with filters and sorting
 - **Exports** your best photos (top-N, or best-of-cluster) to a folder
 
@@ -105,24 +85,6 @@ takeout-rater browse /path/to/folder-containing-Takeout
 
 ---
 
-## Roadmap
-
-| Iteration | Scope | Status |
-|---|---|---|
-| **0** | Repo foundation: design docs, ADRs, agent docs, scorer interface, CI | ✅ Done |
-| **1** | Indexing, DB, thumbnail cache, minimal browse UI | ✅ Done |
-| **2** | Scorer pipeline end-to-end + BlurScorer + pHash | ✅ Done |
-| **3** | Clustering, cluster view, best-of-cluster export | ✅ Done |
-| **4** | Aesthetic scorer (CLIP + MLP), sort by aesthetic in UI | ✅ Done |
-| **5** | NSFW detector scorer, filter-by-score range, view presets | ✅ Done |
-| **6** | SHA-256 deduplication, `rehash` CLI, dedupe browse UI | ✅ Done |
-| **7** | UI-first: background jobs API, `/jobs` page, progress tracking | ✅ Done |
-| **8** | Index as background job, `serve` CLI, setup page, rescan, DB v6 | ✅ Done |
-| **9** | Timeline scrollbar, infinite-scroll lightbox navigation | ✅ Done |
-| **10** | Extended scorers (BRISQUE, CLIP-IQA, NIMA, PyIQA), `/scoring` page | ✅ Done |
-
----
-
 ## Development setup
 
 **Requirements:** Python 3.12+, pip
@@ -149,11 +111,12 @@ ruff check src/ tests/
 
 # Tests
 pytest
+pytest tests/slow
 ```
 
 ---
 
-## CLI
+## CLI (section outdated)
 
 ```bash
 # Show help
