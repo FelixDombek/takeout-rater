@@ -177,7 +177,9 @@ class CafeStyleScorer(BaseScorer):
                         MetricSpec(
                             key="style_3d",
                             display_name="3D Render",
-                            description=("Probability that the image is a 3D rendered image (0–1)."),
+                            description=(
+                                "Probability that the image is a 3D rendered image (0–1)."
+                            ),
                             min_value=0.0,
                             max_value=1.0,
                             higher_is_better=True,

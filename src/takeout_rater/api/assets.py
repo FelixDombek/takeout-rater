@@ -384,7 +384,9 @@ def browse_assets(
         if spec is None:
             continue
         variant = variant_by_key.get((scorer_id, variant_id))
-        metric = next((m for m in spec.metrics_for_variant(variant_id) if m.key == metric_key), None)
+        metric = next(
+            (m for m in spec.metrics_for_variant(variant_id) if m.key == metric_key), None
+        )
         if metric is None:
             continue
         value = f"{scorer_id}:{variant_id}:{metric_key}"
