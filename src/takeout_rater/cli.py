@@ -486,6 +486,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
         get_cluster_members,
         list_clusters_with_representatives,
     )
+
     photos_root = Path(args.photos_root).resolve()
     db_root = Path(args.db_root).resolve()
     db_path = library_db_path(db_root)

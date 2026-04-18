@@ -792,6 +792,7 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
             get_cluster_members,
             list_clusters_with_representatives,
         )
+
         worker_conn = _open_worker_conn(request.app)
         try:
             if count_clusters(worker_conn) == 0:

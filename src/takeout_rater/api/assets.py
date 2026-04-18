@@ -141,7 +141,9 @@ def _extract_exif_from_image(img: object) -> str | None:
             if exif_ifd:
                 section: dict[str, object] = {}
                 for tag_id, value in exif_ifd.items():
-                    section[ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")] = _make_exif_serializable(value)
+                    section[ExifTags.TAGS.get(tag_id, f"Tag_{tag_id:#06x}")] = (
+                        _make_exif_serializable(value)
+                    )
                 data["ExifIFD"] = section
         except Exception:  # noqa: BLE001
             pass
@@ -151,7 +153,9 @@ def _extract_exif_from_image(img: object) -> str | None:
             if gps_ifd:
                 section = {}
                 for tag_id, value in gps_ifd.items():
-                    section[ExifTags.GPSTAGS.get(tag_id, f"Tag_{tag_id:#06x}")] = _make_exif_serializable(value)
+                    section[ExifTags.GPSTAGS.get(tag_id, f"Tag_{tag_id:#06x}")] = (
+                        _make_exif_serializable(value)
+                    )
                 data["GPSIFD"] = section
         except Exception:  # noqa: BLE001
             pass
