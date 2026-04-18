@@ -104,7 +104,9 @@ class FaceDetector:
             try:
                 cache_dir.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
-                logger.warning("TensorRT engine cache disabled; cannot create %s: %s", cache_dir, exc)
+                logger.warning(
+                    "TensorRT engine cache disabled; cannot create %s: %s", cache_dir, exc
+                )
             else:
                 options.update(
                     {

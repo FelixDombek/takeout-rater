@@ -1405,9 +1405,7 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             status_code=400, detail="model_pack must be 'buffalo_l' or 'buffalo_sc'."
         )
     if body.accelerator not in ("gpu", "tensorrt"):
-        raise HTTPException(
-            status_code=400, detail="accelerator must be 'gpu' or 'tensorrt'."
-        )
+        raise HTTPException(status_code=400, detail="accelerator must be 'gpu' or 'tensorrt'.")
 
     existing = jobs.get("detect_faces")
     if existing is not None and existing.running:
