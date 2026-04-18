@@ -181,7 +181,11 @@ def get_embedding_map(
             "clusters": [
                 {"cluster_id": 0, "representative_asset_id": 1, "size": 42}
             ],
-            "total": 500
+            "total": 500,
+            "params": {
+                "clustering_method": "kmeans",
+                "max_clusters": 25
+            }
         }
     """
     params = {
