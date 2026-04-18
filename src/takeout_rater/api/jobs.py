@@ -388,7 +388,7 @@ def list_available_scorers() -> JSONResponse:
     """Return a list of scorers with metadata for the Scoring page.
 
     Each item has ``id``, ``name``, ``description``, ``technical_description``,
-    ``version``, ``available``, and ``variants`` fields.
+    ``version``, ``available``, and ``variants`` (incl. ``metrics``) fields.
     """
     from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
 

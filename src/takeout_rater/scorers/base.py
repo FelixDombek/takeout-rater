@@ -73,8 +73,10 @@ class ScorerSpec:
             whenever the scoring algorithm changes in a way that would produce
             different scores for the same image, so that previously scored
             images can be identified and re-scored.
-        variants: Available model/algorithm variants (may be empty if only one).
-        default_variant_id: The variant used when none is specified.
+        variants: Available model/algorithm variants. Metrics are defined on
+            variants, so scorers should declare at least one variant.
+        default_variant_id: The variant used when none is specified; should
+            match one of the declared variants.
         requires_extras: Optional-dependency extras needed (e.g. ``["aesthetic"]``).
     """
 
