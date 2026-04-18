@@ -108,8 +108,8 @@ def run_scorer(
         batch_size: Number of images per ``score_batch()`` call (default 32).
         skip_existing: When ``True`` (default) and ``asset_ids`` is ``None``,
             skip assets that already have a score for the *first* metric in
-            the scorer spec.  For single-metric scorers this is equivalent to
-            skipping fully-scored assets; for multi-metric scorers it uses the
+            the variant spec. For single-metric variants this is equivalent to
+            skipping fully-scored assets; for multi-metric variants it uses the
             first metric as the primary "scored" indicator.
         on_progress: Optional callback invoked after each batch with
             ``(scored_so_far, total)`` integers.
