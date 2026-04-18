@@ -254,6 +254,34 @@ def test_thumbnail_serves_jpeg(tmp_path: Path) -> None:
     assert resp.headers["content-type"] == "image/jpeg"
 
 
+def test_thumbnail_has_no_cache_header(tmp_path: Path) -> None:
+    """Thumbnail responses must carry Cache-Control: no-cache.
+
+    Without this header, browsers apply heuristic freshness and serve stale
+    cached thumbnails after a database rebuild where the same asset ID maps
+    to a different photo.  ``no-cache`` forces the browser to revalidate via
+    ETag before using a cached copy, so a freshly generated thumbnail is
+    always shown after re-indexing.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+
+    conn = _make_db()
+    asset_id = _add_asset(conn)
+    thumbs_dir = tmp_path / "takeout-rater" / "thumbs"
+    thumbs_dir.mkdir(parents=True)
+    thumb = thumb_path_for_id(thumbs_dir, asset_id)
+    thumb.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 32), color=(200, 100, 50)).save(thumb, "JPEG")
+
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    client = TestClient(app)
+    resp = client.get(f"/thumbs/{asset_id}")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
 # ── GET /clusterings ──────────────────────────────────────────────────────────
 
 

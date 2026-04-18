@@ -1041,11 +1041,21 @@ def serve_thumbnail(
     """Serve the JPEG thumbnail for an asset.
 
     Returns 404 if the thumbnail has not been generated yet.
+
+    ``Cache-Control: no-cache`` is set so that browsers always revalidate
+    against the server's ``ETag`` before using a cached thumbnail.  Without
+    this directive, browsers apply heuristic freshness and can serve a stale
+    cached thumbnail after a full database rebuild where the same asset ID
+    maps to a completely different photo.
     """
     thumb = thumb_path_for_id(thumbs_dir, asset_id)
     if not thumb.exists():
         raise HTTPException(status_code=404, detail=f"Thumbnail for asset {asset_id} not found")
-    return FileResponse(str(thumb), media_type="image/jpeg")
+    return FileResponse(
+        str(thumb),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.get("/image/{asset_id}")
