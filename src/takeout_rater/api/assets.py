@@ -1078,7 +1078,7 @@ def serve_image(
         image_path = photos_root / asset.relpath
         if image_path.exists():
             media_type = asset.mime or "application/octet-stream"
-            return FileResponse(str(image_path), media_type=media_type)
+            return FileResponse(str(image_path), media_type=media_type, headers={"Cache-Control": "no-cache"})
 
     raise HTTPException(status_code=404, detail=f"Original image for asset {asset_id} not found")
 
