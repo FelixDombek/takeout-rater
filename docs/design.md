@@ -49,7 +49,7 @@ takeout-rater/                    ← sibling directory, all mutable state
 src/takeout_rater/
   indexing/     ← takeout scanner, sidecar parser, thumbnail generator, run pipeline
   db/           ← SQLite schema, migrations, query helpers
-  scorers/      ← BaseScorer interface, explicit registry, heuristics/, adapters/
+  scorers/      ← BaseScorer interface, explicit registry, scorer modules
   scoring/      ← scoring pipeline runner, pHash computation
   clustering/   ← pHash-based near-duplicate cluster builder
   api/          ← FastAPI routes: assets, clusters, presets, config, jobs
@@ -150,12 +150,12 @@ currently stored; they can be added in a later migration if needed.
 
 ### Concepts
 
-- **ScorerSpec** — static description: `scorer_id`, display name, `description` (layman-friendly), `technical_description` (algorithm/paper details), list of `MetricSpec`, list of `VariantSpec`.
+- **ScorerSpec** — static description: `scorer_id`, display name, `description` (layman-friendly), `technical_description` (algorithm/paper details), list of `VariantSpec`.
 - **MetricSpec** — one output dimension: `key`, `display_name`, `description`, `min_value`, `max_value`, `higher_is_better`.
-- **VariantSpec** — one model/algorithm variant: `variant_id`, `display_name`, `description`.  Variants within a scorer produce **non-comparable** scores and are stored separately.
+- **VariantSpec** — one model/algorithm variant: `variant_id`, `display_name`, `description`, and the `MetricSpec` values that variant produces.  Variants within a scorer produce **non-comparable** scores and are stored separately.
 - **BaseScorer** — abstract class with `spec()`, `is_available()`, `create()`, and `score_batch()`.
 
-Scorers are **multi-metric**: a single scorer run may produce several metric keys (e.g. `aesthetic`, `technical_quality`, `composition`).
+The persisted hierarchy is **scorer → variant → metric**.  A variant may produce one metric or several metric keys.
 
 ### Scorer discovery (v1)
 

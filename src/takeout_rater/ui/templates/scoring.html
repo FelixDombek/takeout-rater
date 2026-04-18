@@ -68,10 +68,28 @@
   }
   /* .badge-running is defined in jobs-shared.css */
 
+  .scorer-load-text:not(:only-child) { display: none; }
+
+  /* The background track */
+  .scorer-load-text {
+    overflow: hidden; /* Ensures the filler doesn't spill out */
+  }
+
+  /* The moving part */
+  .scorer-load-text .progress-bar {
+    width: 0%; /* Start empty */
+    /* Animation: name | duration | timing-function | fill-mode */
+    animation: fillProgress 10s linear forwards;
+  }
+
+  /* Define the filling movement */
+  @keyframes fillProgress {
+    from { width: 0%; } to { width: 100%; }
+  }
+
   .scorer-desc {
     color: #555;
     font-size: 0.875rem;
-    margin-bottom: 0.75rem;
     line-height: 1.55;
   }
   .scorer-desc.technical { color: #444; font-style: italic; }
@@ -113,6 +131,7 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-bottom: 0.4rem;
+    margin-top: 0.75rem;
   }
   .scorer-variant-row {
     display: flex;
@@ -232,7 +251,12 @@
   </div>
 
   <!-- ── Scorer list (populated by JS) ──────────────────────────────────── -->
-  <div id="scorer-list"></div>
+  <div id="scorer-list">
+    <div class="scorer-card scorer-load-text">
+      <div class="scorer-desc">Loading scorers...</div>
+      <div class="progress-bar"></div>
+    </div>
+  </div>
 </div>
 
 <script>

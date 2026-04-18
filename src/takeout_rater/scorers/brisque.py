@@ -54,20 +54,6 @@ class BRISQUEScorer(BaseScorer):
                 "noise, and blur from local luminance statistics — no ML model required."
             ),
             version="1",
-            metrics=(
-                MetricSpec(
-                    key="brisque_quality",
-                    display_name="BRISQUE Quality",
-                    description=(
-                        "Perceptual quality score (0–100, higher is better). "
-                        "Derived by inverting the raw BRISQUE score so that "
-                        "distortion-free images score near 100."
-                    ),
-                    min_value=0.0,
-                    max_value=100.0,
-                    higher_is_better=True,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="default",
@@ -75,6 +61,20 @@ class BRISQUEScorer(BaseScorer):
                     description=(
                         "Standard BRISQUE with pre-fitted MVG parameters "
                         "from the piq library (no model download required)."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="brisque_quality",
+                            display_name="BRISQUE Quality",
+                            description=(
+                                "Perceptual quality score (0–100, higher is better). "
+                                "Derived by inverting the raw BRISQUE score so that "
+                                "distortion-free images score near 100."
+                            ),
+                            min_value=0.0,
+                            max_value=100.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
             ),

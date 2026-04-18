@@ -45,17 +45,17 @@ class VariantSpec:
         description: Short explanation of what distinguishes this variant.
         primary_metric_key: The metric key used to determine whether an asset
             has already been scored by this variant.  When ``None`` (default),
-            the pipeline falls back to the first key in :attr:`ScorerSpec.metrics`.
-            Set this explicitly when different variants of the same scorer write
-            *different* metric keys (e.g. ``"luminosity"`` writes ``"brightness"``
-            while ``"blur"`` writes ``"sharpness"``), so that skip-existing checks
-            query the correct metric rather than the scorer's global first metric.
+            the pipeline falls back to the first key in :attr:`metrics`.
+        metrics: Ordered list of metrics produced by this variant.  Keeping
+            metrics on the variant makes the persisted hierarchy explicit:
+            scorer -> variant -> metric.
     """
 
     variant_id: str
     display_name: str
     description: str = ""
     primary_metric_key: str | None = None
+    metrics: tuple[MetricSpec, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -73,9 +73,10 @@ class ScorerSpec:
             whenever the scoring algorithm changes in a way that would produce
             different scores for the same image, so that previously scored
             images can be identified and re-scored.
-        metrics: Ordered list of metrics the scorer outputs.
-        variants: Available model/algorithm variants (may be empty if only one).
-        default_variant_id: The variant used when none is specified.
+        variants: Available model/algorithm variants. Metrics are defined on
+            variants, so scorers should declare at least one variant.
+        default_variant_id: The variant used when none is specified; should
+            match one of the declared variants.
         requires_extras: Optional-dependency extras needed (e.g. ``["aesthetic"]``).
     """
 
@@ -84,10 +85,28 @@ class ScorerSpec:
     description: str = ""
     technical_description: str = ""
     version: str = "1"
-    metrics: tuple[MetricSpec, ...] = field(default_factory=tuple)
     variants: tuple[VariantSpec, ...] = field(default_factory=tuple)
     default_variant_id: str = "default"
     requires_extras: tuple[str, ...] = field(default_factory=tuple)
+
+    def metrics_for_variant(self, variant_id: str | None = None) -> tuple[MetricSpec, ...]:
+        """Return the metrics produced by *variant_id*."""
+        vid = variant_id or self.default_variant_id
+        variant = next((v for v in self.variants if v.variant_id == vid), None)
+        if variant is None:
+            return ()
+        return variant.metrics
+
+    def all_metrics(self) -> tuple[MetricSpec, ...]:
+        """Return all unique metrics across variants, preserving first-seen order."""
+        seen: set[str] = set()
+        metrics: list[MetricSpec] = []
+        for metric in [m for v in self.variants for m in v.metrics]:
+            if metric.key in seen:
+                continue
+            seen.add(metric.key)
+            metrics.append(metric)
+        return tuple(metrics)
 
 
 def _run_pipelined_batches(
@@ -230,7 +249,7 @@ class BaseScorer(ABC):
         Returns:
             A list (same length as ``image_paths``) of dicts mapping
             ``metric_key`` → ``float`` value.  Keys must be a subset of
-            those declared in :attr:`ScorerSpec.metrics`.
+            those declared by the active :class:`VariantSpec`.
         """
 
     def score_one(

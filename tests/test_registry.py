@@ -36,6 +36,6 @@ def test_all_specs_have_scorer_id() -> None:
 
 def test_all_specs_have_at_least_one_metric() -> None:
     for spec in list_specs():
-        assert len(spec.metrics) >= 1, (
+        assert len(spec.all_metrics()) >= 1, (
             f"Scorer '{spec.scorer_id}' must declare at least one MetricSpec"
         )

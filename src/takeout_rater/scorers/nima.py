@@ -57,7 +57,7 @@ _VARIANT_NATIVE_RANGE: dict[str, tuple[float, float]] = {
     "aesthetic": (1.0, 10.0),
     "aesthetic-vgg16": (1.0, 10.0),
     "technical": (0.0, 1.0),
-    "technical-spaq": (1.0, 10.0),
+    "technical-spaq": (1.0, 100.0),
 }
 
 #: Number of images to forward through the metric in a single call.
@@ -116,7 +116,7 @@ class NIMAScorer(BaseScorer):
     def spec(cls) -> ScorerSpec:
         return ScorerSpec(
             scorer_id="nima",
-            display_name="NIMA Quality",
+            display_name="NIMA",
             description=(
                 "Neural Image Assessment (NIMA) predicts how human viewers would rate a photo "
                 "on a 1–10 scale, using a neural network trained on professional photo ratings. "
@@ -130,22 +130,9 @@ class NIMAScorer(BaseScorer):
                 "pyiqa library. Aesthetic variants: nima (inception_resnet_v2, AVA) and "
                 "nima-vgg16-ava (vgg16, AVA) — native output [1, 10]. Technical variants: "
                 "nima-koniq (inception_resnet_v2, KonIQ-10k; native output [0, 1], rescaled to "
-                "[1, 10]) and nima-spaq (inception_resnet_v2, SPAQ; native output [1, 10])."
+                "[1, 10]) and nima-spaq (inception_resnet_v2, SPAQ; native output [1, 100], rescaled to [1, 10])."
             ),
             version="4",
-            metrics=(
-                MetricSpec(
-                    key="nima_score",
-                    display_name="NIMA Score",
-                    description=(
-                        "Mean predicted human rating (1–10, higher is better). "
-                        "Represents the expected value of the rating distribution."
-                    ),
-                    min_value=1.0,
-                    max_value=10.0,
-                    higher_is_better=True,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="aesthetic",
@@ -154,6 +141,19 @@ class NIMAScorer(BaseScorer):
                         "NIMA trained on the AVA dataset (inception_resnet_v2 backbone).  "
                         "Predicts perceived aesthetic quality: composition, colour harmony, "
                         "and subject interest."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="nima_score",
+                            display_name="Score",
+                            description=(
+                                "Mean predicted human rating (1–10, higher is better). "
+                                "Represents the expected value of the rating distribution."
+                            ),
+                            min_value=1.0,
+                            max_value=10.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
                 VariantSpec(
@@ -164,6 +164,19 @@ class NIMAScorer(BaseScorer):
                         "Same aesthetic purpose as the inception_resnet_v2 variant "
                         "with a different model architecture."
                     ),
+                    metrics=(
+                        MetricSpec(
+                            key="nima_score",
+                            display_name="Score",
+                            description=(
+                                "Mean predicted human rating (1–10, higher is better). "
+                                "Represents the expected value of the rating distribution."
+                            ),
+                            min_value=1.0,
+                            max_value=10.0,
+                            higher_is_better=True,
+                        ),
+                    ),
                 ),
                 VariantSpec(
                     variant_id="technical",
@@ -173,6 +186,19 @@ class NIMAScorer(BaseScorer):
                         "quality: sharpness, noise level, and compression artefacts.  "
                         "Native output [0, 1] is rescaled to [1, 10]."
                     ),
+                    metrics=(
+                        MetricSpec(
+                            key="nima_score",
+                            display_name="Score",
+                            description=(
+                                "Mean predicted human rating (1–10, higher is better). "
+                                "Represents the expected value of the rating distribution."
+                            ),
+                            min_value=1.0,
+                            max_value=10.0,
+                            higher_is_better=True,
+                        ),
+                    ),
                 ),
                 VariantSpec(
                     variant_id="technical-spaq",
@@ -180,6 +206,19 @@ class NIMAScorer(BaseScorer):
                     description=(
                         "NIMA trained on the SPAQ dataset of in-the-wild smartphone photos.  "
                         "Predicts technical quality with a focus on real-world capture conditions."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="nima_score",
+                            display_name="Score",
+                            description=(
+                                "Mean predicted human rating (1–10, higher is better). "
+                                "Represents the expected value of the rating distribution."
+                            ),
+                            min_value=1.0,
+                            max_value=10.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
             ),

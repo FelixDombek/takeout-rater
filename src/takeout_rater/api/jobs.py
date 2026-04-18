@@ -388,7 +388,7 @@ def list_available_scorers() -> JSONResponse:
     """Return a list of scorers with metadata for the Scoring page.
 
     Each item has ``id``, ``name``, ``description``, ``technical_description``,
-    ``version``, ``available``, and ``variants`` fields.
+    ``version``, ``available``, and ``variants`` (incl. ``metrics``) fields.
     """
     from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
 
@@ -409,6 +409,17 @@ def list_available_scorers() -> JSONResponse:
                         "id": v.variant_id,
                         "name": v.display_name,
                         "description": v.description,
+                        "metrics": [
+                            {
+                                "key": m.key,
+                                "name": m.display_name,
+                                "description": m.description,
+                                "min_value": m.min_value,
+                                "max_value": m.max_value,
+                                "higher_is_better": m.higher_is_better,
+                            }
+                            for m in spec.metrics_for_variant(v.variant_id)
+                        ],
                     }
                     for v in spec.variants
                 ],
@@ -1154,7 +1165,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                             import torch  # noqa: PLC0415
                             from PIL import Image  # noqa: PLC0415
 
-                            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+                            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
                                 get_clip_model,
                             )
 
@@ -1272,7 +1283,7 @@ def start_embed_job(request: Request) -> JSONResponse:
             import torch  # noqa: PLC0415
             from PIL import Image  # noqa: PLC0415
 
-            from takeout_rater.scorers.adapters.clip_backbone import (
+            from takeout_rater.scorers.clip_backbone import (
                 get_clip_model,  # noqa: PLC0415
             )
 

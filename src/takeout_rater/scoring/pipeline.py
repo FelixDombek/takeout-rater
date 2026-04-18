@@ -2,7 +2,7 @@
 
 Usage example::
 
-    from takeout_rater.scorers.heuristics.simple import SimpleScorer
+    from takeout_rater.scorers.simple import SimpleScorer
 
     scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir)
@@ -108,8 +108,8 @@ def run_scorer(
         batch_size: Number of images per ``score_batch()`` call (default 32).
         skip_existing: When ``True`` (default) and ``asset_ids`` is ``None``,
             skip assets that already have a score for the *first* metric in
-            the scorer spec.  For single-metric scorers this is equivalent to
-            skipping fully-scored assets; for multi-metric scorers it uses the
+            the variant spec. For single-metric variants this is equivalent to
+            skipping fully-scored assets; for multi-metric variants it uses the
             first metric as the primary "scored" indicator.
         on_progress: Optional callback invoked after each batch with
             ``(scored_so_far, total)`` integers.
@@ -128,12 +128,13 @@ def run_scorer(
     # Determine which assets to score
     stream_all_assets = False
     if asset_ids is None:
-        if skip_existing and spec.metrics:
+        variant_metrics = spec.metrics_for_variant(variant_id)
+        if skip_existing and variant_metrics:
             variant_spec = next((v for v in spec.variants if v.variant_id == variant_id), None)
             first_metric = (
                 variant_spec.primary_metric_key
                 if variant_spec is not None and variant_spec.primary_metric_key is not None
-                else spec.metrics[0].key
+                else variant_metrics[0].key
             )
             asset_ids = list_asset_ids_without_score(
                 conn, scorer_id, variant_id, first_metric, scorer_version=scorer_version

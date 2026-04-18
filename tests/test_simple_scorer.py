@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from takeout_rater.scorers.heuristics.simple import SimpleScorer
+from takeout_rater.scorers.simple import SimpleScorer
 
 # ---------------------------------------------------------------------------
 # Spec / metadata
@@ -28,33 +28,33 @@ def test_spec_default_variant_is_blur() -> None:
 
 
 def test_spec_has_all_metrics() -> None:
-    keys = {m.key for m in SimpleScorer.spec().metrics}
+    keys = {m.key for m in SimpleScorer.spec().all_metrics()}
     assert keys == {"sharpness", "brightness", "contrast", "noise"}
 
 
 def test_spec_sharpness_range() -> None:
-    m = next(m for m in SimpleScorer.spec().metrics if m.key == "sharpness")
+    m = next(m for m in SimpleScorer.spec().all_metrics() if m.key == "sharpness")
     assert m.min_value == 0.0
     assert m.max_value == 100.0
     assert m.higher_is_better is True
 
 
 def test_spec_brightness_range() -> None:
-    m = next(m for m in SimpleScorer.spec().metrics if m.key == "brightness")
+    m = next(m for m in SimpleScorer.spec().all_metrics() if m.key == "brightness")
     assert m.min_value == 0.0
     assert m.max_value == 100.0
     assert m.higher_is_better is True
 
 
 def test_spec_contrast_range() -> None:
-    m = next(m for m in SimpleScorer.spec().metrics if m.key == "contrast")
+    m = next(m for m in SimpleScorer.spec().all_metrics() if m.key == "contrast")
     assert m.min_value == 0.0
     assert m.max_value == 100.0
     assert m.higher_is_better is True
 
 
 def test_spec_noise_range_lower_is_better() -> None:
-    m = next(m for m in SimpleScorer.spec().metrics if m.key == "noise")
+    m = next(m for m in SimpleScorer.spec().all_metrics() if m.key == "noise")
     assert m.min_value == 0.0
     assert m.max_value == 100.0
     assert m.higher_is_better is False

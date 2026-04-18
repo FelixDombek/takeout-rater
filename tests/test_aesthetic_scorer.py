@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.laion import (
+from takeout_rater.scorers.laion import (
     _EMBEDDING_DIM,
     _SCORE_BATCH_SIZE,
     AestheticScorer,
@@ -25,12 +25,12 @@ def test_spec_scorer_id() -> None:
 
 def test_spec_has_aesthetic_metric() -> None:
     spec = AestheticScorer.spec()
-    assert len(spec.metrics) == 1
-    assert spec.metrics[0].key == "aesthetic"
+    assert len(spec.all_metrics()) == 1
+    assert spec.all_metrics()[0].key == "aesthetic"
 
 
 def test_spec_aesthetic_range() -> None:
-    m = AestheticScorer.spec().metrics[0]
+    m = AestheticScorer.spec().all_metrics()[0]
     assert m.min_value == 0.0
     assert m.max_value == 10.0
     assert m.higher_is_better is True
@@ -99,7 +99,7 @@ def test_is_available_false_when_torch_missing() -> None:
 
 
 def test_hf_repo_candidates_env_first(monkeypatch) -> None:
-    from takeout_rater.scorers.adapters import laion
+    from takeout_rater.scorers import laion
 
     monkeypatch.setenv("TAKEOUT_RATER_AESTHETIC_REPO", "custom/repo")
     candidates = laion.AestheticScorer._hf_repo_candidates()
@@ -111,7 +111,7 @@ def test_hf_repo_candidates_env_first(monkeypatch) -> None:
 def test_download_mlp_weights_uses_fallback(monkeypatch, tmp_path: Path) -> None:
     import huggingface_hub  # noqa: PLC0415
 
-    from takeout_rater.scorers.adapters import laion
+    from takeout_rater.scorers import laion
 
     repos = ("broken/repo", "working/repo")
     monkeypatch.setattr(
@@ -146,7 +146,7 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
     """_ensure_loaded must pass force_quick_gelu=True via the shared clip_backbone."""
     import torch  # noqa: PLC0415
 
-    import takeout_rater.scorers.adapters.clip_backbone as backbone  # noqa: PLC0415
+    import takeout_rater.scorers.clip_backbone as backbone  # noqa: PLC0415
 
     fake_model = MagicMock()
     fake_model.encode_image.return_value = torch.zeros(1, _EMBEDDING_DIM)
@@ -174,7 +174,7 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
     monkeypatch.setattr(open_clip, "get_tokenizer", lambda _name: MagicMock())
 
-    from takeout_rater.scorers.adapters import laion
+    from takeout_rater.scorers import laion
 
     monkeypatch.setattr(laion, "_build_mlp", lambda _dim: fake_mlp)
     monkeypatch.setattr(

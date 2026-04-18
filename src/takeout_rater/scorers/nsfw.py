@@ -82,19 +82,6 @@ class NSFWScorer(BaseScorer):
                 "Scores close to 0 are safe; scores close to 1 are likely NSFW."
             ),
             version="1",
-            metrics=(
-                MetricSpec(
-                    key="nsfw",
-                    display_name="NSFW Score",
-                    description=(
-                        "Probability that the image is NSFW (0 = safe, 1 = NSFW). "
-                        "Lower is better / safer."
-                    ),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=False,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="falconsai_vit",
@@ -102,6 +89,19 @@ class NSFWScorer(BaseScorer):
                     description=(
                         "ViT-based NSFW image classifier "
                         "(Falconsai/nsfw_image_detection on HuggingFace)."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="nsfw",
+                            display_name="NSFW Score",
+                            description=(
+                                "Probability that the image is NSFW (0 = safe, 1 = NSFW). "
+                                "Lower is better / safer."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=False,
+                        ),
                     ),
                 ),
             ),

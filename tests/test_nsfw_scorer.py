@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from takeout_rater.scorers.adapters.nsfw import NSFWScorer
 from takeout_rater.scorers.base import ScorerSpec
+from takeout_rater.scorers.nsfw import NSFWScorer
 
 # ── spec ─────────────────────────────────────────────────────────────────────
 
@@ -21,20 +21,20 @@ def test_nsfw_scorer_id() -> None:
 
 def test_nsfw_scorer_has_nsfw_metric() -> None:
     spec = NSFWScorer.spec()
-    keys = [m.key for m in spec.metrics]
+    keys = [m.key for m in spec.all_metrics()]
     assert "nsfw" in keys
 
 
 def test_nsfw_metric_range() -> None:
     spec = NSFWScorer.spec()
-    metric = next(m for m in spec.metrics if m.key == "nsfw")
+    metric = next(m for m in spec.all_metrics() if m.key == "nsfw")
     assert metric.min_value == 0.0
     assert metric.max_value == 1.0
 
 
 def test_nsfw_metric_lower_is_better() -> None:
     spec = NSFWScorer.spec()
-    metric = next(m for m in spec.metrics if m.key == "nsfw")
+    metric = next(m for m in spec.all_metrics() if m.key == "nsfw")
     assert metric.higher_is_better is False
 
 

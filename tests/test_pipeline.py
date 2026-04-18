@@ -17,7 +17,7 @@ from takeout_rater.db.queries import (
     upsert_asset,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.scorers.heuristics.simple import SimpleScorer
+from takeout_rater.scorers.simple import SimpleScorer
 from takeout_rater.scoring.pipeline import run_scorer, run_scorer_by_id
 
 FIXTURE_TAKEOUT = Path(__file__).parent / "fixtures" / "takeout_tree" / "Takeout"
@@ -133,7 +133,7 @@ def test_skip_existing_does_not_hide_scores_from_browse(tmp_path: Path) -> None:
     scorer = SimpleScorer.create(variant_id="blur")
     spec = scorer.spec()
     scorer_id = spec.scorer_id
-    metric_key = spec.metrics[0].key
+    metric_key = spec.all_metrics()[0].key
     run_scorer(conn, scorer, thumbs_dir, skip_existing=True)
     # Second run — simulates clicking "Score" again from the UI
     run_scorer(conn, scorer, thumbs_dir, skip_existing=True)

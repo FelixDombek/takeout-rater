@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.nima import (
+from takeout_rater.scorers.nima import (
     _VARIANT_NATIVE_RANGE,
     _VARIANT_PYIQA_METRIC,
     NIMAScorer,
@@ -24,12 +24,12 @@ def test_spec_scorer_id() -> None:
 
 def test_spec_has_nima_score_metric() -> None:
     spec = NIMAScorer.spec()
-    assert len(spec.metrics) == 1
-    assert spec.metrics[0].key == "nima_score"
+    assert len(spec.all_metrics()) == 1
+    assert spec.all_metrics()[0].key == "nima_score"
 
 
 def test_spec_range() -> None:
-    m = NIMAScorer.spec().metrics[0]
+    m = NIMAScorer.spec().all_metrics()[0]
     assert m.min_value == 1.0
     assert m.max_value == 10.0
     assert m.higher_is_better is True
@@ -264,7 +264,7 @@ def test_score_batch_aesthetic_vgg16_variant(tmp_path: Path) -> None:
 
 
 def test_score_batch_technical_spaq_variant_rescales(tmp_path: Path) -> None:
-    """technical-spaq native range is [1, 10]; score passes through unchanged."""
+    """technical-spaq native range is [1, 100]; score rescales to [1, 10]."""
     from PIL import Image  # noqa: PLC0415
 
     img_path = tmp_path / "img.jpg"
@@ -274,8 +274,8 @@ def test_score_batch_technical_spaq_variant_rescales(tmp_path: Path) -> None:
     assert scorer.variant_id == "technical-spaq"
     results = scorer.score_batch([img_path])
     assert "nima_score" in results[0]
-    # Native range is [1, 10] (same as display range) → identity mapping
-    assert results[0]["nima_score"] == pytest.approx(5.5)
+    # Native range is [1, 100], so raw 5.5 maps near the low end of [1, 10].
+    assert results[0]["nima_score"] == pytest.approx(1.4090909090909092)
 
 
 def test_score_batch_technical_variant_rescales(tmp_path: Path) -> None:

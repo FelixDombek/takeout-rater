@@ -4,27 +4,18 @@ Follow these steps to add a new scorer to `takeout-rater`.
 
 ---
 
-## 1. Decide: heuristic or adapter?
+## 1. Choose the module path
 
-| Type | Use when | File location |
-|---|---|---|
-| **Heuristic** | Score derived from image properties only (no ML model) | `src/takeout_rater/scorers/heuristics/<name>.py` |
-| **Adapter** | Wraps an ML model or external tool | `src/takeout_rater/scorers/adapters/<name>.py` |
-
-> **Sub-package vs flat file**: use a single `.py` file unless the adapter spans
-> multiple source files (e.g. a custom model architecture module + a scorer module).
-> All existing adapters (`laion.py`, `nsfw.py`, `clip_iqa.py`, `nima.py`, `pyiqa_adapter.py`) are flat files.
+Place new scorers directly in `src/takeout_rater/scorers/<name>.py`.  Use a
+single `.py` file unless the scorer spans multiple source files.
 
 ---
 
-## 2. Create the scorer module
+## 2. Implement the scorer
 
-Pick the template that matches your scorer type.
-
-### Heuristic template
-
-Suitable for scorers that derive a metric purely from image pixel data (no
-model download, no heavy optional deps).  See `blur.py` for a working example.
+Use this template for scorers that derive metrics from image data, whether the
+implementation uses Pillow statistics, a pretrained model, or an external
+library. See `simple.py`, `nsfw.py`, and `laion.py` for working examples.
 
 ```python
 """<Short description of what this scorer measures>."""
@@ -45,22 +36,21 @@ class MyScorer(BaseScorer):
             scorer_id="my_scorer",          # stable, lowercase, underscore-separated
             display_name="My Scorer",
             description="What this scorer measures and how.",
-            metrics=(
-                MetricSpec(
-                    key="my_metric",
-                    display_name="My metric",
-                    description="What this number means.",
-                    min_value=0.0,
-                    max_value=100.0,
-                    higher_is_better=True,  # set False when lower is better (e.g. NSFW probability)
-                ),
-                # Add more MetricSpec entries for multi-metric scorers
-            ),
             variants=(
                 VariantSpec(
                     variant_id="default",
                     display_name="Default",
                     description="Algorithm description.",
+                    metrics=(
+                        MetricSpec(
+                            key="my_metric",
+                            display_name="My metric",
+                            description="What this number means.",
+                            min_value=0.0,
+                            max_value=100.0,
+                            higher_is_better=True,  # set False when lower is better
+                        ),
+                    ),
                 ),
             ),
             default_variant_id="default",
@@ -100,13 +90,7 @@ class MyScorer(BaseScorer):
         return results
 ```
 
-### ML adapter template
-
-Suitable for scorers that wrap a pretrained ML model with optional heavyweight
-dependencies (PyTorch, transformers, …).  See `nsfw.py` for a full working
-example; `laion.py` for a two-stage CLIP+MLP pipeline.
-
-Key differences from the heuristic template:
+For model-backed scorers:
 - `__init__` stores lazy-load placeholders so the model is only loaded on
   first use.
 - `_ensure_loaded()` does the actual loading (downloads weights on first run).
@@ -140,21 +124,21 @@ class MyMLScorer(BaseScorer):
             scorer_id="my_ml_scorer",
             display_name="My ML Scorer",
             description="What this scorer measures and how.",
-            metrics=(
-                MetricSpec(
-                    key="my_metric",
-                    display_name="My metric",
-                    description="What this number means.",
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,  # set False when lower is better
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="v1",
                     display_name="Model v1",
                     description="Which checkpoint / version this is.",
+                    metrics=(
+                        MetricSpec(
+                            key="my_metric",
+                            display_name="My metric",
+                            description="What this number means.",
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,  # set False when lower is better
+                        ),
+                    ),
                 ),
             ),
             default_variant_id="v1",
@@ -233,12 +217,9 @@ dependencies = [
 Open `src/takeout_rater/scorers/registry.py` and add:
 
 ```python
-from takeout_rater.scorers.adapters.my_ml_scorer import MyMLScorer  # or heuristics/…
+from takeout_rater.scorers.my_ml_scorer import MyMLScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
-    BlurScorer,
-    LuminosityScorer,
-    NoiseScorer,
     # ...existing scorers...
     MyMLScorer,   # ← add here
 ]
@@ -251,21 +232,20 @@ _SCORER_CLASSES: list[type[BaseScorer]] = [
 Create `tests/test_my_scorer.py`.  At minimum test:
 
 - `MyScorer.spec().scorer_id == "my_scorer"`
-- `MyScorer.spec().metrics[0].higher_is_better` has the correct value
+- `MyScorer.spec().metrics_for_variant("default")[0].higher_is_better` has the correct value
 - `MyScorer.spec()` has at least one variant and a `default_variant_id`
 - `is_available()` returns a `bool` (don't assert `True`/`False` — depends on the environment)
 - `score_batch([])` returns `[]`
 - A missing/unreadable file yields the metric key with a safe default value (e.g. `0.0`), not an exception
 
-For ML adapters, gate integration tests with:
+For model-backed scorers, gate integration tests with:
 
 ```python
 @pytest.mark.skipif(not MyMLScorer.is_available(), reason="deps not installed")
 def test_scores_real_image(tmp_path): ...
 ```
 
-See `tests/test_blur_scorer.py` for a heuristic example and
-`tests/test_nsfw_scorer.py` for an ML adapter example.
+See `tests/test_simple_scorer.py` and `tests/test_nsfw_scorer.py` for examples.
 
 ---
 
@@ -279,6 +259,7 @@ See `docs/agents/definition-of-done.md` before opening a PR.
 
 - `scorer_id` must be **stable** — it is stored in the DB.  Changing it will orphan existing scores.
 - `variant_id` is also stored per `asset_scores` row.  Add a new variant rather than renaming an existing one when upgrading a model.
+- Metrics belong on the `VariantSpec` that produces them.  The persisted hierarchy is scorer → variant → metric.
 - `higher_is_better=False` for metrics where a *lower* value is better (e.g. NSFW probability, noise level).
 - Multi-metric scorers should document what each metric measures in the `MetricSpec.description`.
 - `score_batch` must **always** return a list of the same length as `image_paths`, even when individual images fail.  Use a safe default (typically `0.0`) and catch `(OSError, ValueError, RuntimeError)`.

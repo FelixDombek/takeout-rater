@@ -153,19 +153,6 @@ class AestheticScorer(BaseScorer):
                 "to 10 (excellent)."
             ),
             version="1",
-            metrics=(
-                MetricSpec(
-                    key="aesthetic",
-                    display_name="Aesthetic",
-                    description=(
-                        "Predicted aesthetic quality score (0–10, higher is better). "
-                        "Scores above 6 are generally considered visually pleasing."
-                    ),
-                    min_value=0.0,
-                    max_value=10.0,
-                    higher_is_better=True,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="laion_v2",
@@ -173,6 +160,19 @@ class AestheticScorer(BaseScorer):
                     description=(
                         "MLP trained on LAION, SAC, and AVA datasets using CLIP "
                         "ViT-L/14 embeddings (sac+logos+ava1-l14-linearMSE)."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="aesthetic",
+                            display_name="Aesthetic",
+                            description=(
+                                "Predicted aesthetic quality score (0–10, higher is better). "
+                                "Scores above 6 are generally considered visually pleasing."
+                            ),
+                            min_value=0.0,
+                            max_value=10.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
             ),
@@ -253,7 +253,7 @@ class AestheticScorer(BaseScorer):
 
         import torch  # noqa: PLC0415
 
-        from takeout_rater.scorers.adapters.clip_backbone import get_clip_model  # noqa: PLC0415
+        from takeout_rater.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
 
         clip_model, preprocess, _tokenizer, device = get_clip_model()
 
