@@ -289,19 +289,23 @@ def _print_gpu_diagnostics() -> None:
 
 
 def _get_db_path() -> Path | None:
-    """Return the path to the library database as stored in the local config.
+    """Return the path to the library database as stored in user-local config.
 
     Returns ``None`` if the config file is absent, malformed, or does not
     contain a ``db_root`` entry.
     """
-    config_file = ROOT / ".takeout-rater.json"
-    try:
-        data = json.loads(config_file.read_text(encoding="utf-8"))
-        raw_db_root = data.get("db_root")
-        if raw_db_root:
-            return Path(raw_db_root) / _STATE_SUBDIR / _DB_FILENAME
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    config_files = [
+        Path.home() / ".takeout_rater" / "config.json",
+        ROOT / ".takeout-rater.json",
+    ]
+    for config_file in config_files:
+        try:
+            data = json.loads(config_file.read_text(encoding="utf-8"))
+            raw_db_root = data.get("db_root")
+            if raw_db_root:
+                return Path(raw_db_root) / _STATE_SUBDIR / _DB_FILENAME
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
     return None
 
 

@@ -140,7 +140,12 @@ def create_app(
 
     @app.get("/setup", response_class=HTMLResponse)
     def setup_page(request: Request) -> HTMLResponse:
-        from takeout_rater.config import get_db_root, get_photos_root  # noqa: PLC0415
+        from takeout_rater.config import (  # noqa: PLC0415
+            get_app_dir,
+            get_db_root,
+            get_photos_root,
+            list_libraries,
+        )
 
         current = get_photos_root()
         current_db_root = get_db_root()
@@ -151,6 +156,8 @@ def create_app(
                 "request": request,
                 "current_path": str(current) if current else None,
                 "current_db_root": str(current_db_root) if current_db_root else None,
+                "app_dir": str(get_app_dir()),
+                "known_libraries": list_libraries(),
             },
         )
 

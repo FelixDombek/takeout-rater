@@ -31,9 +31,8 @@ def client_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestCl
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
     monkeypatch.setattr(routes_mod, "get_photos_root", cfg_mod.get_photos_root)
-    monkeypatch.setattr(routes_mod, "set_photos_root", cfg_mod.set_photos_root)
+    monkeypatch.setattr(routes_mod, "set_current_library", cfg_mod.set_current_library)
     monkeypatch.setattr(routes_mod, "get_db_root", cfg_mod.get_db_root)
-    monkeypatch.setattr(routes_mod, "set_db_root", cfg_mod.set_db_root)
 
     app = create_app(None, None)
     return TestClient(app, follow_redirects=False)
@@ -100,6 +99,27 @@ def test_get_config_includes_db_root(
     assert data["db_root"] == str(db_root)
 
 
+def test_get_config_includes_known_libraries(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import takeout_rater.api.config_routes as routes_mod  # noqa: E402
+
+    library = {
+        "id": "photos-123",
+        "name": "Photos",
+        "photos_root": str(tmp_path / "Photos"),
+        "db_root": str(tmp_path / "state"),
+    }
+    monkeypatch.setattr(routes_mod, "get_photos_root", lambda: None)
+    monkeypatch.setattr(routes_mod, "get_db_root", lambda: None)
+    monkeypatch.setattr(routes_mod, "list_libraries", lambda: [library])
+
+    resp = client.get("/api/config")
+
+    assert resp.status_code == 200
+    assert resp.json()["libraries"] == [library]
+
+
 # ---------------------------------------------------------------------------
 # GET /api/library/status
 # ---------------------------------------------------------------------------
@@ -153,8 +173,7 @@ def test_set_path_valid(
 
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
-    monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: saved.append(p))
-    monkeypatch.setattr(routes_mod, "set_db_root", lambda p: None)
+    monkeypatch.setattr(routes_mod, "set_current_library", lambda p, db_root=None: saved.append(p))
 
     resp = client.post(
         "/api/config/photos-root",
@@ -178,8 +197,11 @@ def test_set_path_with_db_root(
 
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
-    monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: photos_saved.append(p))
-    monkeypatch.setattr(routes_mod, "set_db_root", lambda p: db_saved.append(p))
+    def _capture_current_library(p: Path, db_root: Path | None = None) -> None:
+        photos_saved.append(p)
+        db_saved.append(db_root)
+
+    monkeypatch.setattr(routes_mod, "set_current_library", _capture_current_library)
 
     resp = client.post(
         "/api/config/photos-root",
@@ -189,6 +211,33 @@ def test_set_path_with_db_root(
     assert len(photos_saved) == 1
     assert len(db_saved) == 1
     assert db_saved[0] == db_root_dir.resolve()
+
+
+def test_set_path_without_db_root_uses_user_local_library_dir(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Omitting db_root stores the DB under the user-local app directory."""
+    import takeout_rater.api.config_routes as routes_mod  # noqa: E402
+
+    app_dir = tmp_path / ".takeout_rater"
+    monkeypatch.setattr(routes_mod, "get_app_dir", lambda: app_dir)
+    monkeypatch.setattr(
+        routes_mod,
+        "default_db_root_for_photos_root",
+        lambda p: app_dir / f"{p.name}-id",
+    )
+    monkeypatch.setattr(routes_mod, "set_current_library", lambda p, db_root=None: None)
+
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
+
+    monkeypatch.setattr(jobs_mod, "_start_index_job", lambda app, photos_root, db_root: None)
+
+    resp = client.post("/api/config/photos-root", json={"path": str(tmp_path)})
+
+    assert resp.status_code == 200
+    db_root = Path(resp.json()["db_root"])
+    assert db_root == app_dir / f"{tmp_path.name}-id"
+    assert db_root.exists()
 
 
 def test_set_path_nonexistent_returns_400(client: TestClient) -> None:
@@ -247,6 +296,35 @@ def test_setup_page_contains_form_elements(
     assert "Save" in resp.text
 
 
+def test_setup_page_lists_known_libraries(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import takeout_rater.config as cfg_mod  # noqa: E402
+
+    monkeypatch.setattr(cfg_mod, "get_photos_root", lambda: None)
+    monkeypatch.setattr(cfg_mod, "get_db_root", lambda: None)
+    monkeypatch.setattr(cfg_mod, "get_app_dir", lambda: tmp_path / ".takeout_rater")
+    monkeypatch.setattr(
+        cfg_mod,
+        "list_libraries",
+        lambda: [
+            {
+                "id": "photos-123",
+                "name": "Holiday Photos",
+                "photos_root": str(tmp_path / "Holiday Photos"),
+                "db_root": str(tmp_path / "state"),
+            }
+        ],
+    )
+
+    resp = client.get("/setup")
+
+    assert resp.status_code == 200
+    assert "Known libraries" in resp.text
+    assert "Holiday Photos" in resp.text
+    assert 'data-library-id="photos-123"' in resp.text
+
+
 # ---------------------------------------------------------------------------
 # Assets endpoint returns 503 when no DB
 # ---------------------------------------------------------------------------
@@ -268,8 +346,7 @@ def test_set_path_updates_app_state(
     """After POST /api/config/photos-root the app state must have a live DB connection."""
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
-    monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: None)
-    monkeypatch.setattr(routes_mod, "set_db_root", lambda p: None)
+    monkeypatch.setattr(routes_mod, "set_current_library", lambda p, db_root=None: None)
     db_root = tmp_path / "state"
     db_root.mkdir()
 
@@ -293,8 +370,7 @@ def test_set_path_then_assets_accessible(
     """After configuring the path, /assets must return 200 (not 503)."""
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
-    monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: None)
-    monkeypatch.setattr(routes_mod, "set_db_root", lambda p: None)
+    monkeypatch.setattr(routes_mod, "set_current_library", lambda p, db_root=None: None)
     db_root = tmp_path / "state"
     db_root.mkdir()
 
@@ -331,8 +407,7 @@ def test_set_path_triggers_index_job(
     """After POST /api/config/photos-root an index job is started."""
     import takeout_rater.api.config_routes as routes_mod  # noqa: E402
 
-    monkeypatch.setattr(routes_mod, "set_photos_root", lambda p: None)
-    monkeypatch.setattr(routes_mod, "set_db_root", lambda p: None)
+    monkeypatch.setattr(routes_mod, "set_current_library", lambda p, db_root=None: None)
 
     # Capture that _start_index_job is called
     calls: list[Path] = []
