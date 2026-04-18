@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.pyiqa_adapter import PyIQAScorer, _to_higher_is_better
+from takeout_rater.scorers.pyiqa_adapter import PyIQAScorer, _to_higher_is_better
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -20,12 +20,12 @@ def test_spec_scorer_id() -> None:
 
 def test_spec_has_iqa_quality_metric() -> None:
     spec = PyIQAScorer.spec()
-    assert len(spec.metrics) == 1
-    assert spec.metrics[0].key == "iqa_quality"
+    assert len(spec.all_metrics()) == 1
+    assert spec.all_metrics()[0].key == "iqa_quality"
 
 
 def test_spec_range() -> None:
-    m = PyIQAScorer.spec().metrics[0]
+    m = PyIQAScorer.spec().all_metrics()[0]
     assert m.min_value == 0.0
     assert m.max_value == 1.0
     assert m.higher_is_better is True

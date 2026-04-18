@@ -188,7 +188,7 @@ def run_index(
 
     def _warmup_clip() -> None:
         try:
-            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
                 get_clip_model,
                 is_available,
             )
@@ -461,7 +461,7 @@ def run_index(
 
                         import torch  # noqa: PLC0415
 
-                        from takeout_rater.scorers.adapters.clip_backbone import (
+                        from takeout_rater.scorers.clip_backbone import (
                             get_clip_model,  # noqa: PLC0415
                         )
 

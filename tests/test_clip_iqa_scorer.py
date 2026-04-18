@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.clip_iqa import CLIPIQAScorer
+from takeout_rater.scorers.clip_iqa import CLIPIQAScorer
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -20,12 +20,12 @@ def test_spec_scorer_id() -> None:
 
 def test_spec_has_clip_quality_metric() -> None:
     spec = CLIPIQAScorer.spec()
-    assert len(spec.metrics) == 1
-    assert spec.metrics[0].key == "clip_quality"
+    assert len(spec.all_metrics()) == 1
+    assert spec.all_metrics()[0].key == "clip_quality"
 
 
 def test_spec_range() -> None:
-    m = CLIPIQAScorer.spec().metrics[0]
+    m = CLIPIQAScorer.spec().all_metrics()[0]
     assert m.min_value == 0.0
     assert m.max_value == 1.0
     assert m.higher_is_better is True
@@ -80,7 +80,7 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch) -> None:
     """_ensure_loaded must pass force_quick_gelu=True via the shared clip_backbone."""
     import torch  # noqa: PLC0415
 
-    import takeout_rater.scorers.adapters.clip_backbone as backbone  # noqa: PLC0415
+    import takeout_rater.scorers.clip_backbone as backbone  # noqa: PLC0415
 
     fake_model = MagicMock()
     fake_model.logit_scale = torch.tensor(1.0)

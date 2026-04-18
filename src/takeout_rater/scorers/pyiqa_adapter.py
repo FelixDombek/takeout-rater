@@ -125,19 +125,6 @@ class PyIQAScorer(BaseScorer):
                 "[0, 1] with higher values indicating better quality."
             ),
             version="1",
-            metrics=(
-                MetricSpec(
-                    key="iqa_quality",
-                    display_name="IQA Quality",
-                    description=(
-                        "Normalised image quality score (0–1, higher is better). "
-                        "Derived from the selected pyiqa metric variant."
-                    ),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="musiq",
@@ -147,6 +134,19 @@ class PyIQAScorer(BaseScorer):
                         "fine-tuned on AVA, KonIQ, and SPAQ datasets.  Processes "
                         "images at native resolution without distorting crops."
                     ),
+                    metrics=(
+                        MetricSpec(
+                            key="iqa_quality",
+                            display_name="IQA Quality",
+                            description=(
+                                "Normalised image quality score (0–1, higher is better). "
+                                "Derived from the selected pyiqa metric variant."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
+                    ),
                 ),
                 VariantSpec(
                     variant_id="topiq_nr",
@@ -154,6 +154,19 @@ class PyIQAScorer(BaseScorer):
                     description=(
                         "Top-down Perceptual IQA.  State-of-the-art no-reference "
                         "scorer using semantic-aware attention on a CLIP backbone."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="iqa_quality",
+                            display_name="IQA Quality",
+                            description=(
+                                "Normalised image quality score (0–1, higher is better). "
+                                "Derived from the selected pyiqa metric variant."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
                 VariantSpec(
@@ -163,6 +176,19 @@ class PyIQAScorer(BaseScorer):
                         "Natural Image Quality Evaluator.  Opinion-free statistical "
                         "quality estimator using pre-fitted multivariate Gaussian "
                         "patch statistics.  No training data required."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="iqa_quality",
+                            display_name="IQA Quality",
+                            description=(
+                                "Normalised image quality score (0–1, higher is better). "
+                                "Derived from the selected pyiqa metric variant."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
             ),

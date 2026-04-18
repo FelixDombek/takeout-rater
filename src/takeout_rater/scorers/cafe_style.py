@@ -132,56 +132,6 @@ class CafeStyleScorer(BaseScorer):
                 "``style_illustration``, ``style_3d``, ``style_cgi``) that sum to ≈ 1.0."
             ),
             version="2",
-            metrics=(
-                MetricSpec(
-                    key="style_photo",
-                    display_name="Photo",
-                    description=(
-                        "Probability that the image is a real photograph (0–1). "
-                        "Values close to 1 indicate a genuine photo; "
-                        "values close to 0 suggest artwork or synthetic imagery."
-                    ),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,
-                ),
-                MetricSpec(
-                    key="style_anime",
-                    display_name="Anime",
-                    description=("Probability that the image is in anime or manga style (0–1)."),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,
-                ),
-                MetricSpec(
-                    key="style_illustration",
-                    display_name="Illustration",
-                    description=(
-                        "Probability that the image is a digital or hand-drawn illustration (0–1)."
-                    ),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,
-                ),
-                MetricSpec(
-                    key="style_3d",
-                    display_name="3D Render",
-                    description=("Probability that the image is a 3D rendered image (0–1)."),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,
-                ),
-                MetricSpec(
-                    key="style_cgi",
-                    display_name="CGI",
-                    description=(
-                        "Probability that the image is computer-generated imagery (CGI, 0–1)."
-                    ),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="cafeai_v1",
@@ -190,6 +140,58 @@ class CafeStyleScorer(BaseScorer):
                         "BEiT-based style classifier (cafeai/cafe_style on HuggingFace). "
                         "Trained to distinguish real-life photos, anime, manga/illustration, "
                         "3D renders, and other CGI styles."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="style_photo",
+                            display_name="Photo",
+                            description=(
+                                "Probability that the image is a real photograph (0–1). "
+                                "Values close to 1 indicate a genuine photo; "
+                                "values close to 0 suggest artwork or synthetic imagery."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
+                        MetricSpec(
+                            key="style_anime",
+                            display_name="Anime",
+                            description=(
+                                "Probability that the image is in anime or manga style (0–1)."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
+                        MetricSpec(
+                            key="style_illustration",
+                            display_name="Illustration",
+                            description=(
+                                "Probability that the image is a digital or hand-drawn illustration (0–1)."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
+                        MetricSpec(
+                            key="style_3d",
+                            display_name="3D Render",
+                            description=("Probability that the image is a 3D rendered image (0–1)."),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
+                        MetricSpec(
+                            key="style_cgi",
+                            display_name="CGI",
+                            description=(
+                                "Probability that the image is computer-generated imagery (CGI, 0–1)."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
             ),

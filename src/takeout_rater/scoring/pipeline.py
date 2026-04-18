@@ -2,7 +2,7 @@
 
 Usage example::
 
-    from takeout_rater.scorers.heuristics.simple import SimpleScorer
+    from takeout_rater.scorers.simple import SimpleScorer
 
     scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir)
@@ -128,12 +128,13 @@ def run_scorer(
     # Determine which assets to score
     stream_all_assets = False
     if asset_ids is None:
-        if skip_existing and spec.metrics:
+        variant_metrics = spec.metrics_for_variant(variant_id)
+        if skip_existing and variant_metrics:
             variant_spec = next((v for v in spec.variants if v.variant_id == variant_id), None)
             first_metric = (
                 variant_spec.primary_metric_key
                 if variant_spec is not None and variant_spec.primary_metric_key is not None
-                else spec.metrics[0].key
+                else variant_metrics[0].key
             )
             asset_ids = list_asset_ids_without_score(
                 conn, scorer_id, variant_id, first_metric, scorer_version=scorer_version

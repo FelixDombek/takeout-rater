@@ -37,16 +37,14 @@ takeout-rater/
 | **Scorers** | |
 | `scorers/base.py` | `MetricSpec`, `VariantSpec`, `ScorerSpec`, `BaseScorer` |
 | `scorers/registry.py` | Explicit scorer class list + `list_scorers()` |
-| `scorers/heuristics/blur.py` | Laplacian variance sharpness scorer (Pillow-based) |
-| `scorers/heuristics/luminosity.py` | Exposure / brightness level scorer |
-| `scorers/heuristics/noise.py` | Sensor noise detector |
-| `scorers/heuristics/brisque.py` | BRISQUE no-reference IQA scorer (piq wrapper) |
-| `scorers/adapters/laion.py` | LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP, 0–10 scale) |
-| `scorers/adapters/nsfw.py` | NSFW detector (Falconsai ViT classifier, 0–1 probability) |
-| `scorers/adapters/clip_iqa.py` | CLIP-IQA zero-shot quality scorer (CLIP ViT-L/14, 0–1) |
-| `scorers/adapters/nima.py` | NIMA aesthetic/technical scorer (MobileNet-V2, 1–10) |
-| `scorers/adapters/pyiqa_adapter.py` | PyIQA adapter: MUSIQ, TOPIQ, NIQE (0–1 normalised) |
-| `scorers/adapters/cafe_style.py` | CafeAI style classifier: photo/anime/illustration/3D/CGI probabilities (0–1 each) |
+| `scorers/simple.py` | Simple Pillow scorer: sharpness, brightness/contrast, noise variants |
+| `scorers/brisque.py` | BRISQUE no-reference IQA scorer (piq wrapper) |
+| `scorers/laion.py` | LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP, 0–10 scale) |
+| `scorers/nsfw.py` | NSFW detector (Falconsai ViT classifier, 0–1 probability) |
+| `scorers/clip_iqa.py` | CLIP-IQA zero-shot quality scorer (CLIP ViT-L/14, 0–1) |
+| `scorers/nima.py` | NIMA aesthetic/technical scorer (MobileNet-V2, 1–10) |
+| `scorers/pyiqa_adapter.py` | PyIQA scorer: MUSIQ, TOPIQ, NIQE (0–1 normalised) |
+| `scorers/cafe_style.py` | CafeAI style classifier: photo/anime/illustration/3D/CGI probabilities (0–1 each) |
 | **Scoring pipeline** | |
 | `scoring/pipeline.py` | `run_scorer()` — runs a scorer, writes to `asset_scores` |
 | `scoring/phash.py` | `compute_dhash()`, `compute_phash_all()` — pHash via dhash algorithm |
@@ -87,8 +85,7 @@ takeout-rater/
 
 | Task | Location |
 |---|---|
-| New heuristic scorer | `src/takeout_rater/scorers/heuristics/<name>.py` + entry in `registry.py` |
-| New ML/adapter scorer | `src/takeout_rater/scorers/adapters/<name>.py` + entry in `registry.py` |
+| New scorer | `src/takeout_rater/scorers/<name>.py` + entry in `registry.py` |
 | New CLI sub-command | `src/takeout_rater/cli.py` |
 | New API route | `src/takeout_rater/api/<router>.py` |
 | New Jinja2 template | `src/takeout_rater/ui/templates/<name>.html` |

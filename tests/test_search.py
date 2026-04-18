@@ -262,13 +262,13 @@ class TestEmbedJob:
 
 class TestClipBackbone:
     def test_is_available(self) -> None:
-        from takeout_rater.scorers.adapters.clip_backbone import is_available
+        from takeout_rater.scorers.clip_backbone import is_available
 
         result = is_available()
         assert isinstance(result, bool)
 
     def test_embedding_dim_constant(self) -> None:
-        from takeout_rater.scorers.adapters.clip_backbone import EMBEDDING_DIM
+        from takeout_rater.scorers.clip_backbone import EMBEDDING_DIM
 
         assert EMBEDDING_DIM == 768
 
@@ -276,7 +276,7 @@ class TestClipBackbone:
         """get_clip_model must pass quick_gelu=True to suppress the openai pretrained warning."""
         from unittest.mock import MagicMock  # noqa: PLC0415
 
-        import takeout_rater.scorers.adapters.clip_backbone as backbone  # noqa: PLC0415
+        import takeout_rater.scorers.clip_backbone as backbone  # noqa: PLC0415
 
         create_calls: list[dict] = []
 

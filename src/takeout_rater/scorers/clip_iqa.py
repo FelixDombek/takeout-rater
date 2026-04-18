@@ -93,19 +93,6 @@ class CLIPIQAScorer(BaseScorer):
                 "matches 'Good photo.' over 'Bad photo.' using CLIP ViT-L/14."
             ),
             version="2",
-            metrics=(
-                MetricSpec(
-                    key="clip_quality",
-                    display_name="CLIP Quality",
-                    description=(
-                        "Zero-shot perceptual quality score (0–1, higher is better). "
-                        "Derived from CLIP ViT-L/14 text–image cosine similarity."
-                    ),
-                    min_value=0.0,
-                    max_value=1.0,
-                    higher_is_better=True,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="vit_l14_openai",
@@ -113,6 +100,19 @@ class CLIPIQAScorer(BaseScorer):
                     description=(
                         "CLIP ViT-L/14 pre-trained on OpenAI's WIT dataset. "
                         "Shared backbone with the aesthetic scorer."
+                    ),
+                    metrics=(
+                        MetricSpec(
+                            key="clip_quality",
+                            display_name="CLIP Quality",
+                            description=(
+                                "Zero-shot perceptual quality score (0–1, higher is better). "
+                                "Derived from CLIP ViT-L/14 text–image cosine similarity."
+                            ),
+                            min_value=0.0,
+                            max_value=1.0,
+                            higher_is_better=True,
+                        ),
                     ),
                 ),
             ),
@@ -149,7 +149,7 @@ class CLIPIQAScorer(BaseScorer):
 
         import torch  # noqa: PLC0415
 
-        from takeout_rater.scorers.adapters.clip_backbone import get_clip_model  # noqa: PLC0415
+        from takeout_rater.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
 
         clip_model, preprocess, tokenizer, device = get_clip_model()
 

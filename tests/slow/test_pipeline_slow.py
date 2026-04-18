@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from takeout_rater.scorers.heuristics.simple import SimpleScorer
+from takeout_rater.scorers.simple import SimpleScorer
 from takeout_rater.scoring.pipeline import run_scorer
 
 FIXTURE_TAKEOUT = Path(__file__).parent.parent / "fixtures" / "takeout_tree" / "Takeout"

@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import json
 import sqlite3
-from collections import defaultdict
 from collections.abc import Generator
 from pathlib import Path
 
@@ -375,12 +374,6 @@ def browse_assets(
     # Build sort options from registered scorer specs, but only include
     # metrics that actually have scored results from a completed run.
     available_triples = list_available_score_metrics_with_variants(conn)
-    # Determine which (scorer_id, metric_key) combos have multiple variants scored —
-    # those need the variant display name in the label to disambiguate.
-    variants_per_scorer_metric: dict[tuple[str, str], int] = defaultdict(int)
-    for sid, _vid, mk in available_triples:
-        variants_per_scorer_metric[(sid, mk)] += 1
-
     spec_by_id = {spec.scorer_id: spec for spec in list_specs()}
     variant_by_key = {
         (spec.scorer_id, v.variant_id): v for spec in list_specs() for v in spec.variants
@@ -390,16 +383,13 @@ def browse_assets(
         spec = spec_by_id.get(scorer_id)
         if spec is None:
             continue
-        metric = next((m for m in spec.metrics if m.key == metric_key), None)
+        variant = variant_by_key.get((scorer_id, variant_id))
+        metric = next((m for m in spec.metrics_for_variant(variant_id) if m.key == metric_key), None)
         if metric is None:
             continue
         value = f"{scorer_id}:{variant_id}:{metric_key}"
-        if variants_per_scorer_metric.get((scorer_id, metric_key), 0) > 1:
-            v_spec = variant_by_key.get((scorer_id, variant_id))
-            v_name = v_spec.display_name if v_spec else variant_id
-            label = f"{spec.display_name} – {v_name} – {metric.display_name}"
-        else:
-            label = f"{spec.display_name} – {metric.display_name}"
+        v_name = variant.display_name if variant else variant_id
+        label = f"{spec.display_name} – {v_name} – {metric.display_name}"
         sort_options.append((value, label))
 
     # Load saved presets for the toolbar
@@ -528,10 +518,10 @@ def _get_clip_vocab_matrix(
             import numpy as np  # noqa: PLC0415
             import torch  # noqa: PLC0415
 
-            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
                 get_clip_model,
             )
-            from takeout_rater.scorers.adapters.clip_vocab import (  # noqa: PLC0415
+            from takeout_rater.scorers.clip_vocab import (  # noqa: PLC0415
                 CLIP_VOCAB_TERMS,
             )
         except ImportError:
@@ -592,7 +582,7 @@ def _get_user_tags_matrix(
             import numpy as np  # noqa: PLC0415
             import torch  # noqa: PLC0415
 
-            from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
                 get_clip_model,
             )
         except ImportError:
@@ -845,7 +835,7 @@ async def search_by_image(
     try:
         import torch  # noqa: PLC0415
 
-        from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+        from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
             EMBEDDING_DIM,
             get_clip_model,
         )
@@ -965,7 +955,7 @@ async def analyze_uploaded_image(
         import numpy as np  # noqa: PLC0415
         import torch  # noqa: PLC0415
 
-        from takeout_rater.scorers.adapters.clip_backbone import (  # noqa: PLC0415
+        from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
             EMBEDDING_DIM,
             get_clip_model,
         )

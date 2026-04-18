@@ -8,12 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
-from takeout_rater.scorers.adapters.cafe_style import (
+from takeout_rater.scorers.base import ScorerSpec
+from takeout_rater.scorers.cafe_style import (
     _LABEL_TO_METRIC,
     CafeStyleScorer,
     _preds_to_scores,
 )
-from takeout_rater.scorers.base import ScorerSpec
 
 # ---------------------------------------------------------------------------
 # Expected metric keys
@@ -42,18 +42,18 @@ def test_spec_scorer_id() -> None:
 
 
 def test_spec_has_all_metrics() -> None:
-    keys = {m.key for m in CafeStyleScorer.spec().metrics}
+    keys = {m.key for m in CafeStyleScorer.spec().all_metrics()}
     assert keys == _EXPECTED_METRIC_KEYS
 
 
 def test_spec_all_metrics_are_probabilities() -> None:
-    for m in CafeStyleScorer.spec().metrics:
+    for m in CafeStyleScorer.spec().all_metrics():
         assert m.min_value == 0.0
         assert m.max_value == 1.0
 
 
 def test_spec_all_metrics_higher_is_better() -> None:
-    for m in CafeStyleScorer.spec().metrics:
+    for m in CafeStyleScorer.spec().all_metrics():
         assert m.higher_is_better is True
 
 

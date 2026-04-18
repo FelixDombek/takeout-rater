@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.heuristics.brisque import BRISQUEScorer
+from takeout_rater.scorers.brisque import BRISQUEScorer
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -20,12 +20,12 @@ def test_spec_scorer_id() -> None:
 
 def test_spec_has_brisque_quality_metric() -> None:
     spec = BRISQUEScorer.spec()
-    assert len(spec.metrics) == 1
-    assert spec.metrics[0].key == "brisque_quality"
+    assert len(spec.all_metrics()) == 1
+    assert spec.all_metrics()[0].key == "brisque_quality"
 
 
 def test_spec_range() -> None:
-    m = BRISQUEScorer.spec().metrics[0]
+    m = BRISQUEScorer.spec().all_metrics()[0]
     assert m.min_value == 0.0
     assert m.max_value == 100.0
     assert m.higher_is_better is True
@@ -213,7 +213,7 @@ def test_score_batch_assertion_error_logs_warning(
     scorer = _make_mock_scorer()
 
     with (
-        caplog.at_level(logging.WARNING, logger="takeout_rater.scorers.heuristics.brisque"),
+        caplog.at_level(logging.WARNING, logger="takeout_rater.scorers.brisque"),
         patch("piq.brisque", side_effect=AssertionError("AGGD assertion")),
     ):
         scorer.score_batch([img_path])

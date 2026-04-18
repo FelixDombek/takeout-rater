@@ -52,70 +52,74 @@ class SimpleScorer(BaseScorer):
                 "All metrics are normalised to 0–100."
             ),
             version="1",
-            metrics=(
-                MetricSpec(
-                    key="sharpness",
-                    display_name="Sharpness",
-                    description=(
-                        "Edge-filter variance normalised to 0–100.  "
-                        "Higher values indicate sharper, more in-focus images."
-                    ),
-                    min_value=0.0,
-                    max_value=100.0,
-                    higher_is_better=True,
-                ),
-                MetricSpec(
-                    key="brightness",
-                    display_name="Brightness",
-                    description=(
-                        "Mean greyscale intensity normalised to 0–100.  "
-                        "50 is mid-grey; higher values indicate brighter images."
-                    ),
-                    min_value=0.0,
-                    max_value=100.0,
-                    higher_is_better=True,
-                ),
-                MetricSpec(
-                    key="contrast",
-                    display_name="Contrast",
-                    description=(
-                        "Standard deviation of greyscale pixel values normalised to 0–100.  "
-                        "Higher values indicate images with a wider tonal range."
-                    ),
-                    min_value=0.0,
-                    max_value=100.0,
-                    higher_is_better=True,
-                ),
-                MetricSpec(
-                    key="noise",
-                    display_name="Noise",
-                    description=(
-                        "RMS of the blur-difference image, normalised to 0–100.  "
-                        "Lower values indicate less noise / a cleaner image."
-                    ),
-                    min_value=0.0,
-                    max_value=100.0,
-                    higher_is_better=False,
-                ),
-            ),
             variants=(
                 VariantSpec(
                     variant_id="blur",
                     display_name="Blur / Sharpness",
                     description="Edge-filter variance via Pillow — detects how sharp or blurry a photo is.",
                     primary_metric_key="sharpness",
+                    metrics=(
+                        MetricSpec(
+                            key="sharpness",
+                            display_name="Sharpness",
+                            description=(
+                                "Edge-filter variance normalised to 0–100.  "
+                                "Higher values indicate sharper, more in-focus images."
+                            ),
+                            min_value=0.0,
+                            max_value=100.0,
+                            higher_is_better=True,
+                        ),
+                    ),
                 ),
                 VariantSpec(
                     variant_id="luminosity",
                     display_name="Luminosity / Contrast",
                     description="Mean and std of greyscale intensity via Pillow — measures brightness and tonal range.",
                     primary_metric_key="brightness",
+                    metrics=(
+                        MetricSpec(
+                            key="brightness",
+                            display_name="Brightness",
+                            description=(
+                                "Mean greyscale intensity normalised to 0–100.  "
+                                "50 is mid-grey; higher values indicate brighter images."
+                            ),
+                            min_value=0.0,
+                            max_value=100.0,
+                            higher_is_better=True,
+                        ),
+                        MetricSpec(
+                            key="contrast",
+                            display_name="Contrast",
+                            description=(
+                                "Standard deviation of greyscale pixel values normalised to 0–100.  "
+                                "Higher values indicate images with a wider tonal range."
+                            ),
+                            min_value=0.0,
+                            max_value=100.0,
+                            higher_is_better=True,
+                        ),
+                    ),
                 ),
                 VariantSpec(
                     variant_id="noise",
                     display_name="Noise Level",
                     description="Gaussian blur-difference RMS via Pillow — estimates graininess.",
                     primary_metric_key="noise",
+                    metrics=(
+                        MetricSpec(
+                            key="noise",
+                            display_name="Noise",
+                            description=(
+                                "RMS of the blur-difference image, normalised to 0–100.  "
+                                "Lower values indicate less noise / a cleaner image."
+                            ),
+                            min_value=0.0,
+                            max_value=100.0,
+                            higher_is_better=False,
+                        ),
+                    ),
                 ),
             ),
             default_variant_id="blur",
