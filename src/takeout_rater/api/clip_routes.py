@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Generator
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -139,6 +140,8 @@ def get_embedding_map_progress(request: Request) -> JSONResponse:
 def get_embedding_map(
     request: Request,
     refresh: bool = False,
+    clustering_method: Literal["kmeans", "hdbscan"] = "kmeans",
+    max_clusters: int = Query(24, ge=1, le=200),
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> JSONResponse:
     """Return a 3-D UMAP projection of all stored CLIP embeddings.
@@ -147,7 +150,7 @@ def get_embedding_map(
     1. **StandardScaler** – per-dimension normalisation.
     2. **PCA** – reduce 768 → 50 components to remove noise.
     3. **UMAP** – project 50 → 3 dimensions (``metric="cosine"``).
-    4. **KMeans** – cluster the 3-D points to colour them by group.
+    4. **Clustering** – cluster the 3-D points with K-Means or HDBSCAN.
     5. **Representative** – for each cluster, the asset closest to its
        centroid is selected as the preview thumbnail.
 
@@ -159,6 +162,10 @@ def get_embedding_map(
     refresh : bool
         Pass ``true`` to force recomputation (e.g. after new embeddings have
         been added).
+    clustering_method : "kmeans" | "hdbscan"
+        Algorithm used to group the 3-D points for colouring.
+    max_clusters : int
+        Maximum number of non-noise clusters to show.
 
     Returns
     -------
@@ -177,9 +184,14 @@ def get_embedding_map(
             "total": 500
         }
     """
-    # Return cached result when available and refresh not requested
+    params = {
+        "clustering_method": clustering_method,
+        "max_clusters": max_clusters,
+    }
+
+    # Return cached result when available and refresh not requested.
     cached = getattr(request.app.state, "clip_embedding_map", None)
-    if cached is not None and not refresh:
+    if cached is not None and not refresh and cached.get("params") == params:
         return JSONResponse(cached)
 
     # Initialise progress state visible to the polling endpoint.
@@ -200,11 +212,16 @@ def get_embedding_map(
     rows = load_clip_embeddings_with_relpaths(conn)
     if not rows:
         app_state.clip_map_progress = {"fraction": 1.0, "message": "", "active": False}
-        return JSONResponse({"points": [], "clusters": [], "total": 0})
+        return JSONResponse({"points": [], "clusters": [], "total": 0, "params": params})
 
     from takeout_rater.clustering.embedding_map import build_embedding_map  # noqa: PLC0415
 
-    result = build_embedding_map(rows, progress_callback=_progress)
+    result = build_embedding_map(
+        rows,
+        progress_callback=_progress,
+        clustering_method=clustering_method,
+        max_clusters=max_clusters,
+    )
     app_state.clip_map_progress = {"fraction": 1.0, "message": "Done", "active": False}
     app_state.clip_embedding_map = result
     return JSONResponse(result)

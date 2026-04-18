@@ -436,6 +436,15 @@ class TestClipUserTagsApi:
         assert b"CLIP" in resp.content
         assert b"Custom Tag Terms" in resp.content
 
+    def test_clip_page_has_clustering_controls(self, client_with_db: TestClient) -> None:
+        resp = client_with_db.get("/clip")
+        assert resp.status_code == 200
+        assert b'id="viz-method"' in resp.content
+        assert b'value="kmeans"' in resp.content
+        assert b'value="hdbscan"' in resp.content
+        assert b'id="viz-max-clusters"' in resp.content
+        assert b"max_clusters" in resp.content
+
     def test_clip_page_redirects_without_db(self, client_no_db: TestClient) -> None:
         resp = client_no_db.get("/clip")
         assert resp.status_code in (302, 307)

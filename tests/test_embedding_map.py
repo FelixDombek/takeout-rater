@@ -163,6 +163,30 @@ class TestBuildEmbeddingMap:
         for pt in result["points"]:
             assert "x" in pt and "y" in pt and "z" in pt
 
+    def test_max_clusters_caps_kmeans(self) -> None:
+        from takeout_rater.clustering.embedding_map import build_embedding_map
+
+        n = 25
+        rows = [(i + 1, _make_embedding(i), f"img{i}.jpg") for i in range(n)]
+        result = build_embedding_map(rows, max_clusters=3)
+        assert result["params"]["max_clusters"] == 3
+        assert len(result["clusters"]) <= 3
+
+    def test_hdbscan_method(self) -> None:
+        from takeout_rater.clustering.embedding_map import build_embedding_map
+
+        n = 25
+        rows = [(i + 1, _make_embedding(i), f"img{i}.jpg") for i in range(n)]
+        result = build_embedding_map(rows, clustering_method="hdbscan", max_clusters=4)
+        assert result["params"] == {
+            "clustering_method": "hdbscan",
+            "max_clusters": 4,
+        }
+        assert result["total"] == n
+        assert len(result["points"]) == n
+        non_noise = [cl for cl in result["clusters"] if cl["cluster_id"] >= 0]
+        assert len(non_noise) <= 4
+
 
 # ---------------------------------------------------------------------------
 # API endpoint tests
@@ -197,6 +221,30 @@ class TestEmbeddingMapEndpoint:
         assert data["total"] == n
         assert len(data["points"]) == n
         assert len(data["clusters"]) >= 1
+        assert data["params"] == {
+            "clustering_method": "kmeans",
+            "max_clusters": 24,
+        }
+
+    def test_endpoint_accepts_clustering_params(self, tmp_path: Path) -> None:
+        from takeout_rater.db.connection import open_library_db
+
+        conn = open_library_db(tmp_path)
+        for i in range(20):
+            aid = _insert_asset(conn, f"img{i}.jpg")
+            bulk_upsert_clip_embeddings(conn, [(aid, _make_embedding(i))])
+        app = create_app(tmp_path, conn, db_root=tmp_path)
+        client = TestClient(app, follow_redirects=False)
+
+        r = client.get("/api/clip/embedding-map?clustering_method=hdbscan&max_clusters=3")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["params"] == {
+            "clustering_method": "hdbscan",
+            "max_clusters": 3,
+        }
+        non_noise = [cl for cl in data["clusters"] if cl["cluster_id"] >= 0]
+        assert len(non_noise) <= 3
 
     def test_result_is_cached(self, tmp_path: Path) -> None:
         """Second call without refresh= returns cached result (no recomputation)."""
@@ -213,8 +261,10 @@ class TestEmbeddingMapEndpoint:
         client = TestClient(app, follow_redirects=False)
 
         r1 = client.get("/api/clip/embedding-map")
-        r2 = client.get("/api/clip/embedding-map")
+        r2 = client.get("/api/clip/embedding-map?max_clusters=3")
         assert r1.json()["total"] == r2.json()["total"]
+        assert r1.json()["params"]["max_clusters"] == 24
+        assert r2.json()["params"]["max_clusters"] == 3
         # The cache attribute is set on app.state
         assert getattr(app.state, "clip_embedding_map", None) is not None
 
