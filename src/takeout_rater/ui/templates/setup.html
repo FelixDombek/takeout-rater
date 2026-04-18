@@ -64,6 +64,24 @@
     border-top: 1px solid #eee;
   }
   .change-section h2 { font-size: 1rem; color: #444; margin-bottom: 0.5rem; }
+  .library-list {
+    display: grid;
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+  }
+  .library-row {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 0.7rem;
+  }
+  .library-row strong { display: block; margin-bottom: 0.25rem; }
+  .library-path {
+    font-family: monospace;
+    font-size: 0.82rem;
+    color: #555;
+    word-break: break-all;
+    margin-bottom: 0.5rem;
+  }
 </style>
 {% endblock %}
 
@@ -74,7 +92,7 @@
     takeout-rater needs to know where your photo albums live.<br>
     Point it at the directory that <strong>directly contains</strong> your album sub-folders
     (e.g. the <code>Google Photos</code> directory inside a Takeout export, or any folder
-    of albums).
+    of albums). Library databases are stored under <code>{{ app_dir }}</code>.
   </p>
 
   <div class="field-block">
@@ -94,25 +112,6 @@
       Example: <code>/Users/you/takeout/Takeout/Google Photos</code>
       or <code>/Users/you/my-photos</code> — the folder that contains your album
       sub-folders directly.
-    </p>
-  </div>
-
-  <div class="field-block">
-    <label class="field-label" for="db-root-input">Database location <span style="font-weight:normal;color:#888;">(optional)</span></label>
-    <div class="path-row">
-      <input
-        type="text"
-        id="db-root-input"
-        placeholder="Leave blank to store alongside photos"
-        value="{{ current_db_root or '' }}"
-        autocomplete="off"
-        spellcheck="false"
-      >
-      <button class="btn" id="btn-pick-db" title="Open folder browser for DB location">Browse…</button>
-    </div>
-    <p class="hint">
-      Where to store the <code>takeout-rater/</code> state directory (database, thumbnails).
-      Leave blank to store it inside the photos folder.
     </p>
   </div>
 
@@ -149,24 +148,26 @@
   <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e0e0e0;">
 
   <div>
-    <h2 style="font-size:1rem; margin-bottom:0.3rem;">Load existing library</h2>
+    <h2 style="font-size:1rem; margin-bottom:0.3rem;">Known libraries</h2>
     <p style="font-size:0.85rem; color:#666; margin-bottom:0.75rem;">
-      Switch to a takeout-rater library that has already been indexed, without re-importing.
-      Point to the folder that contains the <code>takeout-rater/</code> sub-directory.
+      Switch to a library this app has already opened.
     </p>
-    <div class="path-row">
-      <input type="text" id="switch-db-root-input" class="path-input"
-             placeholder="/path/to/folder-containing-takeout-rater-dir">
-      <button class="btn" id="btn-pick-switch-db">Browse…</button>
+    {% if known_libraries %}
+    <div class="library-list">
+      {% for library in known_libraries %}
+      <div class="library-row">
+        <strong>{{ library.name }}</strong>
+        <div class="library-path">{{ library.photos_root }}</div>
+        <button
+          class="btn btn-primary btn-load-library"
+          data-library-id="{{ library.id }}"
+        >Load library</button>
+      </div>
+      {% endfor %}
     </div>
-    <div class="path-row" style="margin-top:0.5rem;">
-      <input type="text" id="switch-photos-root-input" class="path-input"
-             placeholder="/path/to/google-photos-folder">
-      <button class="btn" id="btn-pick-switch-photos">Browse…</button>
-    </div>
-    <div class="actions" style="margin-top:0.75rem;">
-      <button class="btn btn-primary" id="btn-switch-library">Load library</button>
-    </div>
+    {% else %}
+    <p style="font-size:0.85rem; color:#666;">No saved libraries yet.</p>
+    {% endif %}
     <div id="switch-status-msg"></div>
   </div>
 </div>
@@ -174,10 +175,8 @@
 <script>
 (function () {
   var btnPick    = document.getElementById('btn-pick');
-  var btnPickDb  = document.getElementById('btn-pick-db');
   var btnSave    = document.getElementById('btn-save');
   var pathInput  = document.getElementById('path-input');
-  var dbRootInput = document.getElementById('db-root-input');
   var statusMsg  = document.getElementById('status-msg');
 
   function showStatus(msg, cls) {
@@ -250,16 +249,6 @@
     });
   });
 
-  // Native folder picker for DB location
-  btnPickDb.addEventListener('click', function () {
-    btnPickDb.disabled = true;
-    btnPickDb.textContent = 'Opening…';
-    openPicker(dbRootInput).finally(function () {
-      btnPickDb.disabled = false;
-      btnPickDb.textContent = 'Browse…';
-    });
-  });
-
   // Save path
   btnSave.addEventListener('click', function () {
     var path = pathInput.value.trim();
@@ -267,14 +256,8 @@
       showStatus('Please enter or select a photos folder path first.', 'error');
       return;
     }
-    var dbRoot = dbRootInput.value.trim();
-    if (!dbRoot) {
-      showStatus('Please enter or select where takeout-rater should store its library data.', 'error');
-      return;
-    }
     btnSave.disabled = true;
     var body = { path: path };
-    body.db_root = dbRoot;
     fetch('/api/config/photos-root', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -301,11 +284,6 @@
   });
 
   // ── Switch to existing library ─────────────────────────────────────────────
-  var btnPickSwitchDb = document.getElementById('btn-pick-switch-db');
-  var btnPickSwitchPhotos = document.getElementById('btn-pick-switch-photos');
-  var switchDbRootInput = document.getElementById('switch-db-root-input');
-  var switchPhotosRootInput = document.getElementById('switch-photos-root-input');
-  var btnSwitch = document.getElementById('btn-switch-library');
   var switchStatusMsg = document.getElementById('switch-status-msg');
 
   function showSwitchStatus(msg, cls) {
@@ -313,38 +291,10 @@
     switchStatusMsg.className = cls;
   }
 
-  btnPickSwitchDb.addEventListener('click', function () {
-    btnPickSwitchDb.disabled = true;
-    btnPickSwitchDb.textContent = 'Opening…';
-    openPicker(switchDbRootInput).finally(function () {
-      btnPickSwitchDb.disabled = false;
-      btnPickSwitchDb.textContent = 'Browse…';
-    });
-  });
-
-  btnPickSwitchPhotos.addEventListener('click', function () {
-    btnPickSwitchPhotos.disabled = true;
-    btnPickSwitchPhotos.textContent = 'Opening…';
-    openPicker(switchPhotosRootInput).finally(function () {
-      btnPickSwitchPhotos.disabled = false;
-      btnPickSwitchPhotos.textContent = 'Browse…';
-    });
-  });
-
-  btnSwitch.addEventListener('click', function () {
-    var dbRoot = switchDbRootInput.value.trim();
-    if (!dbRoot) {
-      showSwitchStatus('Please enter or select the folder containing takeout-rater/.', 'error');
-      return;
-    }
-    var photosRoot = switchPhotosRootInput.value.trim();
-    if (!photosRoot) {
-      showSwitchStatus('Please enter or select the photos folder for this library.', 'error');
-      return;
-    }
-    btnSwitch.disabled = true;
-    var switchBody = { db_root: dbRoot };
-    switchBody.photos_root = photosRoot;
+  document.querySelectorAll('.btn-load-library').forEach(function (btnSwitch) {
+    btnSwitch.addEventListener('click', function () {
+      btnSwitch.disabled = true;
+      var switchBody = { library_id: btnSwitch.getAttribute('data-library-id') };
     fetch('/api/config/switch-library', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -364,16 +314,11 @@
         showSwitchStatus('Error: ' + err.message, 'error');
         btnSwitch.disabled = false;
       });
-  });
-
-  [switchDbRootInput, switchPhotosRootInput].forEach(function(el) {
-    el.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { btnSwitch.click(); }
     });
   });
 
   // Allow pressing Enter in the text fields to trigger Save
-  [pathInput, dbRootInput].forEach(function(el) {
+  [pathInput].forEach(function(el) {
     el.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { btnSave.click(); }
     });

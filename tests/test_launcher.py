@@ -128,7 +128,10 @@ def test_get_db_path_returns_none_without_db_root(tmp_path: Path) -> None:
 
     config.write_text(json.dumps({"photos_root": str(photos_root)}), encoding="utf-8")
 
-    with patch.object(launcher, "ROOT", tmp_path):
+    with (
+        patch.object(launcher, "ROOT", tmp_path),
+        patch.object(launcher.Path, "home", return_value=tmp_path / "home"),
+    ):
         result = launcher._get_db_path()
 
     assert result is None
@@ -146,14 +149,20 @@ def test_get_db_path_uses_db_root_when_present(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with patch.object(launcher, "ROOT", tmp_path):
+    with (
+        patch.object(launcher, "ROOT", tmp_path),
+        patch.object(launcher.Path, "home", return_value=tmp_path / "home"),
+    ):
         result = launcher._get_db_path()
 
     assert result == db_root / "takeout-rater" / "library.sqlite"
 
 
 def test_get_db_path_returns_none_when_config_absent(tmp_path: Path) -> None:
-    with patch.object(launcher, "ROOT", tmp_path):
+    with (
+        patch.object(launcher, "ROOT", tmp_path),
+        patch.object(launcher.Path, "home", return_value=tmp_path / "home"),
+    ):
         assert launcher._get_db_path() is None
 
 
@@ -163,7 +172,10 @@ def test_get_db_path_returns_none_when_config_has_no_paths(
     config = tmp_path / ".takeout-rater.json"
     config.write_text("{}", encoding="utf-8")
 
-    with patch.object(launcher, "ROOT", tmp_path):
+    with (
+        patch.object(launcher, "ROOT", tmp_path),
+        patch.object(launcher.Path, "home", return_value=tmp_path / "home"),
+    ):
         assert launcher._get_db_path() is None
 
 
@@ -171,8 +183,29 @@ def test_get_db_path_returns_none_on_malformed_json(tmp_path: Path) -> None:
     config = tmp_path / ".takeout-rater.json"
     config.write_text("not-valid-json", encoding="utf-8")
 
-    with patch.object(launcher, "ROOT", tmp_path):
+    with (
+        patch.object(launcher, "ROOT", tmp_path),
+        patch.object(launcher.Path, "home", return_value=tmp_path / "home"),
+    ):
         assert launcher._get_db_path() is None
+
+
+def test_get_db_path_uses_user_local_config(tmp_path: Path) -> None:
+    db_root = tmp_path / "state"
+    app_dir = tmp_path / "home" / ".takeout_rater"
+    app_dir.mkdir(parents=True)
+    config = app_dir / "config.json"
+    import json
+
+    config.write_text(json.dumps({"db_root": str(db_root)}), encoding="utf-8")
+
+    with (
+        patch.object(launcher, "ROOT", tmp_path / "repo"),
+        patch.object(launcher.Path, "home", return_value=tmp_path / "home"),
+    ):
+        result = launcher._get_db_path()
+
+    assert result == db_root / "takeout-rater" / "library.sqlite"
 
 
 # ---------------------------------------------------------------------------

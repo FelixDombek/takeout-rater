@@ -46,7 +46,7 @@ _UMAP_COMPONENTS = 3
 _UMAP_METRIC = "cosine"
 _MIN_UMAP_N = 15  # UMAP needs at least this many samples to be meaningful
 _MIN_CLUSTERS = 2  # always create at least 2 clusters when n ≥ 2
-_MAX_CLUSTERS = 12  # cap to keep the legend readable
+_MAX_CLUSTERS = 24  # cap to keep the legend readable
 
 # Progress fractions at the end of each stage (cumulative).
 _FRAC_LOADED = 0.03
@@ -66,7 +66,7 @@ def _n_clusters(n: int) -> int:
     """
     if n < 2:
         return 1
-    return min(_MAX_CLUSTERS, max(_MIN_CLUSTERS, int(math.sqrt(n / 2))), n)
+    return min(_MAX_CLUSTERS, max(_MIN_CLUSTERS, int(math.sqrt(n))), n)
 
 
 @contextlib.contextmanager
