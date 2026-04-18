@@ -247,7 +247,7 @@ class TestEmbeddingMapEndpoint:
         assert len(non_noise) <= 3
 
     def test_result_is_cached(self, tmp_path: Path) -> None:
-        """Second call without refresh= returns cached result (no recomputation)."""
+        """Second call with identical params returns cached result."""
         from takeout_rater.db.connection import open_library_db
 
         conn = open_library_db(tmp_path)
@@ -261,12 +261,40 @@ class TestEmbeddingMapEndpoint:
         client = TestClient(app, follow_redirects=False)
 
         r1 = client.get("/api/clip/embedding-map")
-        r2 = client.get("/api/clip/embedding-map?max_clusters=3")
+        assert r1.status_code == 200
+        app.state.clip_embedding_map["cache_sentinel"] = "cached"
+
+        r2 = client.get("/api/clip/embedding-map")
+        assert r2.status_code == 200
         assert r1.json()["total"] == r2.json()["total"]
-        assert r1.json()["params"]["max_clusters"] == 24
-        assert r2.json()["params"]["max_clusters"] == 3
+        assert r2.json()["cache_sentinel"] == "cached"
         # The cache attribute is set on app.state
         assert getattr(app.state, "clip_embedding_map", None) is not None
+
+    def test_clustering_param_change_bypasses_cache(self, tmp_path: Path) -> None:
+        """Changing clustering params recomputes instead of returning cached data."""
+        from takeout_rater.db.connection import open_library_db
+
+        conn = open_library_db(tmp_path)
+        n = 10
+        rows_db = []
+        for i in range(n):
+            aid = _insert_asset(conn, f"img{i}.jpg")
+            rows_db.append((aid, _make_embedding(i)))
+        bulk_upsert_clip_embeddings(conn, rows_db)
+        app = create_app(tmp_path, conn, db_root=tmp_path)
+        client = TestClient(app, follow_redirects=False)
+
+        r1 = client.get("/api/clip/embedding-map")
+        assert r1.status_code == 200
+        app.state.clip_embedding_map["cache_sentinel"] = "cached"
+
+        r2 = client.get("/api/clip/embedding-map?max_clusters=3")
+        assert r2.status_code == 200
+        data = r2.json()
+        assert data["total"] == n
+        assert data["params"]["max_clusters"] == 3
+        assert "cache_sentinel" not in data
 
     def test_refresh_clears_cache(self, tmp_path: Path) -> None:
         from takeout_rater.db.connection import open_library_db
