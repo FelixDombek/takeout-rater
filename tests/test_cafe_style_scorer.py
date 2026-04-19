@@ -85,7 +85,7 @@ def test_is_available_returns_bool() -> None:
 
 
 def test_is_available_false_when_transformers_missing() -> None:
-    import builtins  # noqa: PLC0415
+    import builtins
 
     real_import = builtins.__import__
 
@@ -197,7 +197,7 @@ def _make_mock_scorer(photo_prob: float = 0.8) -> CafeStyleScorer:
 
 
 def test_score_batch_returns_all_metric_keys(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64), color=(200, 150, 100)).save(img_path, "JPEG")
@@ -209,7 +209,7 @@ def test_score_batch_returns_all_metric_keys(tmp_path: Path) -> None:
 
 
 def test_score_batch_photo_probability_correct(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -220,7 +220,7 @@ def test_score_batch_photo_probability_correct(tmp_path: Path) -> None:
 
 
 def test_score_batch_all_values_in_range(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -239,7 +239,7 @@ def test_score_batch_missing_file_returns_zeros(tmp_path: Path) -> None:
 
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     paths = []
     for i in range(3):
@@ -253,7 +253,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 
 def test_score_one(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "img.jpg"
     Image.new("RGB", (32, 32), color=(200, 150, 100)).save(p, "JPEG")

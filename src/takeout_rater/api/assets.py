@@ -52,7 +52,7 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     """
     db_path = request.app.state.db_path
     if db_path is not None:
-        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+        from takeout_rater.db.connection import open_db
 
         conn = open_db(db_path)
         try:
@@ -121,7 +121,7 @@ def _extract_exif_from_image(img: object) -> str | None:
     Returns ``None`` when no EXIF data is present or on any error.
     """
     try:
-        from PIL import ExifTags  # noqa: PLC0415
+        from PIL import ExifTags
     except ImportError:
         return None
 
@@ -178,12 +178,12 @@ def _read_exif_data(photos_root: Path | None, asset: AssetRow) -> str | None:
     if not image_path.exists():
         return None
     try:
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
     except ImportError:
         return None
 
     try:
-        import pillow_heif  # noqa: PLC0415
+        import pillow_heif
 
         pillow_heif.register_heif_opener()
     except ImportError:
@@ -517,13 +517,13 @@ def _get_clip_vocab_matrix(
             return cached
 
         try:
-            import numpy as np  # noqa: PLC0415
-            import torch  # noqa: PLC0415
+            import numpy as np
+            import torch
 
-            from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_backbone import (
                 get_clip_model,
             )
-            from takeout_rater.scoring.scorers.clip_vocab import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_vocab import (
                 CLIP_VOCAB_TERMS,
             )
         except ImportError:
@@ -581,10 +581,10 @@ def _get_user_tags_matrix(
                 return (cached_matrix, cached_terms)
 
         try:
-            import numpy as np  # noqa: PLC0415
-            import torch  # noqa: PLC0415
+            import numpy as np
+            import torch
 
-            from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_backbone import (
                 get_clip_model,
             )
         except ImportError:
@@ -627,9 +627,9 @@ def get_clip_words(
     Returns JSON ``{"words": [{"word": str, "score": float, "user_tag": bool}, ...]}``
     or ``{"words": [], "error": "no_embedding"}`` when no embedding is stored.
     """
-    import struct  # noqa: PLC0415
+    import struct
 
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     top_k = max(1, min(top_k, 100))
 
@@ -728,7 +728,7 @@ def get_similar_assets(
 
     On error an ``"error"`` key is added: ``"no_embedding"`` or ``"no_phash"``.
     """
-    from src.takeout_rater.clustering.similarity import find_similar_by_asset  # noqa: PLC0415
+    from src.takeout_rater.clustering.similarity import find_similar_by_asset
 
     if method not in ("clip", "phash"):
         method = "clip"
@@ -757,7 +757,7 @@ def get_similar_assets(
                 return JSONResponse({**base, "results": [], "error": "no_phash"})
         else:
             from takeout_rater.db.queries import (
-                get_clip_embedding_for_asset as _gce,  # noqa: PLC0415
+                get_clip_embedding_for_asset as _gce,
             )
 
             if _gce(conn, asset_id) is None:
@@ -792,7 +792,7 @@ async def search_by_image(
 
     Returns JSON in the same format as :func:`get_similar_assets`.
     """
-    import io  # noqa: PLC0415
+    import io
 
     if method not in ("clip", "phash"):
         method = "clip"
@@ -806,7 +806,7 @@ async def search_by_image(
         raise HTTPException(status_code=413, detail="Uploaded file too large (max 50 MB).")
 
     try:
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         img = Image.open(io.BytesIO(image_bytes))
         img.load()
@@ -818,10 +818,10 @@ async def search_by_image(
     if method == "phash":
         from src.takeout_rater.clustering.phash import (
             compute_dhash_from_image,
-        )  # noqa: PLC0415
+        )
         from src.takeout_rater.clustering.similarity import (
             find_similar_by_phash_hex,
-        )  # noqa: PLC0415
+        )
 
         try:
             phash_hex = compute_dhash_from_image(img)
@@ -832,12 +832,12 @@ async def search_by_image(
         return JSONResponse({**base, "results": results})
 
     # CLIP path
-    import struct  # noqa: PLC0415
+    import struct
 
     try:
-        import torch  # noqa: PLC0415
+        import torch
 
-        from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.clip_backbone import (
             EMBEDDING_DIM,
             get_clip_model,
         )
@@ -859,7 +859,7 @@ async def search_by_image(
 
     from src.takeout_rater.clustering.similarity import (
         find_similar_by_embedding,
-    )  # noqa: PLC0415
+    )
 
     ref_blob = struct.pack(f"{EMBEDDING_DIM}f", *vec)
     results = find_similar_by_embedding(conn, ref_blob, metric=metric, threshold=threshold)
@@ -879,9 +879,9 @@ def get_clip_embedding(
     Returns ``{"values": [...]}`` or ``{"values": null}`` when no embedding
     has been computed for this asset yet.
     """
-    import struct  # noqa: PLC0415
+    import struct
 
-    from takeout_rater.clustering.embedding_map import _DIM  # noqa: PLC0415
+    from takeout_rater.clustering.embedding_map import _DIM
 
     blob = get_clip_embedding_for_asset(conn, asset_id)
     if blob is None:
@@ -922,7 +922,7 @@ async def analyze_uploaded_image(
           "clip_words": <[{word, score, user_tag}]|null>  // null = model unavailable
         }
     """
-    import io  # noqa: PLC0415
+    import io
 
     top_k = max(1, min(top_k, 100))
 
@@ -932,7 +932,7 @@ async def analyze_uploaded_image(
         raise HTTPException(status_code=413, detail="Uploaded file too large (max 50 MB).")
 
     try:
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         img = Image.open(io.BytesIO(image_bytes))
         img.load()
@@ -943,7 +943,7 @@ async def analyze_uploaded_image(
 
     # ── pHash ──────────────────────────────────────────────────────────────
     try:
-        from src.takeout_rater.clustering.phash import compute_dhash_from_image  # noqa: PLC0415
+        from src.takeout_rater.clustering.phash import compute_dhash_from_image
 
         result["phash"] = compute_dhash_from_image(img)
     except Exception:  # noqa: BLE001
@@ -954,10 +954,10 @@ async def analyze_uploaded_image(
 
     # ── CLIP embedding + words ─────────────────────────────────────────────
     try:
-        import numpy as np  # noqa: PLC0415
-        import torch  # noqa: PLC0415
+        import numpy as np
+        import torch
 
-        from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.clip_backbone import (
             EMBEDDING_DIM,
             get_clip_model,
         )

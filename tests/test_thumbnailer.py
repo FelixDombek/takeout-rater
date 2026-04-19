@@ -87,7 +87,7 @@ def test_generate_thumbnail_from_png(tmp_path: Path) -> None:
 
 def test_generate_thumbnail_respects_max_dimension(tmp_path: Path) -> None:
     """Output dimensions must not exceed THUMB_MAX_PX in either axis."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     # Create a large image: 1024×768
     large_path = tmp_path / "large.jpg"
@@ -104,7 +104,7 @@ def test_generate_thumbnail_respects_max_dimension(tmp_path: Path) -> None:
 
 def test_generate_thumbnail_small_image_not_upscaled(tmp_path: Path) -> None:
     """An image smaller than THUMB_MAX_PX must not be upscaled."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     small_path = tmp_path / "small.jpg"
     Image.new("RGB", (100, 80), color=(200, 200, 200)).save(small_path, "JPEG")
@@ -128,7 +128,7 @@ def test_generate_thumbnail_missing_source_raises(tmp_path: Path) -> None:
 
 def _make_jpeg_with_exif_orientation(path: Path, width: int, height: int, orientation: int) -> None:
     """Save a plain-colour JPEG at *path* with the given EXIF orientation tag."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img = Image.new("RGB", (width, height), color=(200, 100, 50))
     exif = img.getexif()
@@ -166,7 +166,7 @@ def test_generate_thumbnail_exif_orientation(
     expected_h: int,
 ) -> None:
     """Thumbnail dimensions must reflect the EXIF orientation, not raw pixel order."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     src = tmp_path / f"orient_{orientation}.jpg"
     _make_jpeg_with_exif_orientation(src, w, h, orientation)

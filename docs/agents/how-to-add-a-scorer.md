@@ -77,7 +77,7 @@ class MyScorer(BaseScorer):
             List (same length as *image_paths*) of dicts mapping metric key → float.
             On per-image errors, return a safe default (e.g. ``0.0``) rather than raising.
         """
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         results: list[dict[str, float]] = []
         for path in image_paths:
@@ -161,7 +161,7 @@ class MyMLScorer(BaseScorer):
         """
         if self._model is not None:
             return
-        import some_optional_dep  # noqa: PLC0415
+        import some_optional_dep
         self._model = some_optional_dep.load(_MODEL_ID)
 
     def score_batch(
@@ -179,7 +179,7 @@ class MyMLScorer(BaseScorer):
         if not image_paths:
             return []
 
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         self._ensure_loaded()
 

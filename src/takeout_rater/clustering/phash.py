@@ -81,7 +81,7 @@ def compute_dhash(image_path: Path, *, hash_size: int = _HASH_SIZE) -> str:
         OSError: If the image file cannot be opened.
         ImportError: If Pillow is not installed.
     """
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     with Image.open(image_path) as img:
         return compute_dhash_from_image(img, hash_size=hash_size)
@@ -141,7 +141,7 @@ def compute_phash_all(
     # Verify Pillow is available up-front so callers get a clear error message
     # rather than silently writing 0 hashes.
     try:
-        from PIL import Image  # noqa: F401, PLC0415
+        from PIL import Image  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "Pillow is required for perceptual hash computation. "
@@ -151,7 +151,7 @@ def compute_phash_all(
     if asset_ids is None:
         asset_ids = list_asset_ids_without_phash(conn, algo=DHASH_ALGO)
 
-    import logging  # noqa: PLC0415
+    import logging
 
     logger = logging.getLogger(__name__)
 

@@ -17,8 +17,8 @@ from takeout_rater.db.queries import (
     upsert_asset,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.scoring.scorers.simple import SimpleScorer
 from takeout_rater.scoring.pipeline import run_scorer, run_scorer_by_id
+from takeout_rater.scoring.scorers.simple import SimpleScorer
 
 FIXTURE_TAKEOUT = Path(__file__).parent / "fixtures" / "takeout_tree" / "Takeout"
 
@@ -49,9 +49,9 @@ def _add_asset(conn: sqlite3.Connection, relpath: str = "Photos/img.jpg") -> int
 
 def _make_thumbnail(thumbs_dir: Path, asset_id: int) -> Path:
     """Create a minimal JPEG thumbnail file and return its path."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
-    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 
     thumb = thumb_path_for_id(thumbs_dir, asset_id)
     thumb.parent.mkdir(parents=True, exist_ok=True)

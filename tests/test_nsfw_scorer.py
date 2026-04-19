@@ -76,7 +76,7 @@ def test_nsfw_scorer_score_batch_with_mock_pipeline(tmp_path) -> None:
     The transformers pipeline is replaced with a lightweight fake so this test
     runs without downloading any model weights.
     """
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64), color=(200, 150, 100)).save(img_path, "JPEG")

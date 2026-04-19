@@ -85,7 +85,7 @@ def _load_embeddings(
     Returns:
         ``(valid_asset_ids, matrix)`` where *matrix* has shape ``(n, _DIM)``.
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     valid_ids: list[int] = []
     vecs: list[object] = []
@@ -199,7 +199,7 @@ def _find_representative(
     Returns:
         The asset_id of the most central member.
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     if len(members) == 1:
         return members[0]
@@ -237,7 +237,7 @@ def _compute_diameter_clip(
     Returns:
         Maximum pairwise distance (float).
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     if len(members) <= 1:
         return 0.0
@@ -334,7 +334,7 @@ def build_clip_clusters(
             f"Unsupported metric {metric!r}. Must be 'cosine', 'euclidean', or 'combined'."
         )
 
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     params: dict[str, float | str | bool] = {"metric": metric, "threshold": threshold}
     if single_linkage:

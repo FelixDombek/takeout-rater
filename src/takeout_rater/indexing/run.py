@@ -145,25 +145,25 @@ def run_index(
     Returns:
         The final :class:`IndexProgress` describing what was indexed.
     """
-    import threading  # noqa: PLC0415
+    import threading
 
-    from takeout_rater.db.connection import (  # noqa: PLC0415
+    from src.takeout_rater.clustering.phash import (
+        DHASH_ALGO,
+        compute_dhash_from_image,
+    )
+    from takeout_rater.db.connection import (
         library_db_path,
         library_state_dir,
         open_db,
     )
-    from takeout_rater.db.queries import lookup_sha256, upsert_asset  # noqa: PLC0415
-    from takeout_rater.indexing.scanner import scan_photos_tree  # noqa: PLC0415
-    from takeout_rater.indexing.sidecar import parse_sidecar  # noqa: PLC0415
-    from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
+    from takeout_rater.db.queries import lookup_sha256, upsert_asset
+    from takeout_rater.indexing.scanner import scan_photos_tree
+    from takeout_rater.indexing.sidecar import parse_sidecar
+    from takeout_rater.indexing.thumbnailer import (
         generate_thumbnail,
         generate_thumbnail_from_image,
         thumb_path_for_id,
     )
-    from src.takeout_rater.clustering.phash import (
-        DHASH_ALGO,
-        compute_dhash_from_image,
-    )  # noqa: PLC0415
 
     if db_root is None:
         raise ValueError("db_root is required")
@@ -188,7 +188,7 @@ def run_index(
 
     def _warmup_clip() -> None:
         try:
-            from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_backbone import (
                 get_clip_model,
                 is_available,
             )
@@ -352,7 +352,7 @@ def run_index(
                 # Link the asset to its album (the top-level directory it lives in).
                 parts = Path(relpath).parts
                 if len(parts) > 1:
-                    from takeout_rater.db.queries import (  # noqa: PLC0415
+                    from takeout_rater.db.queries import (
                         link_asset_to_album,
                         upsert_album,
                     )
@@ -391,9 +391,9 @@ def run_index(
         if is_new or not thumb.exists():
             if file_bytes:
                 try:
-                    import io  # noqa: PLC0415
+                    import io
 
-                    from PIL import Image  # noqa: PLC0415
+                    from PIL import Image
 
                     full_img = Image.open(io.BytesIO(file_bytes))
                     thumb_img = generate_thumbnail_from_image(full_img, thumb)
@@ -420,9 +420,9 @@ def run_index(
         if needs_phash or needs_clip:
             if thumb_img is None and thumb.exists():
                 try:
-                    import io  # noqa: PLC0415
+                    import io
 
-                    from PIL import Image  # noqa: PLC0415
+                    from PIL import Image
 
                     thumb_img = Image.open(io.BytesIO(thumb.read_bytes()))
                 except ImportError:
@@ -440,7 +440,7 @@ def run_index(
                     try:
                         from takeout_rater.db.queries import (
                             upsert_phash,
-                        )  # noqa: PLC0415
+                        )
 
                         dhash_hex = compute_dhash_from_image(thumb_img)
                         wconn2 = open_db(db_path)
@@ -457,12 +457,12 @@ def run_index(
                     # Compute CLIP embedding from thumbnail.
                     _log.debug("CLIP inference start for %r", relpath)
                     try:
-                        import struct  # noqa: PLC0415
+                        import struct
 
-                        import torch  # noqa: PLC0415
+                        import torch
 
                         from takeout_rater.scoring.scorers.clip_backbone import (
-                            get_clip_model,  # noqa: PLC0415
+                            get_clip_model,
                         )
 
                         model, preprocess, _tokenizer, device = get_clip_model()

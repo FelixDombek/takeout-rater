@@ -51,8 +51,8 @@ def cluster_faces(
     Returns:
         Number of person clusters created.
     """
-    import numpy as np  # noqa: PLC0415
-    from sklearn.cluster import DBSCAN  # noqa: PLC0415
+    import numpy as np
+    from sklearn.cluster import DBSCAN
 
     # Load face embeddings
     if detection_run_id is not None:

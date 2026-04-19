@@ -30,7 +30,7 @@ def test_index_command_empty_dir_returns_zero(tmp_path: Path) -> None:
 
 def test_index_command_db_root_option(tmp_path: Path) -> None:
     """--db-root places the state directory in the specified folder."""
-    from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
+    from takeout_rater.db.connection import library_db_path
 
     photos = tmp_path / "photos"
     photos.mkdir()
@@ -49,8 +49,8 @@ def test_index_command_db_root_option(tmp_path: Path) -> None:
 
 def test_run_index_separate_db_root(tmp_path: Path) -> None:
     """run_index with db_root different from photos_root stores DB in db_root."""
-    from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.db.connection import library_db_path
+    from takeout_rater.indexing.run import run_index
 
     photos_root = tmp_path / "photos"
     photos_root.mkdir()

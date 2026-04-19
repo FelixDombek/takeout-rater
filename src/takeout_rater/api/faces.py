@@ -30,7 +30,7 @@ def _get_conn(request: Request):  # noqa: ANN202
     """Return a DB connection, preferring the thread-safe db_path."""
     db_path = getattr(request.app.state, "db_path", None)
     if db_path is not None:
-        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+        from takeout_rater.db.connection import open_db
 
         return open_db(db_path)
     return request.app.state.db_conn
@@ -45,7 +45,7 @@ def _get_conn(request: Request):  # noqa: ANN202
 def list_detection_runs(request: Request) -> JSONResponse:
     """Return all face detection runs."""
     _require_db(request)
-    from takeout_rater.db.queries import list_face_detection_runs  # noqa: PLC0415
+    from takeout_rater.db.queries import list_face_detection_runs
 
     conn = _get_conn(request)
     runs = list_face_detection_runs(conn)
@@ -61,7 +61,7 @@ def list_detection_runs(request: Request) -> JSONResponse:
 def list_cluster_runs(request: Request) -> JSONResponse:
     """Return all face clustering runs."""
     _require_db(request)
-    from takeout_rater.db.queries import list_face_cluster_runs  # noqa: PLC0415
+    from takeout_rater.db.queries import list_face_cluster_runs
 
     conn = _get_conn(request)
     runs = list_face_cluster_runs(conn)
@@ -77,7 +77,7 @@ def list_cluster_runs(request: Request) -> JSONResponse:
 def list_clusters(run_id: int, request: Request) -> JSONResponse:
     """Return all person groups for a face clustering run."""
     _require_db(request)
-    from takeout_rater.db.queries import list_face_clusters_for_run  # noqa: PLC0415
+    from takeout_rater.db.queries import list_face_clusters_for_run
 
     conn = _get_conn(request)
     clusters = list_face_clusters_for_run(conn, run_id)
@@ -93,7 +93,7 @@ def list_clusters(run_id: int, request: Request) -> JSONResponse:
 def get_cluster_detail(cluster_id: int, request: Request) -> JSONResponse:
     """Return all assets in a face cluster (person group)."""
     _require_db(request)
-    from takeout_rater.db.queries import (  # noqa: PLC0415
+    from takeout_rater.db.queries import (
         get_face_cluster_assets,
         get_face_cluster_label,
     )
@@ -117,7 +117,7 @@ class _RenameBody(BaseModel):
 def rename_cluster(cluster_id: int, body: _RenameBody, request: Request) -> JSONResponse:
     """Set the user-assigned label (person name) for a face cluster."""
     _require_db(request)
-    from takeout_rater.db.queries import rename_face_cluster  # noqa: PLC0415
+    from takeout_rater.db.queries import rename_face_cluster
 
     conn = _get_conn(request)
     ok = rename_face_cluster(conn, cluster_id, body.label.strip())
@@ -151,7 +151,7 @@ def similar_photos(
         Maximum number of suggestions.  Default ``50``.
     """
     _require_db(request)
-    from takeout_rater.faces.similarity import find_similar_photos  # noqa: PLC0415
+    from takeout_rater.faces.similarity import find_similar_photos
 
     conn = _get_conn(request)
     results = find_similar_photos(conn, cluster_id, threshold=threshold, limit=limit)
@@ -167,7 +167,7 @@ def similar_photos(
 def face_count_for_asset(asset_id: int, request: Request) -> JSONResponse:
     """Return the number of detected faces for a specific asset."""
     _require_db(request)
-    from takeout_rater.db.queries import count_faces_for_asset  # noqa: PLC0415
+    from takeout_rater.db.queries import count_faces_for_asset
 
     conn = _get_conn(request)
     count = count_faces_for_asset(conn, asset_id)
@@ -183,7 +183,7 @@ def face_count_for_asset(asset_id: int, request: Request) -> JSONResponse:
 def delete_cluster_run(run_id: int, request: Request) -> JSONResponse:
     """Delete a face clustering run and all its clusters."""
     _require_db(request)
-    from takeout_rater.db.queries import delete_face_cluster_run  # noqa: PLC0415
+    from takeout_rater.db.queries import delete_face_cluster_run
 
     conn = _get_conn(request)
     ok = delete_face_cluster_run(conn, run_id)

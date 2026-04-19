@@ -147,9 +147,9 @@ class CLIPIQAScorer(BaseScorer):
         if self._clip_model is not None:
             return
 
-        import torch  # noqa: PLC0415
+        import torch
 
-        from takeout_rater.scoring.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.clip_backbone import get_clip_model
 
         clip_model, preprocess, tokenizer, device = get_clip_model()
 
@@ -204,8 +204,8 @@ class CLIPIQAScorer(BaseScorer):
         if not image_paths:
             return []
 
-        import torch  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
+        import torch
+        from PIL import Image
 
         self._ensure_loaded()
 

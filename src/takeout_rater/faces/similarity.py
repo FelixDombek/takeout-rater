@@ -49,7 +49,7 @@ def find_similar_photos(
         by similarity descending.  Only assets *not* already in the
         cluster are returned.
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     # Get asset IDs in the face cluster
     cluster_asset_rows = conn.execute(

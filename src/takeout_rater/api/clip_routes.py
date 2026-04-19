@@ -39,7 +39,7 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     db_path = request.app.state.db_path
     if db_path is None:
         raise HTTPException(status_code=503, detail="Library not configured.")
-    from takeout_rater.db.connection import open_db  # noqa: PLC0415
+    from takeout_rater.db.connection import open_db
 
     conn = open_db(db_path)
     try:
@@ -218,7 +218,7 @@ def get_embedding_map(
         app_state.clip_map_progress = {"fraction": 1.0, "message": "", "active": False}
         return JSONResponse({"points": [], "clusters": [], "total": 0, "params": params})
 
-    from takeout_rater.clustering.embedding_map import build_embedding_map  # noqa: PLC0415
+    from takeout_rater.clustering.embedding_map import build_embedding_map
 
     result = build_embedding_map(
         rows,

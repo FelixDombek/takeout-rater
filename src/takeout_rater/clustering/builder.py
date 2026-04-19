@@ -32,6 +32,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 
+from src.takeout_rater.clustering.phash import DHASH_ALGO
 from takeout_rater.db.queries import (
     bulk_insert_cluster_members,
     insert_cluster,
@@ -39,7 +40,6 @@ from takeout_rater.db.queries import (
     list_all_phashes,
     update_clustering_run_n_skipped,
 )
-from src.takeout_rater.clustering.phash import DHASH_ALGO
 
 _METHOD = "dhash_hamming"
 

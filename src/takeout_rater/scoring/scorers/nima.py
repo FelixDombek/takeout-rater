@@ -258,8 +258,8 @@ class NIMAScorer(BaseScorer):
                 f"Expected one of: {list(_VARIANT_PYIQA_METRIC)}"
             )
 
-        import pyiqa  # noqa: PLC0415
-        import torch  # noqa: PLC0415
+        import pyiqa
+        import torch
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._model = pyiqa.create_metric(metric_name, device=str(device))
@@ -301,9 +301,9 @@ class NIMAScorer(BaseScorer):
         if not image_paths:
             return []
 
-        import torch  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
-        from torchvision.transforms.functional import to_tensor  # noqa: PLC0415
+        import torch
+        from PIL import Image
+        from torchvision.transforms.functional import to_tensor
 
         self._ensure_loaded()
 

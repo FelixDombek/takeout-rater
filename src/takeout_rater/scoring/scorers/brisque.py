@@ -115,10 +115,10 @@ class BRISQUEScorer(BaseScorer):
             List (same length as *image_paths*) of dicts with key
             ``"brisque_quality"`` → float in ``[0.0, 100.0]``.
         """
-        import piq  # noqa: PLC0415
-        import torch  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
-        from torchvision.transforms.functional import to_tensor  # noqa: PLC0415
+        import piq
+        import torch
+        from PIL import Image
+        from torchvision.transforms.functional import to_tensor
 
         results: list[dict[str, float]] = []
         for path in image_paths:

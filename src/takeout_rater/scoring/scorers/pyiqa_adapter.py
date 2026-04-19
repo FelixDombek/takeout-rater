@@ -221,8 +221,8 @@ class PyIQAScorer(BaseScorer):
         if self._metric is not None:
             return
 
-        import pyiqa  # noqa: PLC0415
-        import torch  # noqa: PLC0415
+        import pyiqa
+        import torch
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         metric_name = _VARIANT_METRIC.get(self.variant_id, self.variant_id)
@@ -269,9 +269,9 @@ class PyIQAScorer(BaseScorer):
         if not image_paths:
             return []
 
-        import torch  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
-        from torchvision.transforms.functional import to_tensor  # noqa: PLC0415
+        import torch
+        from PIL import Image
+        from torchvision.transforms.functional import to_tensor
 
         self._ensure_loaded()
 

@@ -264,7 +264,7 @@ def run_scorer_by_id(
         KeyError: If *scorer_id* is not found in the registry.
         RuntimeError: If the scorer is not available (missing optional deps).
     """
-    from takeout_rater.scoring.scorers.registry import list_scorers  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.registry import list_scorers
 
     cls_map = {cls.spec().scorer_id: cls for cls in list_scorers()}
     if scorer_id not in cls_map:

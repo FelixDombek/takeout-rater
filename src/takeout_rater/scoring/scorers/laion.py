@@ -79,7 +79,7 @@ def _build_mlp(input_dim: int) -> torch.nn.Module:
         An uninitialised ``MLP`` module whose ``layers`` attribute holds the
         ``nn.Sequential`` stack.
     """
-    import torch.nn as nn  # noqa: PLC0415
+    import torch.nn as nn
 
     class MLP(nn.Module):
         def __init__(self) -> None:
@@ -218,7 +218,7 @@ class AestheticScorer(BaseScorer):
     @classmethod
     def _download_mlp_weights(cls) -> Path:
         """Download the aesthetic MLP weights from the first reachable repo."""
-        from huggingface_hub import hf_hub_download  # noqa: PLC0415
+        from huggingface_hub import hf_hub_download
 
         errors: list[Exception] = []
         for repo_id in cls._hf_repo_candidates():
@@ -251,9 +251,9 @@ class AestheticScorer(BaseScorer):
         ):
             return  # already loaded
 
-        import torch  # noqa: PLC0415
+        import torch
 
-        from takeout_rater.scoring.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.clip_backbone import get_clip_model
 
         clip_model, preprocess, _tokenizer, device = get_clip_model()
 
@@ -286,8 +286,8 @@ class AestheticScorer(BaseScorer):
             *failed_indices* is a ``set[int]`` of positions within *chunk*
             where image loading failed (``OSError``, ``ValueError``).
         """
-        import torch  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
+        import torch
+        from PIL import Image
 
         tensors: list[Any] = []
         failed: set[int] = set()
@@ -342,8 +342,8 @@ class AestheticScorer(BaseScorer):
         if not image_paths:
             return []
 
-        import torch  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
+        import torch
+        from PIL import Image
 
         self._ensure_loaded()
 
