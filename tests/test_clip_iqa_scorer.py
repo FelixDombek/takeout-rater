@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.clip_iqa import CLIPIQAScorer
+from takeout_rater.scoring.scorers.clip_iqa import CLIPIQAScorer
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -80,7 +80,7 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch) -> None:
     """_ensure_loaded must pass force_quick_gelu=True via the shared clip_backbone."""
     import torch  # noqa: PLC0415
 
-    import takeout_rater.scorers.clip_backbone as backbone  # noqa: PLC0415
+    import takeout_rater.scoring.scorers.clip_backbone as backbone  # noqa: PLC0415
 
     fake_model = MagicMock()
     fake_model.logit_scale = torch.tensor(1.0)

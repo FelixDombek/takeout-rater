@@ -39,7 +39,7 @@ from takeout_rater.db.queries import (
     list_all_phashes,
     update_clustering_run_n_skipped,
 )
-from takeout_rater.scoring.phash import DHASH_ALGO
+from src.takeout_rater.clustering.phash import DHASH_ALGO
 
 _METHOD = "dhash_hamming"
 

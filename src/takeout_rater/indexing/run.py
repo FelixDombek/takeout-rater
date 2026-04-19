@@ -160,7 +160,7 @@ def run_index(
         generate_thumbnail_from_image,
         thumb_path_for_id,
     )
-    from takeout_rater.scoring.phash import (
+    from src.takeout_rater.clustering.phash import (
         DHASH_ALGO,
         compute_dhash_from_image,
     )  # noqa: PLC0415
@@ -188,7 +188,7 @@ def run_index(
 
     def _warmup_clip() -> None:
         try:
-            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
                 get_clip_model,
                 is_available,
             )
@@ -461,7 +461,7 @@ def run_index(
 
                         import torch  # noqa: PLC0415
 
-                        from takeout_rater.scorers.clip_backbone import (
+                        from takeout_rater.scoring.scorers.clip_backbone import (
                             get_clip_model,  # noqa: PLC0415
                         )
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
 
 _logger = logging.getLogger(__name__)
 
@@ -42,16 +42,11 @@ class BRISQUEScorer(BaseScorer):
             scorer_id="brisque",
             display_name="BRISQUE Quality",
             description=(
-                "Uses a statistical model of what natural, undistorted images look like to "
-                "spot distortions such as blur, noise, and compression artefacts — without "
-                "needing a reference image. Photos that match natural image statistics score "
-                "higher. The algorithm parameters are pre-fitted and built in, so no download "
-                "is required."
-            ),
-            technical_description=(
-                "Estimates perceptual image quality using BRISQUE (Blind/Referenceless "
-                "Image Spatial Quality Evaluator). Detects compression artefacts, "
-                "noise, and blur from local luminance statistics — no ML model required."
+                "Blind/Referenceless Image Spatial Quality Evaluator. Estimates perceptual image "
+                "quality using a statistical model of what natural, undistorted images look like. "
+                "Compression artefacts, noise, and blur are detected from local luminance "
+                "statistics. Photos that match natural image statistics score higher. "
+                "The algorithm parameters are pre-fitted and built in, no ML model required."
             ),
             version="1",
             variants=(

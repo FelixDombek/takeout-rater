@@ -296,7 +296,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
         library_state_dir,
         open_library_db,
     )
-    from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.registry import list_scorers  # noqa: PLC0415
 
     db_root = Path(args.db_root).resolve()
     db_path = library_db_path(db_root)
@@ -316,7 +316,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
 
     # -- pHash computation ---------------------------------------------------
     if args.phash:
-        from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
+        from src.takeout_rater.clustering.phash import compute_phash_all  # noqa: PLC0415
 
         print("Computing perceptual hashes (dhash) …")
 

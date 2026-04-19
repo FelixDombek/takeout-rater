@@ -10,7 +10,7 @@ near-duplicate detection (out of 256 total bits) at this hash size.
 
 Usage::
 
-    from takeout_rater.scoring.phash import compute_dhash, compute_phash_all
+    from takeout_rater.clustering.phash import compute_dhash, compute_phash_all
 
     hex_hash = compute_dhash(Path("thumbnail.jpg"))
     count = compute_phash_all(conn, thumbs_dir, on_progress=print)

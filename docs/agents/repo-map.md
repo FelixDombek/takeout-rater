@@ -34,20 +34,19 @@ takeout-rater/
 | `__main__.py` | Entry point for `python -m takeout_rater` |
 | `cli.py` | `takeout-rater` CLI entry-point: `index`, `score`, `browse`, `cluster`, `export`, `serve`, `rehash` |
 | `config.py` | Library path configuration (read/write Takeout root path) |
-| **Scorers** | |
-| `scorers/base.py` | `MetricSpec`, `VariantSpec`, `ScorerSpec`, `BaseScorer` |
-| `scorers/registry.py` | Explicit scorer class list + `list_scorers()` |
-| `scorers/simple.py` | Simple Pillow scorer: sharpness, brightness/contrast, noise variants |
-| `scorers/brisque.py` | BRISQUE no-reference IQA scorer (piq wrapper) |
-| `scorers/laion.py` | LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP, 0–10 scale) |
-| `scorers/nsfw.py` | NSFW detector (Falconsai ViT classifier, 0–1 probability) |
-| `scorers/clip_iqa.py` | CLIP-IQA zero-shot quality scorer (CLIP ViT-L/14, 0–1) |
-| `scorers/nima.py` | NIMA aesthetic/technical scorer (MobileNet-V2, 1–10) |
-| `scorers/pyiqa_adapter.py` | PyIQA scorer: MUSIQ, TOPIQ, NIQE (0–1 normalised) |
-| `scorers/cafe_style.py` | CafeAI style classifier: photo/anime/illustration/3D/CGI probabilities (0–1 each) |
 | **Scoring pipeline** | |
 | `scoring/pipeline.py` | `run_scorer()` — runs a scorer, writes to `asset_scores` |
-| `scoring/phash.py` | `compute_dhash()`, `compute_phash_all()` — pHash via dhash algorithm |
+| **Scorers** | |
+| `scoring/scorers/base.py` | `MetricSpec`, `VariantSpec`, `ScorerSpec`, `BaseScorer` |
+| `scoring/scorers/registry.py` | Explicit scorer class list + `list_scorers()` |
+| `scoring/scorers/simple.py` | Simple Pillow scorer: sharpness, brightness/contrast, noise variants |
+| `scoring/scorers/brisque.py` | BRISQUE no-reference IQA scorer (piq wrapper) |
+| `scoring/scorers/laion.py` | LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP, 0–10 scale) |
+| `scoring/scorers/nsfw.py` | NSFW detector (Falconsai ViT classifier, 0–1 probability) |
+| `scoring/scorers/clip_iqa.py` | CLIP-IQA zero-shot quality scorer (CLIP ViT-L/14, 0–1) |
+| `scoring/scorers/nima.py` | NIMA aesthetic/technical scorer (MobileNet-V2, 1–10) |
+| `scoring/scorers/pyiqa_adapter.py` | PyIQA scorer: MUSIQ, TOPIQ, NIQE (0–1 normalised) |
+| `scoring/scorers/cafe_style.py` | CafeAI style classifier: photo/anime/illustration/3D/CGI probabilities (0–1 each) |
 | **Indexing** | |
 | `indexing/scanner.py` | `scan_takeout()` — walk Takeout tree, enumerate `AssetFile` objects |
 | `indexing/sidecar.py` | `parse_sidecar()` — parse `*.supplemental-metadata.json` → `SidecarData` |
@@ -60,6 +59,7 @@ takeout-rater/
 | `db/migrations/` | Single consolidated schema: `0001_initial_schema.sql` (version 6) |
 | **Clustering** | |
 | `clustering/builder.py` | `build_clusters()` — pHash-based near-duplicate grouping |
+| `clustering/phash.py` | `compute_dhash()`, `compute_phash_all()` — pHash via dhash algorithm |
 | **API routers** | |
 | `api/assets.py` | Routes: `GET /assets`, `GET /assets/{id}`, `GET /thumbs/{id}`, `GET /api/timeline`, `GET /api/timeline/seek` |
 | `api/clusters.py` | Routes: `GET /clusters`, `GET /clusters/{id}` |

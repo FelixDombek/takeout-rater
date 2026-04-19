@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
 
 # ---------------------------------------------------------------------------
 # Algorithm constants (kept identical to the original individual scorers)

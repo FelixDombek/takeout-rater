@@ -146,7 +146,7 @@ def search_assets(
     # Encode the text query using CLIP
     import torch  # noqa: PLC0415
 
-    from takeout_rater.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
 
     _model, _preprocess, tokenizer, device = get_clip_model()
 

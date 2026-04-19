@@ -15,7 +15,7 @@ from takeout_rater.db.queries import (
     upsert_phash,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.scoring.phash import compute_dhash, compute_phash_all, hamming_distance
+from takeout_rater.clustering.phash import compute_dhash, compute_phash_all, hamming_distance
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

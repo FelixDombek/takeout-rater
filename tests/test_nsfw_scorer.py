@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from takeout_rater.scorers.base import ScorerSpec
-from takeout_rater.scorers.nsfw import NSFWScorer
+from takeout_rater.scoring.scorers.base import ScorerSpec
+from takeout_rater.scoring.scorers.nsfw import NSFWScorer
 
 # ── spec ─────────────────────────────────────────────────────────────────────
 

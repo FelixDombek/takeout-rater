@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.pyiqa_adapter import PyIQAScorer, _to_higher_is_better
+from takeout_rater.scoring.scorers.pyiqa_adapter import PyIQAScorer, _to_higher_is_better
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed

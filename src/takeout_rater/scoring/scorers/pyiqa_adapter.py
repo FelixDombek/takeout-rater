@@ -31,7 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from takeout_rater.scorers.base import (
+from takeout_rater.scoring.scorers.base import (
     BaseScorer,
     MetricSpec,
     ScorerSpec,
@@ -89,7 +89,7 @@ class PyIQAScorer(BaseScorer):
     All output a normalised quality score in [0, 1] (higher = better).
 
     The active variant is selected at construction time via
-    :meth:`~takeout_rater.scorers.base.BaseScorer.create`.
+    :meth:`~takeout_rater.scoring.scorers.base.BaseScorer.create`.
 
     Example::
 

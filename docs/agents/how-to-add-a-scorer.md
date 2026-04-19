@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
 
 
 class MyScorer(BaseScorer):
@@ -104,7 +104,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
 
 #: HuggingFace / other model identifier
 _MODEL_ID = "org/model-name"
@@ -217,7 +217,7 @@ dependencies = [
 Open `src/takeout_rater/scorers/registry.py` and add:
 
 ```python
-from takeout_rater.scorers.my_ml_scorer import MyMLScorer
+from takeout_rater.scoring.scorers.my_ml_scorer import MyMLScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
     # ...existing scorers...

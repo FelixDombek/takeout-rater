@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.nima import (
+from takeout_rater.scoring.scorers.nima import (
     _VARIANT_NATIVE_RANGE,
     _VARIANT_PYIQA_METRIC,
     NIMAScorer,

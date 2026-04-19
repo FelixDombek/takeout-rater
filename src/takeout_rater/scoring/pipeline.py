@@ -2,7 +2,7 @@
 
 Usage example::
 
-    from takeout_rater.scorers.simple import SimpleScorer
+    from takeout_rater.scoring.scorers.simple import SimpleScorer
 
     scorer = SimpleScorer.create(variant_id="blur")
     run_scorer(conn, scorer, thumbs_dir)
@@ -24,7 +24,7 @@ from takeout_rater.db.queries import (
     upsert_asset_scores,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
-from takeout_rater.scorers.base import BaseScorer
+from takeout_rater.scoring.scorers.base import BaseScorer
 
 _logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def run_scorer(
     Args:
         conn: Open library database connection.
         scorer: Instantiated scorer (must have been created via
-            :meth:`~takeout_rater.scorers.base.BaseScorer.create`).
+            :meth:`~takeout_rater.scoring.scorers.base.BaseScorer.create`).
         thumbs_dir: Directory containing pre-generated thumbnail files.
             Thumbnails are used instead of originals for speed.
         asset_ids: Explicit list of asset IDs to score.  When ``None``
@@ -264,7 +264,7 @@ def run_scorer_by_id(
         KeyError: If *scorer_id* is not found in the registry.
         RuntimeError: If the scorer is not available (missing optional deps).
     """
-    from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.registry import list_scorers  # noqa: PLC0415
 
     cls_map = {cls.spec().scorer_id: cls for cls in list_scorers()}
     if scorer_id not in cls_map:

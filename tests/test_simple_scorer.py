@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from takeout_rater.scorers.simple import SimpleScorer
+from takeout_rater.scoring.scorers.simple import SimpleScorer
 
 # ---------------------------------------------------------------------------
 # Spec / metadata

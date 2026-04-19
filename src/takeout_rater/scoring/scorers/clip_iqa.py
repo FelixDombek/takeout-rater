@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from takeout_rater.scorers.base import (
+from takeout_rater.scoring.scorers.base import (
     BaseScorer,
     MetricSpec,
     ScorerSpec,
@@ -149,7 +149,7 @@ class CLIPIQAScorer(BaseScorer):
 
         import torch  # noqa: PLC0415
 
-        from takeout_rater.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
 
         clip_model, preprocess, tokenizer, device = get_clip_model()
 

@@ -11,7 +11,7 @@ The project is a photo rating tool for Google Photos Takeout that can run on Win
 
 As many of the existing photo rating tools are written in Python, I suspect that a Python Backend makes the most sense. The question is whether the whole project can be a single Python app (even when a GUI should be added later), or whether it makes sense to use a client/server architecture with a brower GUI.
 
-The tool, let's call it takeout-rater, should first understand the structure of a Google Photos takeout. It should then be possible to let it run on specific subsets or the whole takeout, e.g. a year, an album, or many of those. It should be possible to browse the library with a simple explorer like view, going by year/month or album. The question is also, once the selected photo rating tools were run, where to store the resulting scores. I would rather not touch the original EXIF tags of the images, so the options are a JSON file per folder with metadata for each photo, or a simple database, where it is important that more metadata, e.g. a new scorer result, can be added later, so not sure whether nosql or a simple sqlite makes more sense. 
+The tool, let's call it takeout-rater, should first understand the structure of a Google Photos takeout. It should then be possible to let it run on specific subsets or the whole takeout, e.g. a year, an album, or many of those. It should be possible to browse the library with a simple explorer like view, going by year/month or album. The question is also, once the selected photo rating tools were run, where to store the resulting scores. I would rather not touch the original EXIF tags of the images, so the options are a JSON file per folder with metadata for each photo, or a simple database, where it is important that more metadata, e.g. a new scorer result, can be added later, so not sure whether nosql or a simple sqlite makes more sense.
 
 It should be possible to somehow view the photos sorted by score (or one of the scores, if multiple are available). Also find a good selection of initial scorer tools to add to the project.
 
@@ -161,11 +161,11 @@ You need a stable key for “this photo” that survives:
 - multiple takeouts merged
 
 Common approaches:
-1. **content hash (sha256) of file bytes**  
+1. **content hash (sha256) of file bytes**
    - Very stable, but expensive on huge libraries unless cached.
-2. **(relative_path + file_size + mtime)**  
+2. **(relative_path + file_size + mtime)**
    - Fast, but can break if files move or timestamps differ.
-3. **hybrid (recommended)**  
+3. **hybrid (recommended)**
    - Use relative path as “primary locator”
    - Compute hash lazily (only when needed) and store it
    - Deduplicate by hash when available
@@ -298,13 +298,13 @@ If “simple source code changes” is a priority and you want to keep the proje
 
 1. **Do you want to support videos too**, or photos only initially?
 2. **HEIC support**: do you need to read HEIC/HEIF out of the box on Windows? (This impacts dependencies.)
-3. **How “offline” should this be?**  
+3. **How “offline” should this be?**
    - Is it acceptable to download ML models on first run?
-4. **Is the takeout immutable on disk**, or do you plan to reorganize files after rating?  
+4. **Is the takeout immutable on disk**, or do you plan to reorganize files after rating?
    - If you move files, we should lean harder on content hashes for identity.
-5. **What is your target scale?**  
+5. **What is your target scale?**
    - 10k, 100k, 500k+ assets changes thumbnail and hashing strategy.
-6. **What does “worthy of posting online” mean for you?**  
+6. **What does “worthy of posting online” mean for you?**
    - Pure aesthetics? Also privacy (faces), uniqueness (no duplicates), and technical quality?
 
 Answering those will let me recommend:
@@ -744,7 +744,7 @@ This is the single biggest “agent multiplier” because it prevents the agent 
 
 ## A few final questions (small but important)
 
-1. **Do you want the UI to directly browse the takeout folders (read-only) or do you want an “import/index” step that copies nothing but builds DB + thumbnails?**  
+1. **Do you want the UI to directly browse the takeout folders (read-only) or do you want an “import/index” step that copies nothing but builds DB + thumbnails?**
    - I recommend “index in place (read-only)” with DB + cache beside it or in `%LOCALAPPDATA%/takeout-rater/`.
 
 2. **Where should the SQLite DB live by default?**
@@ -980,7 +980,7 @@ This lets you ship heavy scorers as optional extras without breaking the app:
 Once the internal system is stable, you can allow third-party scorers without editing `registry.py` by using Python package entry points:
 
 - Packages can expose:
-  - `takeout_rater.scorers` entry point group
+  - `takeout_rater.scoring.scorers` entry point group
 - At runtime you load entry points and merge them into the registry.
 
 **Tradeoff:** More moving parts, but great for an ecosystem later.
@@ -1168,7 +1168,7 @@ Then `registry.py` imports all specs and registers them.
 
 ### v2: entry-point plugins (optional)
 Once stable, you can allow external packages to contribute `ScorerSpec`s via entry points:
-- group: `takeout_rater.scorers`
+- group: `takeout_rater.scoring.scorers`
 - value: module path to a `get_scorer_spec()` function
 
 This is excellent later, but I’d keep v1 internal.
@@ -1279,7 +1279,7 @@ You store *two separate fields*:
 - `metric_key = "overall"`
 - `value = 7.3`
 
-This is like a two-part key. In the UI you show it as:  
+This is like a two-part key. In the UI you show it as:
 - **rsinema_aesthetic / overall**
 
 **Pros**
@@ -1408,8 +1408,8 @@ To proceed I need one missing piece: **which GitHub repository (owner/name) shou
 
 Reply with one of these:
 
-1) **Create in an existing repo**: give `owner/repo` (and default branch name if not `main`)  
-2) **You will create the empty repo first** and tell me `owner/repo`  
+1) **Create in an existing repo**: give `owner/repo` (and default branch name if not `main`)
+2) **You will create the empty repo first** and tell me `owner/repo`
 3) If you don’t want GitHub changes yet, I can still draft the design doc + repo skeleton files here for you to paste.
 
 Once you provide `owner/repo`, I will:
@@ -1421,12 +1421,12 @@ Once you provide `owner/repo`, I will:
 - include templates for adding scorers (spec/adapter + tests)
 
 Confirm also:
-- Python version target (recommend **3.11** or **3.12**)  
+- Python version target (recommend **3.11** or **3.12**)
 - License (MIT/Apache-2.0/other) or “leave unlicensed for now”
 
 ## @FelixDombek
 
-3.12. GPL. 
+3.12. GPL.
 
 ## Copilot
 
@@ -1458,7 +1458,7 @@ git push origin main
 ```
 
 ### Then tell me
-1) What is the default branch name after initialization (`main` or `master`)?  
+1) What is the default branch name after initialization (`main` or `master`)?
 2) Confirm you still want **GPLv3** specifically (you said “GPL”, so I’ll default to GPL-3.0 unless you prefer GPL-2.0 or AGPL).
 
 Once that’s done, I’ll create the PR that adds:
@@ -1515,7 +1515,7 @@ Suggested structure:
 This makes it easy for future agents to diff “what we intended” vs “what exists”.
 
 ### Option B: keep it outside the repo
-Save as an `.md` file in the sibling `takeout-rater/` app-data directory next to your `Takeout/`.  
+Save as an `.md` file in the sibling `takeout-rater/` app-data directory next to your `Takeout/`.
 Useful if you want the repo to stay “cleaner”, but less discoverable for contributors.
 
 ### How to export from GitHub Copilot Chat / web UI
@@ -1529,10 +1529,10 @@ It depends on the UI you’re using:
 
 ### If you want, I can generate the Markdown for you
 Tell me which you prefer:
-1) **Full verbatim transcript** (everything, long), or  
+1) **Full verbatim transcript** (everything, long), or
 2) **Curated transcript** (keeps all key technical decisions + questions/answers, trims acknowledgements)
 
-And confirm the target path (e.g. `docs/history/chat-2026-03-21.md`).  
+And confirm the target path (e.g. `docs/history/chat-2026-03-21.md`).
 If you want it committed to `FelixDombek/takeout-rater`, I can prepare it as part of the ongoing PR or as a follow-up PR once the bootstrap PR is open.
 
 ## @FelixDombek

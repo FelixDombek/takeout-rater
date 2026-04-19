@@ -170,7 +170,7 @@ def test_build_clusters_just_above_threshold_no_cluster() -> None:
     h1 = "0000000000000000"
     # Create hash with 11 bits set: 0x7FF = 0000 0000 0000 07FF → last 11 bits set
     h2 = f"{0x7FF:016x}"
-    from takeout_rater.scoring.phash import hamming_distance  # noqa: PLC0415
+    from takeout_rater.clustering.phash import hamming_distance  # noqa: PLC0415
 
     dist = hamming_distance(h1, h2)
     assert dist == 11, f"Expected 11 bit difference, got {dist}"

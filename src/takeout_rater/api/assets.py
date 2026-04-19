@@ -34,7 +34,7 @@ from takeout_rater.db.queries import (
     list_view_presets,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
-from takeout_rater.scorers.registry import list_specs
+from takeout_rater.scoring.scorers.registry import list_specs
 
 router = APIRouter()
 
@@ -520,10 +520,10 @@ def _get_clip_vocab_matrix(
             import numpy as np  # noqa: PLC0415
             import torch  # noqa: PLC0415
 
-            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
                 get_clip_model,
             )
-            from takeout_rater.scorers.clip_vocab import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_vocab import (  # noqa: PLC0415
                 CLIP_VOCAB_TERMS,
             )
         except ImportError:
@@ -584,7 +584,7 @@ def _get_user_tags_matrix(
             import numpy as np  # noqa: PLC0415
             import torch  # noqa: PLC0415
 
-            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
                 get_clip_model,
             )
         except ImportError:
@@ -728,7 +728,7 @@ def get_similar_assets(
 
     On error an ``"error"`` key is added: ``"no_embedding"`` or ``"no_phash"``.
     """
-    from takeout_rater.similarity import find_similar_by_asset  # noqa: PLC0415
+    from src.takeout_rater.clustering.similarity import find_similar_by_asset  # noqa: PLC0415
 
     if method not in ("clip", "phash"):
         method = "clip"
@@ -816,10 +816,10 @@ async def search_by_image(
     base = {"method": method, "metric": metric if method == "clip" else None}
 
     if method == "phash":
-        from takeout_rater.scoring.phash import (
+        from src.takeout_rater.clustering.phash import (
             compute_dhash_from_image,
         )  # noqa: PLC0415
-        from takeout_rater.similarity import (
+        from src.takeout_rater.clustering.similarity import (
             find_similar_by_phash_hex,
         )  # noqa: PLC0415
 
@@ -837,7 +837,7 @@ async def search_by_image(
     try:
         import torch  # noqa: PLC0415
 
-        from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
             EMBEDDING_DIM,
             get_clip_model,
         )
@@ -857,7 +857,7 @@ async def search_by_image(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"CLIP embedding failed: {exc}") from exc
 
-    from takeout_rater.similarity import (
+    from src.takeout_rater.clustering.similarity import (
         find_similar_by_embedding,
     )  # noqa: PLC0415
 
@@ -943,7 +943,7 @@ async def analyze_uploaded_image(
 
     # ── pHash ──────────────────────────────────────────────────────────────
     try:
-        from takeout_rater.scoring.phash import compute_dhash_from_image  # noqa: PLC0415
+        from src.takeout_rater.clustering.phash import compute_dhash_from_image  # noqa: PLC0415
 
         result["phash"] = compute_dhash_from_image(img)
     except Exception:  # noqa: BLE001
@@ -957,7 +957,7 @@ async def analyze_uploaded_image(
         import numpy as np  # noqa: PLC0415
         import torch  # noqa: PLC0415
 
-        from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
             EMBEDDING_DIM,
             get_clip_model,
         )

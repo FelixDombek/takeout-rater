@@ -6,7 +6,7 @@ be extended or filtered in the future.
 
 Usage::
 
-    from takeout_rater.scorers.clip_vocab import CLIP_VOCAB_TERMS
+    from takeout_rater.scoring.scorers.clip_vocab import CLIP_VOCAB_TERMS
 
     # CLIP_VOCAB_TERMS is a flat list[str] ready for tokenisation.
 """

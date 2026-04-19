@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from takeout_rater.scorers.registry import list_scorers, list_specs
+from takeout_rater.scoring.scorers.registry import list_scorers, list_specs
 
 
 def test_list_scorers_returns_list() -> None:

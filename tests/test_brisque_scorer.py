@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.brisque import BRISQUEScorer
+from takeout_rater.scoring.scorers.brisque import BRISQUEScorer
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -213,7 +213,7 @@ def test_score_batch_assertion_error_logs_warning(
     scorer = _make_mock_scorer()
 
     with (
-        caplog.at_level(logging.WARNING, logger="takeout_rater.scorers.brisque"),
+        caplog.at_level(logging.WARNING, logger="takeout_rater.scoring.scorers.brisque"),
         patch("piq.brisque", side_effect=AssertionError("AGGD assertion")),
     ):
         scorer.score_batch([img_path])

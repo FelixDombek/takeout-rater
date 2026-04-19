@@ -390,7 +390,7 @@ def list_available_scorers() -> JSONResponse:
     Each item has ``id``, ``name``, ``description``, ``technical_description``,
     ``version``, ``available``, and ``variants`` (incl. ``metrics``) fields.
     """
-    from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.registry import list_scorers  # noqa: PLC0415
 
     result = []
     for cls in list_scorers():
@@ -462,46 +462,34 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     rerun = body.rerun
 
     def _worker() -> None:
-        from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.registry import list_scorers  # noqa: PLC0415
         from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
         try:
             # ── Run scorers ──────────────────────────────────────────────────
-            # Build the list of (scorer_id, variant_id) pairs to run.
+            # Build the list of (scorer_id, variant_id, display_name) tuples to run.
             # When no specific scorer is requested every available scorer is
-            # run for *all* of its variants (or its single default variant if
-            # the scorer defines no explicit variants).
+            # run for all of its variants.
             if scorer_id:
-                cls_map = {cls.spec().scorer_id: cls for cls in list_scorers()}
-                target_cls = cls_map.get(scorer_id)
-                if target_cls:
-                    spec = target_cls.spec()
-                    if variant_id:
-                        scorer_variant_pairs = [(scorer_id, variant_id)]
-                    elif spec.variants:
-                        scorer_variant_pairs = [(scorer_id, v.variant_id) for v in spec.variants]
-                    else:
-                        scorer_variant_pairs = [(scorer_id, None)]
-                else:
-                    scorer_variant_pairs = [(scorer_id, variant_id)]
+                target_cls = next((cls for cls in list_scorers() if cls.spec().scorer_id == scorer_id), None)
+                spec = target_cls.spec()
+                target_vars = [v for v in spec.variants if v.variant_id == variant_id] if variant_id else spec.variants
+                scorer_variants = [(scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}") for v in target_vars]
             else:
-                scorer_variant_pairs = []
-                for cls in list_scorers(available_only=True):
-                    spec = cls.spec()
-                    if spec.variants:
-                        for v in spec.variants:
-                            scorer_variant_pairs.append((spec.scorer_id, v.variant_id))
-                    else:
-                        scorer_variant_pairs.append((spec.scorer_id, None))
+                scorer_variants = [
+                    (spec.scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}")
+                    for cls in list_scorers(available_only=True)
+                    for spec in [cls.spec()]
+                    for v in spec.variants
+                ]
 
-            total_pairs = len(scorer_variant_pairs)
-            for idx, (sid, vid) in enumerate(scorer_variant_pairs):
+            total_pairs = len(scorer_variants)
+            for idx, (sid, vid, display_name) in enumerate(scorer_variants):
                 if progress.cancel_event.is_set():
                     break
-                _label_name = sid if not vid else f"{sid}:{vid}"
-                _scorer_label = f"{_label_name!r} ({idx + 1}/{total_pairs})"
+                _scorer_label = f"{display_name} ({idx + 1}/{total_pairs})"
                 progress.current_scorer_id = sid
                 progress.current_variant_id = vid or ""
                 progress.message = f"Scoring with {_scorer_label}…"
@@ -1142,7 +1130,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                             from takeout_rater.db.queries import (
                                 upsert_phash,
                             )  # noqa: PLC0415
-                            from takeout_rater.scoring.phash import (  # noqa: PLC0415
+                            from src.takeout_rater.clustering.phash import (  # noqa: PLC0415
                                 DHASH_ALGO,
                                 compute_dhash_from_image,
                             )
@@ -1165,7 +1153,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                             import torch  # noqa: PLC0415
                             from PIL import Image  # noqa: PLC0415
 
-                            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
+                            from takeout_rater.scoring.scorers.clip_backbone import (  # noqa: PLC0415
                                 get_clip_model,
                             )
 
@@ -1283,7 +1271,7 @@ def start_embed_job(request: Request) -> JSONResponse:
             import torch  # noqa: PLC0415
             from PIL import Image  # noqa: PLC0415
 
-            from takeout_rater.scorers.clip_backbone import (
+            from takeout_rater.scoring.scorers.clip_backbone import (
                 get_clip_model,  # noqa: PLC0415
             )
 

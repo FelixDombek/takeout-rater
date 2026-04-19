@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from takeout_rater.scorers.base import (
+from takeout_rater.scoring.scorers.base import (
     BaseScorer,
     MetricSpec,
     ScorerSpec,

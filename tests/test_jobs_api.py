@@ -678,7 +678,7 @@ def test_rescan_full_regenerates_thumbnail_for_direct_photos_root(
     conn.close()
 
     monkeypatch.setattr(
-        "takeout_rater.scorers.clip_backbone.get_clip_model",
+        "takeout_rater.scoring.scorers.clip_backbone.get_clip_model",
         lambda: (_ for _ in ()).throw(ImportError("clip unavailable in test")),
     )
 
@@ -887,7 +887,7 @@ def test_run_index_fills_missing_phash_for_existing_asset(
 
     # Disable CLIP model loading so the warmup thread exits immediately.
     monkeypatch.setattr(
-        "takeout_rater.scorers.clip_backbone.is_available",
+        "takeout_rater.scoring.scorers.clip_backbone.is_available",
         lambda: False,
     )
 
