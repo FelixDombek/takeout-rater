@@ -17,7 +17,7 @@
   <span class="badge badge-faces">
     {{ run.n_faces }} face{{ 's' if run.n_faces != 1 else '' }}
   </span>
-  <span class="badge badge-params">DBSCAN</span>
+  <span class="badge badge-params">{{ run.method | upper }}</span>
   {% if run.params %}
     {% for k, v in run.params.items() %}
     <span class="badge badge-params" title="{{ k }}">{{ k }}={{ v }}</span>

@@ -35,3 +35,6 @@ takeout-rater/
 
 # Local launcher config (stores user-specific paths)
 .takeout-rater.json
+
+# TensorRT DLL folder
+tensorrt_bin

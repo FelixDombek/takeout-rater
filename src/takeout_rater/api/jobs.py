@@ -1617,8 +1617,10 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
 
 
 class _ClusterFacesStartBody(BaseModel):
+    method: str = "hdbscan"  # "hdbscan" | "dbscan"
     eps: float = 0.5
     min_samples: int = 2
+    min_cluster_size: int = 2
     detection_run_id: int | None = None
 
 
@@ -1631,10 +1633,16 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
 
     Body fields
     -----------
+    method : str
+        Clustering algorithm. ``"hdbscan"`` (default) handles variable-density
+        person groups; ``"dbscan"`` uses a fixed cosine-distance radius.
     eps : float
         DBSCAN neighbourhood radius (cosine distance).  Default ``0.5``.
+        Used only when ``method`` is ``"dbscan"``.
     min_samples : int
-        Minimum faces per cluster.  Default ``2``.
+        Minimum samples parameter. Default ``2``.
+    min_cluster_size : int
+        Minimum faces per HDBSCAN cluster. Default ``2``.
     detection_run_id : int, optional
         Restrict to faces from a specific detection run.
 
@@ -1647,8 +1655,13 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="A face clustering job is already running.")
 
+    if body.method not in ("hdbscan", "dbscan"):
+        raise HTTPException(status_code=400, detail="method must be 'hdbscan' or 'dbscan'.")
+
+    method = body.method
     eps = body.eps
     min_samples = body.min_samples
+    min_cluster_size = body.min_cluster_size
     detection_run_id = body.detection_run_id
     progress = JobProgress(job_type="cluster_faces", running=True, message="Starting…")
     jobs["cluster_faces"] = progress
@@ -1676,8 +1689,10 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
             n_clusters = cluster_faces(
                 worker_conn,
                 detection_run_id=detection_run_id,
+                method=method,
                 eps=eps,
                 min_samples=min_samples,
+                min_cluster_size=min_cluster_size,
                 on_progress=_cb,
             )
             progress.message = f"Face clustering complete — {n_clusters} person group(s) found."

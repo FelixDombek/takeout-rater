@@ -303,7 +303,13 @@ class TestFaceClusteringAlgorithm:
             ],
         )
 
-        n = cluster_faces(conn, detection_run_id=det_run, eps=0.3, min_samples=2)
+        n = cluster_faces(
+            conn,
+            detection_run_id=det_run,
+            method="dbscan",
+            eps=0.3,
+            min_samples=2,
+        )
         assert n >= 1  # At least one cluster
 
         runs = list_face_cluster_runs(conn)
@@ -313,8 +319,45 @@ class TestFaceClusteringAlgorithm:
         from takeout_rater.faces.clustering import cluster_faces
 
         conn = _make_db()
-        n = cluster_faces(conn, eps=0.5, min_samples=2)
+        n = cluster_faces(conn, method="dbscan", eps=0.5, min_samples=2)
         assert n == 0
+
+    def test_cluster_faces_hdbscan_groups_similar(self) -> None:
+        import numpy as np
+
+        from takeout_rater.faces.clustering import cluster_faces
+
+        conn = _make_db()
+        det_run = insert_face_detection_run(conn, "buffalo_l", None)
+
+        rng = np.random.RandomState(42)
+        bases = []
+        for _ in range(2):
+            base = rng.randn(EMBEDDING_DIM).astype(np.float32)
+            bases.append(base / np.linalg.norm(base))
+
+        for base_idx, base in enumerate(bases):
+            for item_idx in range(5):
+                aid = _add_asset(conn, f"Photos/person_{base_idx}_{item_idx}.jpg")
+                vec = base + rng.randn(EMBEDDING_DIM).astype(np.float32) * 0.005
+                vec = vec / np.linalg.norm(vec)
+                blob = struct.pack(f"{EMBEDDING_DIM}f", *vec)
+                bulk_insert_face_embeddings(
+                    conn,
+                    [(aid, det_run, 0, 0, 0, 10, 10, 0.9, blob)],
+                )
+
+        n = cluster_faces(
+            conn,
+            detection_run_id=det_run,
+            method="hdbscan",
+            min_cluster_size=2,
+            min_samples=1,
+        )
+
+        assert n >= 2
+        runs = list_face_cluster_runs(conn)
+        assert runs[0]["method"] == "hdbscan"
 
     def test_cluster_faces_with_progress(self) -> None:
         import numpy as np
@@ -342,6 +385,7 @@ class TestFaceClusteringAlgorithm:
         cluster_faces(
             conn,
             detection_run_id=det_run,
+            method="dbscan",
             eps=0.5,
             min_samples=2,
             on_progress=lambda p, t: progress_calls.append((p, t)),
@@ -533,13 +577,19 @@ class TestFacesUIRoutes:
         resp = face_client.get("/faces")
         assert "Detect Faces" in resp.text
         assert "Run Detection" in resp.text
-        assert 'name="face-accelerator"' in resp.text
+        assert 'data-face-accelerator="tensorrt"' in resp.text
+        assert 'data-face-accelerator="gpu"' in resp.text
+        assert 'class="seg-tab active" id="face-accelerator-tensorrt"' in resp.text
         assert "TensorRT" in resp.text
+        assert "CUDA" in resp.text
 
     def test_faces_page_has_face_clustering_card(self, face_client: TestClient) -> None:
         resp = face_client.get("/faces")
         assert "Cluster Faces" in resp.text
         assert "Run Face Clustering" in resp.text
+        assert 'data-face-cluster-method="hdbscan"' in resp.text
+        assert 'data-face-cluster-method="dbscan"' in resp.text
+        assert 'class="seg-tab active" id="face-cluster-method-hdbscan"' in resp.text
 
     def test_faces_page_links_to_face_clustering_runs(
         self, face_client_with_data: TestClient

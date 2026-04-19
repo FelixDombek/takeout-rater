@@ -43,9 +43,15 @@
           <option value="buffalo_l">buffalo_l (best accuracy, ~350 MB)</option>
           <option value="buffalo_sc">buffalo_sc (smaller, faster)</option>
         </select>
-        <span>Backend:</span>
-        <label><input type="radio" name="face-accelerator" value="gpu" checked> GPU (CUDA)</label>
-        <label><input type="radio" name="face-accelerator" value="tensorrt"> TensorRT</label>
+        <label><strong>Backend:</strong></label>
+        <div class="seg-tabs" role="tablist" aria-label="Face detection backend">
+          <button class="seg-tab active" id="face-accelerator-tensorrt" role="tab"
+                  aria-selected="true" data-face-accelerator="tensorrt"
+                  onclick="onFaceAcceleratorChange('tensorrt')">TensorRT</button>
+          <button class="seg-tab" id="face-accelerator-cuda" role="tab"
+                  aria-selected="false" data-face-accelerator="gpu"
+                  onclick="onFaceAcceleratorChange('gpu')">CUDA</button>
+        </div>
         <label for="face-det-thresh">Min confidence:</label>
         <input type="number" id="face-det-thresh" value="0.5" min="0.1" max="1.0" step="0.05" style="width:70px;">
       </div>
@@ -61,14 +67,34 @@
         <button class="btn btn-primary btn-run" id="btn-cluster_faces" onclick="startJob('cluster_faces')">Run Face Clustering</button>
       </div>
       <p class="desc">
-        Group detected faces into <strong>person groups</strong> using DBSCAN clustering with
-        cosine distance on ArcFace embeddings. Requires a completed Face Detection run.
+        Group detected faces into <strong>person groups</strong> using ArcFace embeddings.
+        Requires a completed Face Detection run.
       </p>
       <div class="job-options">
+        <label><strong>Method:</strong></label>
+        <div class="seg-tabs" role="tablist" aria-label="Face clustering method">
+          <button class="seg-tab active" id="face-cluster-method-hdbscan" role="tab"
+                  aria-selected="true" data-face-cluster-method="hdbscan"
+                  onclick="onFaceClusteringMethodChange('hdbscan')">HDBSCAN</button>
+          <button class="seg-tab" id="face-cluster-method-dbscan" role="tab"
+                  aria-selected="false" data-face-cluster-method="dbscan"
+                  onclick="onFaceClusteringMethodChange('dbscan')">DBSCAN</button>
+        </div>
+        <span id="face-cluster-method-desc" style="font-size:0.82rem; color:#666;">
+          variable-density clustering; more conservative with ambiguous faces
+        </span>
+      </div>
+      <div class="job-options" id="face-hdbscan-options">
+        <label for="face-min-cluster-size">Min cluster size:</label>
+        <input type="number" id="face-min-cluster-size" value="2" min="2" max="50" step="1" style="width:60px;">
+        <label for="face-hdbscan-min-samples">Min samples:</label>
+        <input type="number" id="face-hdbscan-min-samples" value="2" min="1" max="50" step="1" style="width:60px;">
+      </div>
+      <div class="job-options" id="face-dbscan-options" style="display:none;">
         <label for="face-eps">DBSCAN eps:</label>
         <input type="number" id="face-eps" value="0.5" min="0.1" max="1.5" step="0.05" style="width:70px;">
-        <label for="face-min-samples">Min samples:</label>
-        <input type="number" id="face-min-samples" value="2" min="1" max="20" step="1" style="width:60px;">
+        <label for="face-dbscan-min-samples">Min samples:</label>
+        <input type="number" id="face-dbscan-min-samples" value="2" min="1" max="50" step="1" style="width:60px;">
       </div>
       <div class="progress-bar-wrap" id="prog-wrap-cluster_faces"><div class="progress-bar" id="prog-bar-cluster_faces"></div></div>
       <div class="job-current-item" id="current-item-cluster_faces"></div>
@@ -112,6 +138,7 @@
             <span class="run-badge run-badge-params">
               {{ run.n_assets }} photo{{ 's' if run.n_assets != 1 else '' }}
             </span>
+            <span class="run-badge run-badge-params">{{ run.method | upper }}</span>
             {% if run.params %}
               {% for k, v in run.params.items() %}
               <span class="run-badge run-badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
@@ -230,16 +257,53 @@
       .catch(function() { /* ignore */ });
   });
 
+  window.onFaceAcceleratorChange = function(accelerator) {
+    document.querySelectorAll('#card-detect_faces .seg-tab[data-face-accelerator]').forEach(function(btn) {
+      var isActive = btn.dataset.faceAccelerator === accelerator;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+  };
+
+  window.onFaceClusteringMethodChange = function(method) {
+    document.querySelectorAll('#card-cluster_faces .seg-tab[data-face-cluster-method]').forEach(function(btn) {
+      var isActive = btn.dataset.faceClusterMethod === method;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    document.getElementById('face-hdbscan-options').style.display = method === 'hdbscan' ? '' : 'none';
+    document.getElementById('face-dbscan-options').style.display = method === 'dbscan' ? '' : 'none';
+    var descEl = document.getElementById('face-cluster-method-desc');
+    if (descEl) {
+      descEl.textContent = method === 'hdbscan'
+        ? 'variable-density clustering; more conservative with ambiguous faces'
+        : 'fixed-radius clustering with a tunable cosine-distance threshold';
+    }
+  };
+
   window.startJob = function(jobType) {
     var body = {};
 
     if (jobType === 'detect_faces') {
+      var activeBackendBtn = document.querySelector(
+        '#card-detect_faces .seg-tab[data-face-accelerator].active'
+      );
       body.model_pack = document.getElementById('face-model').value;
-      body.accelerator = document.querySelector('input[name="face-accelerator"]:checked').value;
+      body.accelerator = activeBackendBtn ? activeBackendBtn.dataset.faceAccelerator : 'tensorrt';
       body.det_thresh = parseFloat(document.getElementById('face-det-thresh').value) || 0.5;
     } else if (jobType === 'cluster_faces') {
-      body.eps = parseFloat(document.getElementById('face-eps').value) || 0.5;
-      body.min_samples = parseInt(document.getElementById('face-min-samples').value, 10) || 2;
+      var activeFaceMethodBtn = document.querySelector(
+        '#card-cluster_faces .seg-tab[data-face-cluster-method].active'
+      );
+      var faceMethod = activeFaceMethodBtn ? activeFaceMethodBtn.dataset.faceClusterMethod : 'hdbscan';
+      body.method = faceMethod;
+      if (faceMethod === 'dbscan') {
+        body.eps = parseFloat(document.getElementById('face-eps').value) || 0.5;
+        body.min_samples = parseInt(document.getElementById('face-dbscan-min-samples').value, 10) || 2;
+      } else {
+        body.min_cluster_size = parseInt(document.getElementById('face-min-cluster-size').value, 10) || 2;
+        body.min_samples = parseInt(document.getElementById('face-hdbscan-min-samples').value, 10) || 2;
+      }
     }
 
     setJobBtn(jobType, true);

@@ -5,6 +5,29 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
+from takeout_rater.scoring.scorers import clip_backbone
+
+
+@pytest.fixture(autouse=True)
+def _reset_clip_backbone_singleton():
+    """Keep shared CLIP model state from leaking across tests."""
+    with clip_backbone._lock:  # noqa: SLF001
+        clip_backbone._clip_model = None  # noqa: SLF001
+        clip_backbone._preprocess = None  # noqa: SLF001
+        clip_backbone._tokenizer = None  # noqa: SLF001
+        clip_backbone._device = None  # noqa: SLF001
+
+    yield
+
+    with clip_backbone._lock:  # noqa: SLF001
+        clip_backbone._clip_model = None  # noqa: SLF001
+        clip_backbone._preprocess = None  # noqa: SLF001
+        clip_backbone._tokenizer = None  # noqa: SLF001
+        clip_backbone._device = None  # noqa: SLF001
+
+
 if os.name == "nt":
     _ORIGINAL_MKDIR = Path.mkdir
 
