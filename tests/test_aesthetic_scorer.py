@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.laion import (
+from takeout_rater.scoring.scorers.laion import (
     _EMBEDDING_DIM,
     _SCORE_BATCH_SIZE,
     AestheticScorer,
@@ -65,7 +65,7 @@ def test_is_available_returns_bool() -> None:
 
 def test_is_available_false_when_open_clip_missing() -> None:
     """is_available() must return False when open_clip cannot be imported."""
-    import builtins  # noqa: PLC0415
+    import builtins
 
     real_import = builtins.__import__
 
@@ -80,7 +80,7 @@ def test_is_available_false_when_open_clip_missing() -> None:
 
 def test_is_available_false_when_torch_missing() -> None:
     """is_available() must return False when torch cannot be imported."""
-    import builtins  # noqa: PLC0415
+    import builtins
 
     real_import = builtins.__import__
 
@@ -99,7 +99,7 @@ def test_is_available_false_when_torch_missing() -> None:
 
 
 def test_hf_repo_candidates_env_first(monkeypatch) -> None:
-    from takeout_rater.scorers import laion
+    from takeout_rater.scoring.scorers import laion
 
     monkeypatch.setenv("TAKEOUT_RATER_AESTHETIC_REPO", "custom/repo")
     candidates = laion.AestheticScorer._hf_repo_candidates()
@@ -109,9 +109,9 @@ def test_hf_repo_candidates_env_first(monkeypatch) -> None:
 
 
 def test_download_mlp_weights_uses_fallback(monkeypatch, tmp_path: Path) -> None:
-    import huggingface_hub  # noqa: PLC0415
+    import huggingface_hub
 
-    from takeout_rater.scorers import laion
+    from takeout_rater.scoring.scorers import laion
 
     repos = ("broken/repo", "working/repo")
     monkeypatch.setattr(
@@ -144,9 +144,9 @@ def test_download_mlp_weights_uses_fallback(monkeypatch, tmp_path: Path) -> None
 
 def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
     """_ensure_loaded must pass force_quick_gelu=True via the shared clip_backbone."""
-    import torch  # noqa: PLC0415
+    import torch
 
-    import takeout_rater.scorers.clip_backbone as backbone  # noqa: PLC0415
+    import takeout_rater.scoring.scorers.clip_backbone as backbone
 
     fake_model = MagicMock()
     fake_model.encode_image.return_value = torch.zeros(1, _EMBEDDING_DIM)
@@ -169,12 +169,12 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(backbone, "_tokenizer", None)
     monkeypatch.setattr(backbone, "_device", None)
 
-    import open_clip  # noqa: PLC0415
+    import open_clip
 
     monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
     monkeypatch.setattr(open_clip, "get_tokenizer", lambda _name: MagicMock())
 
-    from takeout_rater.scorers import laion
+    from takeout_rater.scoring.scorers import laion
 
     monkeypatch.setattr(laion, "_build_mlp", lambda _dim: fake_mlp)
     monkeypatch.setattr(
@@ -183,7 +183,7 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch, tmp_path: Path) -> None:
         lambda self: tmp_path / "weights.pth",
     )
 
-    import torch as torch_mod  # noqa: PLC0415
+    import torch as torch_mod
 
     monkeypatch.setattr(torch_mod, "load", lambda path, map_location=None, weights_only=False: {})
     monkeypatch.setattr(fake_mlp, "load_state_dict", lambda state_dict: None)
@@ -220,7 +220,7 @@ def test_score_batch_empty_returns_empty() -> None:
 
 def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
     """Return an AestheticScorer whose model is fully mocked (no network, no torch)."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     # Create a small test image
     img_path = tmp_path / "test.jpg"
@@ -229,7 +229,7 @@ def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
     scorer = AestheticScorer.create()
 
     # Build a tiny torch tensor mock that behaves like a real embedding
-    import torch  # noqa: PLC0415
+    import torch
 
     # Fake CLIP model: returns a unit-vector embedding for each image in the batch.
     fake_clip = MagicMock()
@@ -260,7 +260,7 @@ def _make_mock_scorer(tmp_path: Path) -> AestheticScorer:
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
     """score_batch must return exactly one result per input path."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     paths = []
     for i in range(3):
@@ -275,7 +275,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 def test_score_batch_returns_aesthetic_key(tmp_path: Path) -> None:
     """Each result dict must contain the 'aesthetic' key."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -288,7 +288,7 @@ def test_score_batch_returns_aesthetic_key(tmp_path: Path) -> None:
 
 def test_score_batch_score_in_range(tmp_path: Path) -> None:
     """Score must be in [0, 10]."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -300,7 +300,7 @@ def test_score_batch_score_in_range(tmp_path: Path) -> None:
 
 def test_score_batch_mock_returns_expected_value(tmp_path: Path) -> None:
     """The mocked scorer should return the value injected by the fake MLP (7.5)."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -320,8 +320,8 @@ def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
 
 def test_score_batch_clamps_above_ten(tmp_path: Path) -> None:
     """Scores above 10 must be clamped to 10.0."""
-    import torch  # noqa: PLC0415
-    from PIL import Image  # noqa: PLC0415
+    import torch
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -335,8 +335,8 @@ def test_score_batch_clamps_above_ten(tmp_path: Path) -> None:
 
 def test_score_batch_clamps_below_zero(tmp_path: Path) -> None:
     """Scores below 0 must be clamped to 0.0."""
-    import torch  # noqa: PLC0415
-    from PIL import Image  # noqa: PLC0415
+    import torch
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -350,7 +350,7 @@ def test_score_batch_clamps_below_zero(tmp_path: Path) -> None:
 
 def test_score_batch_uses_batched_inference(tmp_path: Path) -> None:
     """CLIP encode_image must be called once for N images that fit in one chunk."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     paths = []
     for i in range(5):
@@ -365,7 +365,7 @@ def test_score_batch_uses_batched_inference(tmp_path: Path) -> None:
 
 def test_score_batch_multiple_chunks(tmp_path: Path) -> None:
     """With _SCORE_BATCH_SIZE + 1 images, encode_image must be called exactly twice."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     n = _SCORE_BATCH_SIZE + 1
     paths = []
@@ -388,7 +388,7 @@ def test_score_batch_multiple_chunks(tmp_path: Path) -> None:
 
 def test_score_one(tmp_path: Path) -> None:
     """score_one must return a dict with 'aesthetic' in [0, 10]."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -406,7 +406,7 @@ def test_score_one(tmp_path: Path) -> None:
 
 def test_build_mlp_output_shape() -> None:
     """_build_mlp(768) must map a (1, 768) tensor to a (1, 1) output."""
-    import torch  # noqa: PLC0415
+    import torch
 
     mlp = _build_mlp(_EMBEDDING_DIM)
     mlp.eval()
@@ -439,7 +439,7 @@ def test_build_mlp_state_dict_round_trip(tmp_path: Path) -> None:
     This guards against architecture mismatches where saving and reloading the
     weights (as the real checkpoint loading does) would raise a RuntimeError.
     """
-    import torch  # noqa: PLC0415
+    import torch
 
     mlp = _build_mlp(_EMBEDDING_DIM)
     weights_path = tmp_path / "weights.pth"
@@ -457,7 +457,7 @@ def test_build_mlp_state_dict_round_trip(tmp_path: Path) -> None:
 
 def test_score_batch_encode_image_called_once_per_chunk(tmp_path: Path) -> None:
     """encode_image must be called exactly once per chunk (batching preserved after prefetch)."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     n = _SCORE_BATCH_SIZE + 1  # forces two chunks
     paths = []

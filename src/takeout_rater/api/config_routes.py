@@ -79,7 +79,7 @@ def library_status(request: Request) -> JSONResponse:
     photos_root = request.app.state.photos_root
     db_schema_version: int | None = None
     if db_path is not None:
-        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+        from takeout_rater.db.connection import open_db
 
         conn = open_db(db_path)
         try:
@@ -111,7 +111,7 @@ def _resolve_user_dir(value: str, label: str) -> Path:
     failure.  All user-provided paths in this module are funnelled through
     this function to provide a clear sanitisation barrier for path operations.
     """
-    from fastapi import HTTPException  # noqa: PLC0415
+    from fastapi import HTTPException
 
     # expanduser + resolve canonicalises the path (removes .., resolves links)
     # so there is no path-traversal risk from the raw user string.
@@ -170,7 +170,7 @@ def set_path(body: _PhotosPathBody, request: Request) -> JSONResponse:
     state_dir = library_state_dir(db_root)
     conn = open_library_db(db_root)
     request.app.state.db_conn = conn
-    from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
+    from takeout_rater.db.connection import library_db_path
 
     request.app.state.db_path = library_db_path(db_root)
     request.app.state.db_root = db_root
@@ -250,7 +250,7 @@ def switch_library(body: _SwitchLibraryBody, request: Request) -> JSONResponse:
     state_dir = library_state_dir(db_root_path)
     conn = open_library_db(db_root_path)
     request.app.state.db_conn = conn
-    from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
+    from takeout_rater.db.connection import library_db_path
 
     request.app.state.db_path = library_db_path(db_root_path)
     request.app.state.db_root = db_root_path
@@ -276,8 +276,8 @@ def open_picker() -> JSONResponse:
     manual path entry.
     """
     try:
-        import tkinter as tk  # noqa: PLC0415
-        from tkinter import filedialog  # noqa: PLC0415
+        import tkinter as tk
+        from tkinter import filedialog
     except ImportError as exc:
         from fastapi import HTTPException
 

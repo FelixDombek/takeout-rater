@@ -40,7 +40,7 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     """Dependency: open a per-request DB connection and close it when done."""
     db_path = request.app.state.db_path
     if db_path is not None:
-        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+        from takeout_rater.db.connection import open_db
 
         conn = open_db(db_path)
         try:
@@ -144,9 +144,9 @@ def search_assets(
         return JSONResponse({"results": [], "total": 0, "query": q})
 
     # Encode the text query using CLIP
-    import torch  # noqa: PLC0415
+    import torch
 
-    from takeout_rater.scorers.clip_backbone import get_clip_model  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.clip_backbone import get_clip_model
 
     _model, _preprocess, tokenizer, device = get_clip_model()
 
@@ -174,7 +174,7 @@ def search_assets(
 
     if partial == "1":
         # Look up asset rows for the results to render thumbnails
-        from takeout_rater.db.queries import get_asset_by_id  # noqa: PLC0415
+        from takeout_rater.db.queries import get_asset_by_id
 
         assets_with_scores = []
         for r in results:

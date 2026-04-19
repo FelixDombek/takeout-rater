@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from takeout_rater.scorers.base import (
+from takeout_rater.scoring.scorers.base import (
     BaseScorer,
     MetricSpec,
     ScorerSpec,
@@ -134,8 +134,8 @@ class NSFWScorer(BaseScorer):
         if self._pipeline is not None:
             return
 
-        import torch  # noqa: PLC0415
-        from transformers import pipeline  # noqa: PLC0415
+        import torch
+        from transformers import pipeline
 
         device = 0 if torch.cuda.is_available() else -1
         self._pipeline = pipeline("image-classification", model=_HF_MODEL, device=device)
@@ -175,7 +175,7 @@ class NSFWScorer(BaseScorer):
         if not image_paths:
             return []
 
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         self._ensure_loaded()
 

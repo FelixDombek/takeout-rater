@@ -98,14 +98,14 @@ def create_app(
     # Path to the SQLite database file — used by per-request connections to
     # avoid sharing a single sqlite3.Connection across threads.
     if db_root is not None:
-        from takeout_rater.db.connection import library_db_path  # noqa: PLC0415
+        from takeout_rater.db.connection import library_db_path
 
         _candidate = library_db_path(db_root)
         app.state.db_path = _candidate if _candidate.exists() else None
     else:
         app.state.db_path = None
     if db_root is not None:
-        from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
+        from takeout_rater.db.connection import library_state_dir
 
         app.state.thumbs_dir = library_state_dir(db_root) / "thumbs"
     else:
@@ -140,7 +140,7 @@ def create_app(
 
     @app.get("/setup", response_class=HTMLResponse)
     def setup_page(request: Request) -> HTMLResponse:
-        from takeout_rater.config import (  # noqa: PLC0415
+        from takeout_rater.config import (
             get_app_dir,
             get_db_root,
             get_photos_root,
@@ -164,7 +164,7 @@ def create_app(
     @app.get("/jobs", response_class=HTMLResponse)
     def jobs_page(request: Request) -> HTMLResponse:
         if request.app.state.db_conn is None:
-            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+            from fastapi.responses import RedirectResponse as _RR
 
             return _RR(url="/setup")  # type: ignore[return-value]
         templates = request.app.state.templates
@@ -173,7 +173,7 @@ def create_app(
     @app.get("/scoring", response_class=HTMLResponse)
     def scoring_page(request: Request) -> HTMLResponse:
         if request.app.state.db_conn is None:
-            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+            from fastapi.responses import RedirectResponse as _RR
 
             return _RR(url="/setup")  # type: ignore[return-value]
         templates = request.app.state.templates
@@ -182,7 +182,7 @@ def create_app(
     @app.get("/search", response_class=HTMLResponse)
     def search_page(request: Request) -> HTMLResponse:
         if request.app.state.db_conn is None:
-            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+            from fastapi.responses import RedirectResponse as _RR
 
             return _RR(url="/setup")  # type: ignore[return-value]
         templates = request.app.state.templates
@@ -191,7 +191,7 @@ def create_app(
     @app.get("/clip", response_class=HTMLResponse)
     def clip_page(request: Request) -> HTMLResponse:
         if request.app.state.db_conn is None:
-            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+            from fastapi.responses import RedirectResponse as _RR
 
             return _RR(url="/setup")  # type: ignore[return-value]
         templates = request.app.state.templates
@@ -200,7 +200,7 @@ def create_app(
     @app.get("/faces", response_class=HTMLResponse)
     def faces_page(request: Request) -> HTMLResponse:
         if request.app.state.db_conn is None:
-            from fastapi.responses import RedirectResponse as _RR  # noqa: PLC0415
+            from fastapi.responses import RedirectResponse as _RR
 
             return _RR(url="/setup")  # type: ignore[return-value]
         templates = request.app.state.templates

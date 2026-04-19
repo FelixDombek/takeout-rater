@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from takeout_rater.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
 
 # ---------------------------------------------------------------------------
 # Algorithm constants (kept identical to the original individual scorers)
@@ -170,7 +170,7 @@ class SimpleScorer(BaseScorer):
 
     @staticmethod
     def _score_blur(image_paths: list[Path]) -> list[dict[str, float]]:
-        from PIL import Image, ImageFilter, ImageStat  # noqa: PLC0415
+        from PIL import Image, ImageFilter, ImageStat
 
         results: list[dict[str, float]] = []
         for path in image_paths:
@@ -187,7 +187,7 @@ class SimpleScorer(BaseScorer):
 
     @staticmethod
     def _score_luminosity(image_paths: list[Path]) -> list[dict[str, float]]:
-        from PIL import Image, ImageStat  # noqa: PLC0415
+        from PIL import Image, ImageStat
 
         results: list[dict[str, float]] = []
         for path in image_paths:
@@ -206,7 +206,7 @@ class SimpleScorer(BaseScorer):
 
     @staticmethod
     def _score_noise(image_paths: list[Path]) -> list[dict[str, float]]:
-        from PIL import Image, ImageChops, ImageFilter, ImageStat  # noqa: PLC0415
+        from PIL import Image, ImageChops, ImageFilter, ImageStat
 
         results: list[dict[str, float]] = []
         for path in image_paths:

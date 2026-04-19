@@ -59,8 +59,8 @@ def get_clip_model() -> tuple[Any, Any, Any, Any]:
         if _clip_model is not None:
             return _clip_model, _preprocess, _tokenizer, _device
 
-        import open_clip  # noqa: PLC0415
-        import torch  # noqa: PLC0415
+        import open_clip
+        import torch
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

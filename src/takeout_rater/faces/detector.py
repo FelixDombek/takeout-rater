@@ -127,7 +127,7 @@ class FaceDetector:
     def _preload_onnxruntime_cuda_dlls() -> None:
         """Let ONNX Runtime find CUDA/cuDNN DLLs shipped by GPU packages."""
         try:
-            import onnxruntime as ort  # noqa: PLC0415
+            import onnxruntime as ort
         except Exception:  # noqa: BLE001
             return
 
@@ -145,7 +145,7 @@ class FaceDetector:
             return self._app
 
         self._preload_onnxruntime_cuda_dlls()
-        from insightface.app import FaceAnalysis  # noqa: PLC0415
+        from insightface.app import FaceAnalysis
 
         app = FaceAnalysis(
             name=self._model_pack,
@@ -173,8 +173,8 @@ class FaceDetector:
             Returns an empty list if no faces are found or the image cannot
             be read.
         """
-        import cv2  # noqa: PLC0415
-        import numpy as np  # noqa: PLC0415
+        import cv2
+        import numpy as np
 
         app = self._ensure_loaded()
 
@@ -219,7 +219,7 @@ class FaceDetector:
         Returns:
             List of :class:`DetectedFace` objects.
         """
-        import numpy as np  # noqa: PLC0415
+        import numpy as np
 
         app = self._ensure_loaded()
 

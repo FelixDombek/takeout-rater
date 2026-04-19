@@ -59,7 +59,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+ignore = ["E501", "PLC0415"]
 
 [tool.ruff.format]
 quote-style = "double"

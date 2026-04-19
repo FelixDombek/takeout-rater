@@ -59,7 +59,7 @@ def generate_thumbnail_from_image(img: object, output_path: Path) -> object:
         OSError: If the thumbnail cannot be written.
     """
     try:
-        from PIL import ImageOps  # noqa: PLC0415
+        from PIL import ImageOps
     except ImportError as exc:
         raise ImportError(
             "Pillow is required for thumbnail generation. Install it with: pip install Pillow>=10.0"
@@ -99,7 +99,7 @@ def generate_thumbnail(image_path: Path, output_path: Path) -> None:
         OSError: If the image cannot be read or the thumbnail cannot be written.
     """
     try:
-        from PIL import Image, ImageOps  # noqa: PLC0415
+        from PIL import Image, ImageOps
     except ImportError as exc:
         raise ImportError(
             "Pillow is required for thumbnail generation. Install it with: pip install Pillow>=10.0"

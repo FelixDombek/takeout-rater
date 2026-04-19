@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from takeout_rater.scorers.simple import SimpleScorer
 from takeout_rater.scoring.pipeline import run_scorer
+from takeout_rater.scoring.scorers.simple import SimpleScorer
 
 FIXTURE_TAKEOUT = Path(__file__).parent.parent / "fixtures" / "takeout_tree" / "Takeout"
 
@@ -27,8 +27,8 @@ def test_index_then_score_pipeline(tmp_path: Path) -> None:
       3. Run the score job over the indexed assets.
       4. Assert that every asset whose thumbnail was generated has a score.
     """
-    from takeout_rater.cli import main  # noqa: PLC0415
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+    from takeout_rater.cli import main
+    from takeout_rater.db.connection import open_library_db
 
     # Link fixture photos tree into the temp photos root.
     photos_root = tmp_path / "photos"

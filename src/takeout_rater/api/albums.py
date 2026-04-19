@@ -23,7 +23,7 @@ _PAGE_SIZE = 50
 def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     db_path = request.app.state.db_path
     if db_path is not None:
-        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+        from takeout_rater.db.connection import open_db
 
         conn = open_db(db_path)
         try:

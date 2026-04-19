@@ -184,7 +184,7 @@ def test_index_google_fotos_subdir_indexes_photo(
 
 def test_run_index_returns_progress_with_indexed_count(library_root: Path) -> None:
     """run_index must upsert assets and return the correct count."""
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.indexing.run import run_index
 
     conn = _open_test_db(library_root)
     progress = run_index(library_root, conn, db_root=_db_root_for(library_root))
@@ -199,7 +199,7 @@ def test_run_index_returns_progress_with_indexed_count(library_root: Path) -> No
 
 def test_run_index_populates_db(library_root: Path) -> None:
     """After run_index the DB must contain the indexed assets."""
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.indexing.run import run_index
 
     conn = _open_test_db(library_root)
     run_index(library_root, conn, db_root=_db_root_for(library_root))
@@ -211,7 +211,7 @@ def test_run_index_populates_db(library_root: Path) -> None:
 
 def test_run_index_is_idempotent(library_root: Path) -> None:
     """Calling run_index twice must not duplicate assets."""
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.indexing.run import run_index
 
     conn = _open_test_db(library_root)
     run_index(library_root, conn, db_root=_db_root_for(library_root))
@@ -232,7 +232,7 @@ def test_run_index_is_idempotent(library_root: Path) -> None:
 
 def test_run_index_final_progress_phase_is_processing(library_root: Path) -> None:
     """The final IndexProgress must have phase='processing' (not 'scanning')."""
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.indexing.run import run_index
 
     conn = _open_test_db(library_root)
     progress = run_index(library_root, conn, db_root=_db_root_for(library_root))
@@ -243,7 +243,7 @@ def test_run_index_final_progress_phase_is_processing(library_root: Path) -> Non
 
 def test_run_index_final_progress_dirs_scanned(library_root: Path) -> None:
     """dirs_scanned must be positive after a successful run."""
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.indexing.run import run_index
 
     conn = _open_test_db(library_root)
     progress = run_index(library_root, conn, db_root=_db_root_for(library_root))
@@ -255,12 +255,12 @@ def test_run_index_final_progress_dirs_scanned(library_root: Path) -> None:
 
 def test_run_index_on_progress_called_during_scanning(library_root: Path) -> None:
     """on_progress must be invoked while scanning (phase='scanning')."""
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.indexing.run import run_index
 
     scanning_calls: list[object] = []
 
     def _cb(p: object) -> None:
-        from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
+        from takeout_rater.indexing.run import IndexProgress
 
         assert isinstance(p, IndexProgress)
         if p.phase == "scanning":
@@ -275,12 +275,12 @@ def test_run_index_on_progress_called_during_scanning(library_root: Path) -> Non
 
 def test_run_index_on_progress_called_during_processing(library_root: Path) -> None:
     """on_progress must be invoked while processing (phase='processing')."""
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.indexing.run import run_index
 
     processing_calls: list[object] = []
 
     def _cb(p: object) -> None:
-        from takeout_rater.indexing.run import IndexProgress  # noqa: PLC0415
+        from takeout_rater.indexing.run import IndexProgress
 
         if isinstance(p, IndexProgress) and p.phase == "processing" and not p.done:
             processing_calls.append(p)
@@ -328,10 +328,10 @@ def test_stale_thumbnail_overwritten_after_db_reset(tmp_path: Path) -> None:
     exists on disk the indexer must not reuse it — it must overwrite it with
     a thumbnail generated from the actual current asset.
     """
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
-    from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
-    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+    from takeout_rater.db.connection import library_state_dir
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 
     # ── First database: index "photo_A" so asset_id=1 maps to a red image ─────
     photos_root = tmp_path / "photos"
@@ -379,7 +379,7 @@ def test_index_command_identical_files_deduplicated(tmp_path: Path) -> None:
 
     The second path is stored as an alias in asset_paths.
     """
-    from takeout_rater.db.queries import get_asset_alias_paths  # noqa: PLC0415
+    from takeout_rater.db.queries import get_asset_alias_paths
 
     photos_root = tmp_path / "photos"
     photos = photos_root / "Photos from 2024"

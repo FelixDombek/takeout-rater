@@ -143,7 +143,7 @@ def _find_similar_clip(
     threshold: float | None = None,
 ) -> list[dict]:
     """CLIP-embedding based similarity search."""
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     if metric not in _CLIP_METRIC_DEFAULTS:
         metric = "cosine"
@@ -302,7 +302,7 @@ def find_similar_by_embedding(
         Same format as :func:`find_similar_by_asset`.  Empty list when
         *ref_blob* cannot be decoded or is all-zero.
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     if metric not in _CLIP_METRIC_DEFAULTS:
         metric = "cosine"

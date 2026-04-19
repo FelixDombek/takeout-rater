@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.nima import (
+from takeout_rater.scoring.scorers.nima import (
     _VARIANT_NATIVE_RANGE,
     _VARIANT_PYIQA_METRIC,
     NIMAScorer,
@@ -109,7 +109,7 @@ def test_is_available_returns_bool() -> None:
 
 
 def test_is_available_false_when_pyiqa_missing() -> None:
-    import builtins  # noqa: PLC0415
+    import builtins
 
     real_import = builtins.__import__
 
@@ -136,7 +136,7 @@ def test_score_batch_missing_file_returns_one(tmp_path: Path) -> None:
     """A missing file should yield nima_score=1.0 (minimum), not raise."""
     scorer = NIMAScorer.create()
     # Inject a no-op pyiqa-style metric: returns score tensor of shape (N,)
-    import torch  # noqa: PLC0415
+    import torch
 
     fake_metric = MagicMock()
     fake_metric.return_value = torch.tensor([5.5])
@@ -154,7 +154,7 @@ def test_score_batch_missing_file_returns_one(tmp_path: Path) -> None:
 
 def _make_mock_scorer(fixed_score: float = 7.0, variant_id: str = "aesthetic") -> NIMAScorer:
     """Return a NIMAScorer whose pyiqa metric returns a fixed score."""
-    import torch  # noqa: PLC0415
+    import torch
 
     scorer = NIMAScorer.create(variant_id=variant_id)
 
@@ -167,7 +167,7 @@ def _make_mock_scorer(fixed_score: float = 7.0, variant_id: str = "aesthetic") -
 
 
 def test_score_batch_returns_nima_score_key(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -179,7 +179,7 @@ def test_score_batch_returns_nima_score_key(tmp_path: Path) -> None:
 
 
 def test_score_batch_value_in_range(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -191,7 +191,7 @@ def test_score_batch_value_in_range(tmp_path: Path) -> None:
 
 def test_score_batch_expected_score(tmp_path: Path) -> None:
     """One-hot distribution on rating 7 should yield nima_score ≈ 7.0."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -202,7 +202,7 @@ def test_score_batch_expected_score(tmp_path: Path) -> None:
 
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     paths = []
     for i in range(4):
@@ -217,7 +217,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 def test_score_batch_technical_variant(tmp_path: Path) -> None:
     """Technical variant uses a separate model load; spec is the same."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -229,7 +229,7 @@ def test_score_batch_technical_variant(tmp_path: Path) -> None:
 
 
 def test_score_one(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "img.jpg"
     Image.new("RGB", (32, 32), color=(200, 150, 100)).save(p, "JPEG")
@@ -251,7 +251,7 @@ def test_variant_native_range_covers_all_variants() -> None:
 
 def test_score_batch_aesthetic_vgg16_variant(tmp_path: Path) -> None:
     """aesthetic-vgg16 uses a 0–10 native range; score should pass through unchanged."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -265,7 +265,7 @@ def test_score_batch_aesthetic_vgg16_variant(tmp_path: Path) -> None:
 
 def test_score_batch_technical_spaq_variant_rescales(tmp_path: Path) -> None:
     """technical-spaq native range is [1, 100]; score rescales to [1, 10]."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -280,7 +280,7 @@ def test_score_batch_technical_spaq_variant_rescales(tmp_path: Path) -> None:
 
 def test_score_batch_technical_variant_rescales(tmp_path: Path) -> None:
     """technical (nima-koniq) native range is [0, 1]; raw 0.5 → display 5.5."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -294,7 +294,7 @@ def test_score_batch_technical_variant_rescales(tmp_path: Path) -> None:
 
 
 def test_score_batch_technical_spaq_value_in_range(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")

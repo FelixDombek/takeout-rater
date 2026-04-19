@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from takeout_rater.scorers.simple import SimpleScorer
+from takeout_rater.scoring.scorers.simple import SimpleScorer
 
 # ---------------------------------------------------------------------------
 # Spec / metadata
@@ -86,7 +86,7 @@ def test_blur_variant_missing_file_returns_zero(tmp_path: Path) -> None:
 
 
 def test_blur_variant_real_image(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     img = Image.new("RGB", (64, 64))
@@ -103,7 +103,7 @@ def test_blur_variant_real_image(tmp_path: Path) -> None:
 
 
 def test_blur_variant_uniform_vs_gradient(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     uniform = tmp_path / "uniform.jpg"
     gradient = tmp_path / "gradient.jpg"
@@ -144,7 +144,7 @@ def test_luminosity_variant_missing_file_returns_zeros(tmp_path: Path) -> None:
 
 
 def test_luminosity_variant_real_image_range(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64), color=(128, 128, 128)).save(p, "JPEG")
@@ -157,7 +157,7 @@ def test_luminosity_variant_real_image_range(tmp_path: Path) -> None:
 
 
 def test_luminosity_variant_dark_vs_bright(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     dark = tmp_path / "dark.jpg"
     bright = tmp_path / "bright.jpg"
@@ -171,7 +171,7 @@ def test_luminosity_variant_dark_vs_bright(tmp_path: Path) -> None:
 
 
 def test_luminosity_variant_uniform_vs_gradient_contrast(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     uniform = tmp_path / "uniform.jpg"
     gradient = tmp_path / "gradient.jpg"
@@ -211,7 +211,7 @@ def test_noise_variant_missing_file_returns_zero(tmp_path: Path) -> None:
 
 
 def test_noise_variant_real_image_range(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64), color=(128, 128, 128)).save(p, "JPEG")
@@ -223,7 +223,7 @@ def test_noise_variant_real_image_range(tmp_path: Path) -> None:
 
 
 def test_noise_variant_uniform_image_low_noise(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "uniform.png"
     Image.new("RGB", (64, 64), color=(128, 128, 128)).save(p, "PNG")
@@ -247,7 +247,7 @@ def test_invalid_variant_raises() -> None:
 
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     paths = []
     for i in range(4):
@@ -262,7 +262,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 
 def test_score_one_blur(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "img.jpg"
     Image.new("RGB", (32, 32), color=(200, 150, 100)).save(p, "JPEG")

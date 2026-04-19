@@ -141,14 +141,14 @@ def _open_worker_conn(app: object) -> sqlite3.Connection:
     """
     db_path: Path | None = getattr(app.state, "db_path", None)  # type: ignore[union-attr]
     if db_path is not None:
-        from takeout_rater.db.connection import open_db  # noqa: PLC0415
+        from takeout_rater.db.connection import open_db
 
         return open_db(db_path)
 
     db_root: Path | None = getattr(app.state, "db_root", None)  # type: ignore[union-attr]
     if db_root is None:
         raise RuntimeError("Library DB root is not configured.")
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import open_library_db
 
     return open_library_db(db_root)
 
@@ -161,7 +161,7 @@ def _configured_thumbs_dir(app: object) -> Path:
     db_root: Path | None = getattr(app.state, "db_root", None)  # type: ignore[union-attr]
     if db_root is None:
         raise RuntimeError("Library DB root is not configured.")
-    from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
+    from takeout_rater.db.connection import library_state_dir
 
     return library_state_dir(db_root) / "thumbs"
 
@@ -264,8 +264,8 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
     def _worker() -> None:
         from takeout_rater.db.connection import (
             open_library_db as _open,
-        )  # noqa: PLC0415
-        from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
+        )
+        from takeout_rater.indexing.run import IndexProgress, run_index
 
         def _cb(p: IndexProgress) -> None:
             # Scan phase: count folders
@@ -390,7 +390,7 @@ def list_available_scorers() -> JSONResponse:
     Each item has ``id``, ``name``, ``description``, ``technical_description``,
     ``version``, ``available``, and ``variants`` (incl. ``metrics``) fields.
     """
-    from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.registry import list_scorers
 
     result = []
     for cls in list_scorers():
@@ -462,46 +462,43 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     rerun = body.rerun
 
     def _worker() -> None:
-        from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
-        from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
+        from takeout_rater.scoring.pipeline import run_scorer_by_id
+        from takeout_rater.scoring.scorers.registry import list_scorers
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
         try:
             # ── Run scorers ──────────────────────────────────────────────────
-            # Build the list of (scorer_id, variant_id) pairs to run.
+            # Build the list of (scorer_id, variant_id, display_name) tuples to run.
             # When no specific scorer is requested every available scorer is
-            # run for *all* of its variants (or its single default variant if
-            # the scorer defines no explicit variants).
+            # run for all of its variants.
             if scorer_id:
-                cls_map = {cls.spec().scorer_id: cls for cls in list_scorers()}
-                target_cls = cls_map.get(scorer_id)
-                if target_cls:
-                    spec = target_cls.spec()
-                    if variant_id:
-                        scorer_variant_pairs = [(scorer_id, variant_id)]
-                    elif spec.variants:
-                        scorer_variant_pairs = [(scorer_id, v.variant_id) for v in spec.variants]
-                    else:
-                        scorer_variant_pairs = [(scorer_id, None)]
-                else:
-                    scorer_variant_pairs = [(scorer_id, variant_id)]
+                target_cls = next(
+                    (cls for cls in list_scorers() if cls.spec().scorer_id == scorer_id), None
+                )
+                spec = target_cls.spec()
+                target_vars = (
+                    [v for v in spec.variants if v.variant_id == variant_id]
+                    if variant_id
+                    else spec.variants
+                )
+                scorer_variants = [
+                    (scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}")
+                    for v in target_vars
+                ]
             else:
-                scorer_variant_pairs = []
-                for cls in list_scorers(available_only=True):
-                    spec = cls.spec()
-                    if spec.variants:
-                        for v in spec.variants:
-                            scorer_variant_pairs.append((spec.scorer_id, v.variant_id))
-                    else:
-                        scorer_variant_pairs.append((spec.scorer_id, None))
+                scorer_variants = [
+                    (spec.scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}")
+                    for cls in list_scorers(available_only=True)
+                    for spec in [cls.spec()]
+                    for v in spec.variants
+                ]
 
-            total_pairs = len(scorer_variant_pairs)
-            for idx, (sid, vid) in enumerate(scorer_variant_pairs):
+            total_pairs = len(scorer_variants)
+            for idx, (sid, vid, display_name) in enumerate(scorer_variants):
                 if progress.cancel_event.is_set():
                     break
-                _label_name = sid if not vid else f"{sid}:{vid}"
-                _scorer_label = f"{_label_name!r} ({idx + 1}/{total_pairs})"
+                _scorer_label = f"{display_name} ({idx + 1}/{total_pairs})"
                 progress.current_scorer_id = sid
                 progress.current_variant_id = vid or ""
                 progress.message = f"Scoring with {_scorer_label}…"
@@ -638,10 +635,10 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
         try:
             if method == "clip":
                 # ── CLIP embedding clustering ────────────────────────────────
-                from takeout_rater.clustering.clip_builder import (  # noqa: PLC0415
+                from takeout_rater.clustering.clip_builder import (
                     build_clip_clusters,
                 )
-                from takeout_rater.db.queries import (  # noqa: PLC0415
+                from takeout_rater.db.queries import (
                     count_clip_embeddings,
                 )
 
@@ -699,7 +696,7 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
                 # ── pHash clustering ─────────────────────────────────────────
                 from takeout_rater.clustering.builder import (
                     build_clusters,
-                )  # noqa: PLC0415
+                )
 
                 # Build clusters (phash is computed during indexing now)
                 progress.message = "Building clusters…"
@@ -793,10 +790,10 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
     jobs["export"] = progress
 
     def _worker() -> None:
-        import shutil  # noqa: PLC0415
+        import shutil
 
-        from takeout_rater.db.connection import library_state_dir  # noqa: PLC0415
-        from takeout_rater.db.queries import (  # noqa: PLC0415
+        from takeout_rater.db.connection import library_state_dir
+        from takeout_rater.db.queries import (
             count_clusters,
             get_asset_by_id,
             get_asset_scores,
@@ -950,7 +947,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
     jobs["rescan"] = progress
 
     def _worker() -> None:
-        from takeout_rater.db.queries import (  # noqa: PLC0415
+        from takeout_rater.db.queries import (
             CURRENT_INDEXER_VERSION,
             list_asset_ids_needing_rescan,
         )
@@ -979,7 +976,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
             from takeout_rater.indexing.thumbnailer import (
                 thumb_path_for_id,
-            )  # noqa: PLC0415
+            )
 
             # Pre-fetch the set of asset IDs that already have a phash so the
             # per-asset check is a cheap in-memory set lookup instead of a DB
@@ -1008,7 +1005,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                     sidecar_path = photos_root / sidecar_relpath
                     if sidecar_path.exists():
                         try:
-                            from takeout_rater.indexing.sidecar import (  # noqa: PLC0415
+                            from takeout_rater.indexing.sidecar import (
                                 parse_sidecar,
                             )
 
@@ -1090,7 +1087,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 # in that case the canonical path is in assets.relpath and each
                 # additional location is stored as an alias in asset_paths.
                 # Both must be examined so every album link is created.
-                from takeout_rater.db.queries import (  # noqa: PLC0415
+                from takeout_rater.db.queries import (
                     link_asset_to_album,
                     upsert_album,
                 )
@@ -1113,7 +1110,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 # full: always regenerate (fixes stale/corrupt thumbnails).
                 thumb = thumb_path_for_id(thumbs_dir, asset_id)
                 if photos_root is not None:
-                    from takeout_rater.indexing.thumbnailer import (  # noqa: PLC0415
+                    from takeout_rater.indexing.thumbnailer import (
                         generate_thumbnail,
                     )
 
@@ -1135,16 +1132,16 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                     needs_phash = asset_id not in _assets_with_phash
                     if needs_phash:
                         try:
-                            import io  # noqa: PLC0415
+                            import io
 
-                            from PIL import Image  # noqa: PLC0415
+                            from PIL import Image
 
-                            from takeout_rater.db.queries import (
-                                upsert_phash,
-                            )  # noqa: PLC0415
-                            from takeout_rater.scoring.phash import (  # noqa: PLC0415
+                            from src.takeout_rater.clustering.phash import (
                                 DHASH_ALGO,
                                 compute_dhash_from_image,
+                            )
+                            from takeout_rater.db.queries import (
+                                upsert_phash,
                             )
 
                             thumb_img = Image.open(io.BytesIO(thumb.read_bytes()))
@@ -1159,13 +1156,13 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                     needs_clip = asset_id not in _assets_with_clip
                     if needs_clip:
                         try:
-                            import io  # noqa: PLC0415
-                            import struct  # noqa: PLC0415
+                            import io
+                            import struct
 
-                            import torch  # noqa: PLC0415
-                            from PIL import Image  # noqa: PLC0415
+                            import torch
+                            from PIL import Image
 
-                            from takeout_rater.scorers.clip_backbone import (  # noqa: PLC0415
+                            from takeout_rater.scoring.scorers.clip_backbone import (
                                 get_clip_model,
                             )
 
@@ -1254,15 +1251,15 @@ def start_embed_job(request: Request) -> JSONResponse:
     jobs["embed"] = progress
 
     def _worker() -> None:
-        import struct  # noqa: PLC0415
+        import struct
 
         from takeout_rater.db.queries import (
-            bulk_upsert_clip_embeddings,  # noqa: PLC0415
-            list_asset_ids_without_embedding,  # noqa: PLC0415
+            bulk_upsert_clip_embeddings,
+            list_asset_ids_without_embedding,
         )
         from takeout_rater.indexing.thumbnailer import (
             thumb_path_for_id,
-        )  # noqa: PLC0415
+        )
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
@@ -1280,11 +1277,11 @@ def start_embed_job(request: Request) -> JSONResponse:
             progress.message = f"Computing embeddings for {total} asset(s)…"
 
             # Lazy-load CLIP model
-            import torch  # noqa: PLC0415
-            from PIL import Image  # noqa: PLC0415
+            import torch
+            from PIL import Image
 
-            from takeout_rater.scorers.clip_backbone import (
-                get_clip_model,  # noqa: PLC0415
+            from takeout_rater.scoring.scorers.clip_backbone import (
+                get_clip_model,
             )
 
             clip_model, preprocess, _tokenizer, device = get_clip_model()
@@ -1429,22 +1426,22 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
     jobs["detect_faces"] = progress
 
     def _worker() -> None:
-        import json as _json  # noqa: PLC0415
-        import struct  # noqa: PLC0415
+        import json as _json
+        import struct
 
         from takeout_rater.db.queries import (
-            bulk_insert_face_embeddings,  # noqa: PLC0415
-            finish_face_detection_run,  # noqa: PLC0415
-            insert_face_detection_run,  # noqa: PLC0415
-            list_asset_ids_without_face_detection,  # noqa: PLC0415
+            bulk_insert_face_embeddings,
+            finish_face_detection_run,
+            insert_face_detection_run,
+            list_asset_ids_without_face_detection,
         )
         from takeout_rater.faces.detector import (
-            EMBEDDING_DIM,  # noqa: PLC0415
-            FaceDetector,  # noqa: PLC0415
+            EMBEDDING_DIM,
+            FaceDetector,
         )
         from takeout_rater.indexing.thumbnailer import (
             thumb_path_for_id,
-        )  # noqa: PLC0415
+        )
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
@@ -1594,8 +1591,8 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
     jobs["cluster_faces"] = progress
 
     def _worker() -> None:
-        from takeout_rater.db.queries import count_face_embeddings  # noqa: PLC0415
-        from takeout_rater.faces.clustering import cluster_faces  # noqa: PLC0415
+        from takeout_rater.db.queries import count_face_embeddings
+        from takeout_rater.faces.clustering import cluster_faces
 
         worker_conn = _open_worker_conn(request.app)
         try:

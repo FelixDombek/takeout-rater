@@ -16,7 +16,7 @@ from takeout_rater.ui.app import create_app
 
 def _make_jpeg_with_exif(path: Path, make: str = "TestCamera", model: str = "TestModel X1") -> None:
     """Create a minimal JPEG at *path* with Make and Model EXIF tags."""
-    from PIL import ExifTags  # noqa: PLC0415
+    from PIL import ExifTags
     from PIL import Image as _Image
 
     img = _Image.new("RGB", (4, 4), color=(100, 150, 200))
@@ -41,9 +41,9 @@ def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(tmp_path: Path) -> 
         → sidecar JSON content visible
         → EXIF Make/Model visible
     """
-    from takeout_rater.db.connection import open_library_db  # noqa: PLC0415
-    from takeout_rater.db.queries import list_assets  # noqa: PLC0415
-    from takeout_rater.indexing.run import run_index  # noqa: PLC0415
+    from takeout_rater.db.connection import open_library_db
+    from takeout_rater.db.queries import list_assets
+    from takeout_rater.indexing.run import run_index
 
     # Build a minimal photos tree with a real JPEG (EXIF) and a sidecar file.
     photos_root = tmp_path / "photos"

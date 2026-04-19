@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from takeout_rater.scorers.base import ScorerSpec
-from takeout_rater.scorers.cafe_style import (
-    _LABEL_TO_METRIC,
+from takeout_rater.scoring.scorers.base import ScorerSpec
+from takeout_rater.scoring.scorers.cafe_style import (
+    _LABELS,
     CafeStyleScorer,
     _preds_to_scores,
 )
@@ -20,11 +20,11 @@ from takeout_rater.scorers.cafe_style import (
 # ---------------------------------------------------------------------------
 
 _EXPECTED_METRIC_KEYS = {
-    "style_photo",
-    "style_anime",
-    "style_illustration",
-    "style_3d",
-    "style_cgi",
+    "anime",
+    "real_life",
+    "3d",
+    "manga_like",
+    "other",
 }
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def test_is_available_returns_bool() -> None:
 
 
 def test_is_available_false_when_transformers_missing() -> None:
-    import builtins  # noqa: PLC0415
+    import builtins
 
     real_import = builtins.__import__
 
@@ -112,18 +112,18 @@ def test_preds_to_scores_all_labels() -> None:
         {"label": "other", "score": 0.05},
     ]
     scores = _preds_to_scores(preds)
-    assert scores["style_photo"] == pytest.approx(0.7)
-    assert scores["style_anime"] == pytest.approx(0.1)
-    assert scores["style_illustration"] == pytest.approx(0.1)
-    assert scores["style_3d"] == pytest.approx(0.05)
-    assert scores["style_cgi"] == pytest.approx(0.05)
+    assert scores["real_life"] == pytest.approx(0.7)
+    assert scores["anime"] == pytest.approx(0.1)
+    assert scores["manga_like"] == pytest.approx(0.1)
+    assert scores["3d"] == pytest.approx(0.05)
+    assert scores["other"] == pytest.approx(0.05)
 
 
 def test_preds_to_scores_label_case_insensitive() -> None:
     """Labels from the pipeline may be mixed case; they should be lowercased."""
     preds = [{"label": "REAL_LIFE", "score": 0.9}]
     scores = _preds_to_scores(preds)
-    assert scores["style_photo"] == pytest.approx(0.9)
+    assert scores["real_life"] == pytest.approx(0.9)
 
 
 def test_preds_to_scores_unknown_label_ignored() -> None:
@@ -137,11 +137,11 @@ def test_preds_to_scores_missing_labels_default_to_zero() -> None:
     """If a label is absent from the pipeline output it defaults to 0.0."""
     preds = [{"label": "real_life", "score": 0.95}]
     scores = _preds_to_scores(preds)
-    assert scores["style_photo"] == pytest.approx(0.95)
-    assert scores["style_anime"] == 0.0
-    assert scores["style_illustration"] == 0.0
-    assert scores["style_3d"] == 0.0
-    assert scores["style_cgi"] == 0.0
+    assert scores["real_life"] == pytest.approx(0.95)
+    assert scores["anime"] == 0.0
+    assert scores["manga_like"] == 0.0
+    assert scores["3d"] == 0.0
+    assert scores["other"] == 0.0
 
 
 def test_preds_to_scores_returns_all_expected_keys() -> None:
@@ -150,13 +150,13 @@ def test_preds_to_scores_returns_all_expected_keys() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Label-to-metric mapping coverage
+# Label coverage
 # ---------------------------------------------------------------------------
 
 
-def test_label_to_metric_covers_all_expected_metrics() -> None:
-    """Every expected metric key must be reachable via _LABEL_TO_METRIC."""
-    assert set(_LABEL_TO_METRIC.values()) == _EXPECTED_METRIC_KEYS
+def test_labels_match_expected_metrics() -> None:
+    """Every expected metric key must be represented by a model label."""
+    assert set(_LABELS) == _EXPECTED_METRIC_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ def _make_mock_scorer(photo_prob: float = 0.8) -> CafeStyleScorer:
 
 
 def test_score_batch_returns_all_metric_keys(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64), color=(200, 150, 100)).save(img_path, "JPEG")
@@ -209,18 +209,18 @@ def test_score_batch_returns_all_metric_keys(tmp_path: Path) -> None:
 
 
 def test_score_batch_photo_probability_correct(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
 
     scorer = _make_mock_scorer(photo_prob=0.8)
     results = scorer.score_batch([img_path])
-    assert results[0]["style_photo"] == pytest.approx(0.8)
+    assert results[0]["real_life"] == pytest.approx(0.8)
 
 
 def test_score_batch_all_values_in_range(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -239,7 +239,7 @@ def test_score_batch_missing_file_returns_zeros(tmp_path: Path) -> None:
 
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     paths = []
     for i in range(3):
@@ -253,11 +253,11 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 
 def test_score_one(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "img.jpg"
     Image.new("RGB", (32, 32), color=(200, 150, 100)).save(p, "JPEG")
     scorer = _make_mock_scorer(photo_prob=0.9)
     result = scorer.score_one(p)
     assert set(result.keys()) == _EXPECTED_METRIC_KEYS
-    assert result["style_photo"] == pytest.approx(0.9)
+    assert result["real_life"] == pytest.approx(0.9)

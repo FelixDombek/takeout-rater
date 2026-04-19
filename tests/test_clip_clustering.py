@@ -363,7 +363,7 @@ def test_build_clip_max_size_allows_smaller_components() -> None:
 
 def test_build_clip_n_skipped_stored_in_db() -> None:
     """n_skipped is persisted in the clustering_runs table."""
-    from takeout_rater.db.queries import list_clustering_runs  # noqa: PLC0415
+    from takeout_rater.db.queries import list_clustering_runs
 
     conn = _open_in_memory()
     blob = _make_embedding(0)

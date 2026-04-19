@@ -13,15 +13,15 @@ from __future__ import annotations
 # Explicit scorer class list
 # Add your scorer class here after creating it.
 # ---------------------------------------------------------------------------
-from takeout_rater.scorers.base import BaseScorer, ScorerSpec
-from takeout_rater.scorers.brisque import BRISQUEScorer
-from takeout_rater.scorers.cafe_style import CafeStyleScorer
-from takeout_rater.scorers.clip_iqa import CLIPIQAScorer
-from takeout_rater.scorers.laion import AestheticScorer
-from takeout_rater.scorers.nima import NIMAScorer
-from takeout_rater.scorers.nsfw import NSFWScorer
-from takeout_rater.scorers.pyiqa_adapter import PyIQAScorer
-from takeout_rater.scorers.simple import SimpleScorer
+from takeout_rater.scoring.scorers.base import BaseScorer, ScorerSpec
+from takeout_rater.scoring.scorers.brisque import BRISQUEScorer
+from takeout_rater.scoring.scorers.cafe_style import CafeStyleScorer
+from takeout_rater.scoring.scorers.clip_iqa import CLIPIQAScorer
+from takeout_rater.scoring.scorers.laion import AestheticScorer
+from takeout_rater.scoring.scorers.nima import NIMAScorer
+from takeout_rater.scoring.scorers.nsfw import NSFWScorer
+from takeout_rater.scoring.scorers.pyiqa_adapter import PyIQAScorer
+from takeout_rater.scoring.scorers.simple import SimpleScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
     SimpleScorer,
@@ -51,5 +51,5 @@ def list_scorers(*, available_only: bool = False) -> list[type[BaseScorer]]:
 
 
 def list_specs(*, available_only: bool = False) -> list[ScorerSpec]:
-    """Return :class:`~takeout_rater.scorers.base.ScorerSpec` for each scorer."""
+    """Return :class:`~takeout_rater.scoring.scorers.base.ScorerSpec` for each scorer."""
     return [cls.spec() for cls in list_scorers(available_only=available_only)]

@@ -133,7 +133,7 @@ def test_browse_partial_has_lightbox_data_attrs(client_with_assets: TestClient) 
 
 def test_browse_partial_no_sentinel_when_single_page(tmp_path: Path) -> None:
     """When all assets fit on one page, partial should not include a sentinel."""
-    from takeout_rater.api.assets import _PAGE_SIZE  # noqa: PLC0415
+    from takeout_rater.api.assets import _PAGE_SIZE
 
     conn = _make_db()
     # Add fewer assets than one full page so total_pages == 1
@@ -150,7 +150,7 @@ def test_browse_partial_no_sentinel_when_single_page(tmp_path: Path) -> None:
 
 def test_browse_partial_has_meta_when_multi_page(tmp_path: Path) -> None:
     """When there are more pages, partial response should carry the total-pages meta."""
-    from takeout_rater.api.assets import _PAGE_SIZE  # noqa: PLC0415
+    from takeout_rater.api.assets import _PAGE_SIZE
 
     conn = _make_db()
     # Add more assets than one page can hold
@@ -235,9 +235,9 @@ def test_thumbnail_not_found_returns_404(client: TestClient) -> None:
 
 def test_thumbnail_serves_jpeg(tmp_path: Path) -> None:
     """When a thumbnail file exists, it should be served with image/jpeg content-type."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
-    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 
     conn = _make_db()
     asset_id = _add_asset(conn)
@@ -263,9 +263,9 @@ def test_thumbnail_has_no_cache_header(tmp_path: Path) -> None:
     ETag before using a cached copy, so a freshly generated thumbnail is
     always shown after re-indexing.
     """
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
-    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 
     conn = _make_db()
     asset_id = _add_asset(conn)
@@ -396,7 +396,7 @@ def test_browse_page_has_clusters_nav_link(client: TestClient) -> None:
 
 @pytest.fixture()
 def client_with_scores(tmp_path: Path) -> TestClient:
-    from takeout_rater.db.queries import upsert_asset_scores  # noqa: PLC0415
+    from takeout_rater.db.queries import upsert_asset_scores
 
     conn = _make_db()
     ids = [_add_asset(conn, f"Photos/img{i}.jpg") for i in range(5)]
@@ -485,7 +485,7 @@ def test_sort_options_only_include_scored_metrics(tmp_path: Path) -> None:
 
 def test_sort_options_appear_after_scoring(tmp_path: Path) -> None:
     """Sort dropdown should include metrics once scores exist."""
-    from takeout_rater.db.queries import upsert_asset_scores  # noqa: PLC0415
+    from takeout_rater.db.queries import upsert_asset_scores
 
     conn = _make_db()
     ids = [_add_asset(conn, f"Photos/img{i}.jpg") for i in range(3)]
@@ -829,7 +829,7 @@ def test_asset_detail_shows_only_canonical_sidecar(tmp_path: Path) -> None:
 
 def _make_jpeg_with_exif(path: Path, make: str = "TestCamera", model: str = "TestModel X1") -> None:
     """Create a minimal JPEG at *path* with Make and Model EXIF tags."""
-    from PIL import ExifTags  # noqa: PLC0415
+    from PIL import ExifTags
     from PIL import Image as _Image
 
     img = _Image.new("RGB", (4, 4), color=(100, 150, 200))
@@ -906,7 +906,7 @@ def test_asset_detail_no_exif_when_image_missing(tmp_path: Path) -> None:
 
 def test_asset_detail_no_exif_when_image_has_none(tmp_path: Path) -> None:
     """Detail page shows 'No EXIF data available' when the JPEG contains no EXIF metadata."""
-    from PIL import Image as _Image  # noqa: PLC0415
+    from PIL import Image as _Image
 
     conn = _make_db()
     relpath = "Photos/no_exif.jpg"
@@ -1153,7 +1153,7 @@ def test_timeline_seek_page_advances_for_older_timestamp(tmp_path: Path) -> None
 
 @pytest.fixture()
 def client_with_albums(tmp_path: Path) -> TestClient:
-    from takeout_rater.db.queries import link_asset_to_album, upsert_album  # noqa: PLC0415
+    from takeout_rater.db.queries import link_asset_to_album, upsert_album
 
     conn = _make_db()
     id1 = _add_asset(conn, "Vacation 2023/img1.jpg")
@@ -1282,11 +1282,11 @@ def test_similar_assets_no_phash_returns_empty_with_error(
 
 def test_similar_assets_with_embedding_returns_results(tmp_path: Path) -> None:
     """When CLIP embeddings exist, the endpoint returns similar assets."""
-    import struct  # noqa: PLC0415
+    import struct
 
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
-    from takeout_rater.db.queries import bulk_upsert_clip_embeddings  # noqa: PLC0415
+    from takeout_rater.db.queries import bulk_upsert_clip_embeddings
 
     DIM = 768
     rng = np.random.default_rng(0)
@@ -1309,7 +1309,7 @@ def test_similar_assets_with_embedding_returns_results(tmp_path: Path) -> None:
     bulk_upsert_clip_embeddings(conn, [(id1, blob1), (id2, blob2)])
 
     app = create_app(tmp_path, conn, db_root=tmp_path)
-    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+    from fastapi.testclient import TestClient as TC
 
     client = TC(app)
 
@@ -1329,11 +1329,11 @@ def test_similar_assets_with_embedding_returns_results(tmp_path: Path) -> None:
 
 def test_similar_assets_euclidean_metric(tmp_path: Path) -> None:
     """CLIP euclidean metric returns distance score (lower = more similar)."""
-    import struct  # noqa: PLC0415
+    import struct
 
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
-    from takeout_rater.db.queries import bulk_upsert_clip_embeddings  # noqa: PLC0415
+    from takeout_rater.db.queries import bulk_upsert_clip_embeddings
 
     DIM = 768
     rng = np.random.default_rng(1)
@@ -1352,7 +1352,7 @@ def test_similar_assets_euclidean_metric(tmp_path: Path) -> None:
     )
 
     app = create_app(tmp_path, conn, db_root=tmp_path)
-    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+    from fastapi.testclient import TestClient as TC
 
     client = TC(app)
 
@@ -1376,7 +1376,7 @@ def test_similar_assets_phash_returns_results(tmp_path: Path) -> None:
     upsert_phash(conn, id2, "0" * 63 + "1")  # last hex digit 0→1 = 1 bit change
 
     app = create_app(tmp_path, conn, db_root=tmp_path)
-    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+    from fastapi.testclient import TestClient as TC
 
     client = TC(app)
 
@@ -1392,11 +1392,11 @@ def test_similar_assets_phash_returns_results(tmp_path: Path) -> None:
 
 def test_similar_assets_threshold_filters_results(tmp_path: Path) -> None:
     """Using a very high threshold should exclude moderately similar assets."""
-    import struct  # noqa: PLC0415
+    import struct
 
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
-    from takeout_rater.db.queries import bulk_upsert_clip_embeddings  # noqa: PLC0415
+    from takeout_rater.db.queries import bulk_upsert_clip_embeddings
 
     DIM = 768
     rng = np.random.default_rng(42)
@@ -1415,7 +1415,7 @@ def test_similar_assets_threshold_filters_results(tmp_path: Path) -> None:
     bulk_upsert_clip_embeddings(conn, [(id1, blob1), (id2, blob2)])
 
     app = create_app(tmp_path, conn, db_root=tmp_path)
-    from fastapi.testclient import TestClient as TC  # noqa: PLC0415
+    from fastapi.testclient import TestClient as TC
 
     client = TC(app)
 

@@ -78,7 +78,7 @@ def _normalise_cluster_labels(labels: Any) -> Any:
     HDBSCAN uses ``-1`` for noise; that label is preserved so the frontend can
     display noise separately.
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     normalised = np.full(labels.shape, -1, dtype=int)
     cluster_ids = sorted(int(label) for label in np.unique(labels) if int(label) >= 0)
@@ -94,7 +94,7 @@ def _cap_hdbscan_clusters(coords: Any, labels: Any, max_clusters: int) -> Any:
     largest clusters up to ``max_clusters`` and reassign points from smaller
     clusters to the nearest retained centroid.  Noise (``-1``) remains noise.
     """
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     cluster_ids = [int(label) for label in np.unique(labels) if int(label) >= 0]
     if len(cluster_ids) <= max_clusters:
@@ -132,7 +132,7 @@ def _cluster_coords(
     max_clusters: int,
 ) -> tuple[Any, dict[int, Any]]:
     """Cluster 3-D coordinates and return labels plus representative centroids."""
-    import numpy as np  # noqa: PLC0415
+    import numpy as np
 
     n = coords.shape[0]
     if max_clusters < 1:
@@ -145,7 +145,7 @@ def _cluster_coords(
         return np.zeros(1, dtype=int), {0: coords[0]}
 
     if method == "kmeans":
-        from sklearn.cluster import KMeans  # noqa: PLC0415
+        from sklearn.cluster import KMeans
 
         k = _n_clusters(n, max_clusters=max_clusters)
         km = KMeans(n_clusters=k, random_state=42, n_init="auto")
@@ -153,7 +153,7 @@ def _cluster_coords(
         centroids = {cid: km.cluster_centers_[cid] for cid in range(k)}
         return labels, centroids
 
-    from sklearn.cluster import HDBSCAN  # noqa: PLC0415
+    from sklearn.cluster import HDBSCAN
 
     min_cluster_size = max(2, math.ceil(n / max_clusters))
     clusterer = HDBSCAN(min_cluster_size=min_cluster_size, copy=True)
@@ -191,7 +191,7 @@ def _track_umap_epochs(
         will not be reported.
     """
     try:
-        import importlib  # noqa: PLC0415
+        import importlib
 
         umap_impl = importlib.import_module("umap.umap_")
     except ImportError:
@@ -307,7 +307,7 @@ def build_embedding_map(
 
     # 3. UMAP (skip when too few samples — fall back to PCA[:3])
     if n >= _MIN_UMAP_N:
-        import umap  # noqa: PLC0415
+        import umap
 
         n_neighbors = min(15, n - 1)
         reducer = umap.UMAP(

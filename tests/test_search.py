@@ -262,21 +262,21 @@ class TestEmbedJob:
 
 class TestClipBackbone:
     def test_is_available(self) -> None:
-        from takeout_rater.scorers.clip_backbone import is_available
+        from takeout_rater.scoring.scorers.clip_backbone import is_available
 
         result = is_available()
         assert isinstance(result, bool)
 
     def test_embedding_dim_constant(self) -> None:
-        from takeout_rater.scorers.clip_backbone import EMBEDDING_DIM
+        from takeout_rater.scoring.scorers.clip_backbone import EMBEDDING_DIM
 
         assert EMBEDDING_DIM == 768
 
     def test_get_clip_model_passes_quick_gelu(self, monkeypatch) -> None:
         """get_clip_model must pass quick_gelu=True to suppress the openai pretrained warning."""
-        from unittest.mock import MagicMock  # noqa: PLC0415
+        from unittest.mock import MagicMock
 
-        import takeout_rater.scorers.clip_backbone as backbone  # noqa: PLC0415
+        import takeout_rater.scoring.scorers.clip_backbone as backbone
 
         create_calls: list[dict] = []
 
@@ -292,7 +292,7 @@ class TestClipBackbone:
         monkeypatch.setattr(backbone, "_tokenizer", None)
         monkeypatch.setattr(backbone, "_device", None)
 
-        import open_clip  # noqa: PLC0415
+        import open_clip
 
         monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
         monkeypatch.setattr(open_clip, "get_tokenizer", lambda _name: MagicMock())

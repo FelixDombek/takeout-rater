@@ -243,8 +243,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_index(args: argparse.Namespace) -> int:
     """Execute the ``index`` sub-command."""
-    from takeout_rater.db.connection import library_state_dir, open_library_db  # noqa: PLC0415
-    from takeout_rater.indexing.run import IndexProgress, run_index  # noqa: PLC0415
+    from takeout_rater.db.connection import library_state_dir, open_library_db
+    from takeout_rater.indexing.run import IndexProgress, run_index
 
     photos_root = Path(args.photos_root).resolve()
     if not photos_root.exists():
@@ -291,12 +291,12 @@ def _cmd_index(args: argparse.Namespace) -> int:
 
 def _cmd_score(args: argparse.Namespace) -> int:
     """Execute the ``score`` sub-command."""
-    from takeout_rater.db.connection import (  # noqa: PLC0415
+    from takeout_rater.db.connection import (
         library_db_path,
         library_state_dir,
         open_library_db,
     )
-    from takeout_rater.scorers.registry import list_scorers  # noqa: PLC0415
+    from takeout_rater.scoring.scorers.registry import list_scorers
 
     db_root = Path(args.db_root).resolve()
     db_path = library_db_path(db_root)
@@ -316,7 +316,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
 
     # -- pHash computation ---------------------------------------------------
     if args.phash:
-        from takeout_rater.scoring.phash import compute_phash_all  # noqa: PLC0415
+        from src.takeout_rater.clustering.phash import compute_phash_all
 
         print("Computing perceptual hashes (dhash) …")
 
@@ -363,7 +363,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
         scorer = cls.create()
         print(f"Running scorer '{spec.display_name}' ({spec.scorer_id}) …")
 
-        from takeout_rater.scoring.pipeline import run_scorer  # noqa: PLC0415
+        from takeout_rater.scoring.pipeline import run_scorer
 
         scorer_id_label = spec.scorer_id  # bind to avoid B023 (loop variable in closure)
 
@@ -387,7 +387,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
 def _cmd_browse(args: argparse.Namespace) -> int:
     """Execute the ``browse`` sub-command."""
     try:
-        import uvicorn  # noqa: PLC0415
+        import uvicorn
     except ImportError:
         print(
             "error: uvicorn is required for the browse command.\n"
@@ -398,7 +398,7 @@ def _cmd_browse(args: argparse.Namespace) -> int:
 
     photos_root = Path(args.photos_root).resolve()
     db_root = Path(args.db_root).resolve()
-    from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
+    from takeout_rater.db.connection import library_db_path, open_library_db
 
     db_path = library_db_path(db_root)
 
@@ -410,7 +410,7 @@ def _cmd_browse(args: argparse.Namespace) -> int:
         )
         return 1
 
-    from takeout_rater.ui.app import create_app  # noqa: PLC0415
+    from takeout_rater.ui.app import create_app
 
     conn = open_library_db(db_root)
     app = create_app(photos_root, conn, db_root=db_root)
@@ -433,8 +433,8 @@ def _cmd_browse(args: argparse.Namespace) -> int:
 
 def _cmd_cluster(args: argparse.Namespace) -> int:
     """Execute the ``cluster`` sub-command."""
-    from takeout_rater.clustering.builder import build_clusters  # noqa: PLC0415
-    from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
+    from takeout_rater.clustering.builder import build_clusters
+    from takeout_rater.db.connection import library_db_path, open_library_db
 
     db_root = Path(args.db_root).resolve()
     db_path = library_db_path(db_root)
@@ -473,14 +473,14 @@ def _cmd_export(args: argparse.Namespace) -> int:
     Copies the best representative from each cluster to the export directory.
     When no scorer is specified, uses the cluster representative (lowest asset ID).
     """
-    import shutil  # noqa: PLC0415
+    import shutil
 
-    from takeout_rater.db.connection import (  # noqa: PLC0415
+    from takeout_rater.db.connection import (
         library_db_path,
         library_state_dir,
         open_library_db,
     )
-    from takeout_rater.db.queries import (  # noqa: PLC0415
+    from takeout_rater.db.queries import (
         get_asset_by_id,
         get_asset_scores,
         get_cluster_members,
@@ -513,7 +513,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     export_dir.mkdir(parents=True, exist_ok=True)
 
     # Check there are any clusters before iterating
-    from takeout_rater.db.queries import count_clusters  # noqa: PLC0415
+    from takeout_rater.db.queries import count_clusters
 
     if count_clusters(conn) == 0:
         print("No clusters found.  Run 'takeout-rater cluster <photos_root>' first.")
@@ -593,7 +593,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     """
     print("Importing server framework …", flush=True)
     try:
-        import uvicorn  # noqa: PLC0415
+        import uvicorn
     except ImportError:
         print(
             "error: uvicorn is required for the serve command.\n"
@@ -603,16 +603,16 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
     print("Loading application modules …", flush=True)
-    from takeout_rater.config import get_db_root, get_photos_root  # noqa: PLC0415
-    from takeout_rater.ui.app import create_app  # noqa: PLC0415
+    from takeout_rater.config import get_db_root, get_photos_root
+    from takeout_rater.ui.app import create_app
 
     photos_root = get_photos_root()
     db_root = get_db_root()
     conn = None
 
     if photos_root is not None and db_root is not None:
-        from takeout_rater.db.connection import library_db_path, open_library_db  # noqa: PLC0415
-        from takeout_rater.db.schema import SchemaMismatchError  # noqa: PLC0415
+        from takeout_rater.db.connection import library_db_path, open_library_db
+        from takeout_rater.db.schema import SchemaMismatchError
 
         db_path = library_db_path(db_root)
         if db_path.exists():

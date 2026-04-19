@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from takeout_rater.clustering.phash import compute_dhash, compute_phash_all, hamming_distance
 from takeout_rater.db.queries import (
     get_phash,
     list_asset_ids_without_phash,
@@ -15,7 +16,6 @@ from takeout_rater.db.queries import (
     upsert_phash,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.scoring.phash import compute_dhash, compute_phash_all, hamming_distance
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,9 +46,9 @@ def _make_thumbnail(
     thumbs_dir: Path, asset_id: int, color: tuple[int, int, int] = (100, 150, 200)
 ) -> Path:
     """Create a minimal JPEG thumbnail and return its path."""
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
-    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: PLC0415
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
 
     thumb = thumb_path_for_id(thumbs_dir, asset_id)
     thumb.parent.mkdir(parents=True, exist_ok=True)
@@ -60,7 +60,7 @@ def _make_thumbnail(
 
 
 def test_compute_dhash_returns_hex_string(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64), color=(100, 150, 200)).save(img_path, "JPEG")
@@ -71,7 +71,7 @@ def test_compute_dhash_returns_hex_string(tmp_path: Path) -> None:
 
 
 def test_compute_dhash_hex_chars_only(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -81,7 +81,7 @@ def test_compute_dhash_hex_chars_only(tmp_path: Path) -> None:
 
 
 def test_compute_dhash_identical_images_match(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img = Image.new("RGB", (64, 64), color=(200, 100, 50))
     img.save(tmp_path / "a.jpg", "JPEG")
@@ -93,7 +93,7 @@ def test_compute_dhash_identical_images_match(tmp_path: Path) -> None:
 
 
 def test_compute_dhash_different_images_differ(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     Image.new("RGB", (64, 64), color=(0, 0, 0)).save(tmp_path / "black.jpg", "JPEG")
     # White-to-black gradient so that left > right in some pixels

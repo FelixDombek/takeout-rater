@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from takeout_rater.scorers.clip_iqa import CLIPIQAScorer
+from takeout_rater.scoring.scorers.clip_iqa import CLIPIQAScorer
 
 # ---------------------------------------------------------------------------
 # Spec tests — no dependencies needed
@@ -58,7 +58,7 @@ def test_is_available_returns_bool() -> None:
 
 
 def test_is_available_false_when_open_clip_missing() -> None:
-    import builtins  # noqa: PLC0415
+    import builtins
 
     real_import = builtins.__import__
 
@@ -78,9 +78,9 @@ def test_is_available_false_when_open_clip_missing() -> None:
 
 def test_ensure_loaded_passes_quick_gelu(monkeypatch) -> None:
     """_ensure_loaded must pass force_quick_gelu=True via the shared clip_backbone."""
-    import torch  # noqa: PLC0415
+    import torch
 
-    import takeout_rater.scorers.clip_backbone as backbone  # noqa: PLC0415
+    import takeout_rater.scoring.scorers.clip_backbone as backbone
 
     fake_model = MagicMock()
     fake_model.logit_scale = torch.tensor(1.0)
@@ -102,7 +102,7 @@ def test_ensure_loaded_passes_quick_gelu(monkeypatch) -> None:
     monkeypatch.setattr(backbone, "_tokenizer", None)
     monkeypatch.setattr(backbone, "_device", None)
 
-    import open_clip  # noqa: PLC0415
+    import open_clip
 
     monkeypatch.setattr(open_clip, "create_model_and_transforms", fake_create)
     monkeypatch.setattr(open_clip, "get_tokenizer", lambda _name: fake_tokenizer)
@@ -141,7 +141,7 @@ def _make_mock_scorer(good_prob: float = 0.75) -> CLIPIQAScorer:
     Args:
         good_prob: The softmax probability to assign to the "good" prompt.
     """
-    import torch  # noqa: PLC0415
+    import torch
 
     scorer = CLIPIQAScorer.create()
 
@@ -188,7 +188,7 @@ def _make_mock_scorer(good_prob: float = 0.75) -> CLIPIQAScorer:
 
 
 def test_score_batch_returns_clip_quality_key(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -200,7 +200,7 @@ def test_score_batch_returns_clip_quality_key(tmp_path: Path) -> None:
 
 
 def test_score_batch_value_in_range(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64)).save(img_path, "JPEG")
@@ -218,7 +218,7 @@ def test_score_batch_missing_file_returns_zero(tmp_path: Path) -> None:
 
 
 def test_score_batch_length_matches_input(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     paths = []
     for i in range(3):
@@ -232,7 +232,7 @@ def test_score_batch_length_matches_input(tmp_path: Path) -> None:
 
 
 def test_score_one(tmp_path: Path) -> None:
-    from PIL import Image  # noqa: PLC0415
+    from PIL import Image
 
     p = tmp_path / "img.jpg"
     Image.new("RGB", (32, 32), color=(200, 150, 100)).save(p, "JPEG")
