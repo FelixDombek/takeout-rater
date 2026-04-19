@@ -2003,6 +2003,21 @@ def finish_face_detection_run(conn: sqlite3.Connection, run_id: int) -> None:
     conn.commit()
 
 
+def clear_face_detection_data(conn: sqlite3.Connection) -> None:
+    """Delete all face detection and face clustering data.
+
+    A fresh face detection run should replace previous embeddings rather than
+    accumulating rows from old or aborted runs.  Face clustering rows reference
+    face embeddings and detection runs, so delete them first.
+    """
+    conn.execute("DELETE FROM face_cluster_members")
+    conn.execute("DELETE FROM face_clusters")
+    conn.execute("DELETE FROM face_cluster_runs")
+    conn.execute("DELETE FROM face_embeddings")
+    conn.execute("DELETE FROM face_detection_runs")
+    conn.commit()
+
+
 def bulk_insert_face_embeddings(
     conn: sqlite3.Connection,
     rows: list[tuple[int, int, int, float, float, float, float, float, bytes]],
@@ -2061,9 +2076,15 @@ def list_asset_ids_without_face_detection(
     return [row[0] for row in rows]
 
 
-def count_face_embeddings(conn: sqlite3.Connection) -> int:
+def count_face_embeddings(conn: sqlite3.Connection, run_id: int | None = None) -> int:
     """Return total number of face embedding rows."""
-    row = conn.execute("SELECT COUNT(*) FROM face_embeddings").fetchone()
+    if run_id is None:
+        row = conn.execute("SELECT COUNT(*) FROM face_embeddings").fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM face_embeddings WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
     return row[0] if row else 0
 
 
@@ -2097,6 +2118,74 @@ def list_face_detection_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+def get_latest_face_detection_run_id(conn: sqlite3.Connection) -> int | None:
+    """Return the most recent finished face detection run ID, or latest run if none finished."""
+    row = conn.execute(
+        "SELECT id FROM face_detection_runs"
+        " ORDER BY (finished_at IS NOT NULL) DESC,"
+        "          COALESCE(finished_at, started_at) DESC,"
+        "          id DESC"
+        " LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def delete_face_detection_run(conn: sqlite3.Connection, run_id: int) -> bool:
+    """Delete a face detection run, its embeddings, and dependent cluster runs.
+
+    Face cluster runs may reference the detection run directly or indirectly
+    through face embeddings.  Delete those cluster runs first so the UI cannot
+    show person groups whose source detections no longer exist.
+    """
+    exists = conn.execute("SELECT 1 FROM face_detection_runs WHERE id = ?", (run_id,)).fetchone()
+    if not exists:
+        return False
+
+    cluster_ids = [
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT fc.id"
+            " FROM face_clusters fc"
+            " LEFT JOIN face_cluster_runs fcr ON fcr.id = fc.run_id"
+            " LEFT JOIN face_cluster_members fcm ON fcm.cluster_id = fc.id"
+            " LEFT JOIN face_embeddings fe ON fe.id = fcm.face_id"
+            " WHERE fcr.detection_run_id = ? OR fe.run_id = ?",
+            (run_id, run_id),
+        ).fetchall()
+    ]
+    cluster_run_ids = [
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT fcr.id"
+            " FROM face_cluster_runs fcr"
+            " LEFT JOIN face_clusters fc ON fc.run_id = fcr.id"
+            " LEFT JOIN face_cluster_members fcm ON fcm.cluster_id = fc.id"
+            " LEFT JOIN face_embeddings fe ON fe.id = fcm.face_id"
+            " WHERE fcr.detection_run_id = ? OR fe.run_id = ?",
+            (run_id, run_id),
+        ).fetchall()
+    ]
+
+    if cluster_ids:
+        conn.executemany(
+            "DELETE FROM face_cluster_members WHERE cluster_id = ?",
+            [(cid,) for cid in cluster_ids],
+        )
+    if cluster_run_ids:
+        conn.executemany(
+            "DELETE FROM face_clusters WHERE run_id = ?",
+            [(rid,) for rid in cluster_run_ids],
+        )
+        conn.executemany(
+            "DELETE FROM face_cluster_runs WHERE id = ?",
+            [(rid,) for rid in cluster_run_ids],
+        )
+    conn.execute("DELETE FROM face_embeddings WHERE run_id = ?", (run_id,))
+    result = conn.execute("DELETE FROM face_detection_runs WHERE id = ?", (run_id,))
+    conn.commit()
+    return result.rowcount > 0
 
 
 def list_face_cluster_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:

@@ -56,6 +56,10 @@ class FaceDetector:
         accelerator: ONNX Runtime GPU backend. ``"gpu"`` uses CUDA directly;
             ``"tensorrt"`` tries TensorRT first, with CUDA and CPU fallbacks.
         trt_cache_dir: Optional directory for TensorRT engine cache files.
+        recognition_batching: Whether to batch recognition for all faces in one
+            image.  Defaults to enabled for CUDA and disabled for TensorRT,
+            because variable recognition batch shapes can force expensive
+            TensorRT engine/profile churn.
     """
 
     def __init__(
@@ -65,6 +69,7 @@ class FaceDetector:
         det_thresh: float = 0.5,
         accelerator: str = "gpu",
         trt_cache_dir: Path | None = None,
+        recognition_batching: bool | None = None,
     ) -> None:
         if model_pack not in _SUPPORTED_PACKS:
             raise ValueError(
@@ -80,7 +85,11 @@ class FaceDetector:
         self._det_thresh = det_thresh
         self._accelerator = accelerator
         self._trt_cache_dir = trt_cache_dir
+        self._recognition_batching = (
+            accelerator != "tensorrt" if recognition_batching is None else recognition_batching
+        )
         self._app: object | None = None
+        self._rec_model: object | None = None
 
     @property
     def model_pack(self) -> str:
@@ -153,6 +162,9 @@ class FaceDetector:
         )
         app.prepare(ctx_id=0, det_size=self._det_size, det_thresh=self._det_thresh)
         self._app = app
+        app_models = getattr(app, "models", None)
+        if isinstance(app_models, dict):
+            self._rec_model = app_models.get("recognition")
         logger.info(
             "InsightFace loaded: pack=%s  accelerator=%s  det_size=%s  det_thresh=%.2f",
             self._model_pack,
@@ -235,41 +247,15 @@ class FaceDetector:
             be read.
         """
         import cv2
-        import numpy as np
 
-        app = self._ensure_loaded()
+        self._ensure_loaded()
 
         img = cv2.imread(str(image_path))
         if img is None:
             logger.debug("Could not read image: %s", image_path)
             return []
 
-        faces_raw = app.get(img)
-        results: list[DetectedFace] = []
-
-        for idx, face in enumerate(faces_raw):
-            bbox = face.bbox.astype(float).tolist()
-            det_score = float(face.det_score)
-            embedding = face.normed_embedding
-            if embedding is None:
-                continue
-            # Ensure L2 normalisation
-            norm = float(np.linalg.norm(embedding))
-            if norm > 1e-9:
-                embedding = (embedding / norm).tolist()
-            else:
-                continue
-
-            results.append(
-                DetectedFace(
-                    bbox=(bbox[0], bbox[1], bbox[2], bbox[3]),
-                    det_score=det_score,
-                    embedding=embedding,
-                    face_index=idx,
-                )
-            )
-
-        return results
+        return self.detect_batched(img) if self._recognition_batching else self._detect_via_face_analysis(img)
 
     def detect_from_array(self, img_array: object) -> list[DetectedFace]:
         """Detect faces from a numpy BGR array (e.g. already-loaded thumbnail).
@@ -280,10 +266,17 @@ class FaceDetector:
         Returns:
             List of :class:`DetectedFace` objects.
         """
+        return (
+            self.detect_batched(img_array)
+            if self._recognition_batching
+            else self._detect_via_face_analysis(img_array)
+        )
+
+    def _detect_via_face_analysis(self, img_array: object) -> list[DetectedFace]:
+        """Fallback implementation using InsightFace's standard single-image API."""
         import numpy as np
 
         app = self._ensure_loaded()
-
         faces_raw = app.get(img_array)
         results: list[DetectedFace] = []
 
@@ -305,6 +298,79 @@ class FaceDetector:
                     det_score=det_score,
                     embedding=embedding,
                     face_index=idx,
+                )
+            )
+
+        return results
+
+    def detect_batched(self, img_array: object) -> list[DetectedFace]:
+        """Detect faces and batch recognition for all faces in one image.
+
+        InsightFace's public ``FaceAnalysis.get()`` recognises each detected
+        face one at a time.  The recognition model supports a list of aligned
+        crops, so this method keeps detection per image but runs ArcFace
+        embedding extraction for all faces in that image as one ONNX batch.
+        """
+        import cv2
+        import numpy as np
+        from insightface.utils import face_align
+
+        app = self._ensure_loaded()
+        rec_model = self._rec_model
+        det_model = getattr(app, "det_model", None)
+        if rec_model is None or det_model is None:
+            return self._detect_via_face_analysis(img_array)
+
+        bboxes, kpss = det_model.detect(img_array, max_num=0, metric="default")
+        if bboxes.shape[0] == 0:
+            return []
+        if kpss is None:
+            return self._detect_via_face_analysis(img_array)
+
+        input_size = getattr(rec_model, "input_size", (112, 112))
+        image_size = int(input_size[0])
+
+        aligned_faces = []
+        aligned_indices: list[int] = []
+        for idx in range(bboxes.shape[0]):
+            kps = kpss[idx]
+            try:
+                transform = face_align.estimate_norm(kps, image_size=image_size)
+            except Exception:  # noqa: BLE001
+                logger.debug("Could not align detected face %s", idx, exc_info=True)
+                continue
+            aligned = cv2.warpAffine(
+                img_array,
+                transform,
+                tuple(input_size),
+                borderMode=cv2.BORDER_CONSTANT,
+            )
+            aligned_faces.append(aligned)
+            aligned_indices.append(idx)
+
+        if not aligned_faces:
+            return []
+
+        try:
+            embeddings = rec_model.get_feat(aligned_faces)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            logger.debug("Batched face recognition failed; falling back", exc_info=True)
+            return self._detect_via_face_analysis(img_array)
+
+        results: list[DetectedFace] = []
+        for emb_idx, face_idx in enumerate(aligned_indices):
+            embedding = embeddings[emb_idx]
+            norm = float(np.linalg.norm(embedding))
+            if norm <= 1e-9:
+                continue
+            embedding = (embedding / norm).tolist()
+            bbox = bboxes[face_idx, 0:4].astype(float).tolist()
+            results.append(
+                DetectedFace(
+                    bbox=(bbox[0], bbox[1], bbox[2], bbox[3]),
+                    det_score=float(bboxes[face_idx, 4]),
+                    embedding=embedding,
+                    face_index=face_idx,
                 )
             )
 

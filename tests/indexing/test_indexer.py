@@ -66,3 +66,50 @@ def test_run_index_separate_db_root(tmp_path: Path) -> None:
     assert library_db_path(db_root).exists()
     # DB must NOT be inside photos_root
     assert not library_db_path(photos_root).exists()
+
+
+def test_run_index_batches_clip_embeddings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import torch
+    from PIL import Image
+
+    from takeout_rater.indexing.run import run_index
+
+    photos_root = tmp_path / "photos"
+    photos_root.mkdir()
+    for idx in range(8):
+        Image.new("RGB", (24, 24), color=(idx * 20, 40, 80)).save(
+            photos_root / f"img{idx}.jpg",
+            "JPEG",
+        )
+
+    db_root = tmp_path / "state"
+    db_root.mkdir()
+    conn = open_library_db(db_root)
+    batch_sizes: list[int] = []
+
+    class _FakeClipModel:
+        def encode_image(self, batch):  # type: ignore[no-untyped-def]
+            batch_sizes.append(int(batch.shape[0]))
+            embeddings = torch.zeros(batch.shape[0], 768)
+            embeddings[:, 0] = 1.0
+            return embeddings
+
+    def _fake_get_clip_model():  # type: ignore[no-untyped-def]
+        return (
+            _FakeClipModel(),
+            lambda _img: torch.zeros(3, 224, 224),
+            None,
+            torch.device("cpu"),
+        )
+
+    monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.is_available", lambda: True)
+    monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.get_clip_model", _fake_get_clip_model)
+
+    run_index(photos_root, conn, db_root=db_root)
+
+    assert conn.execute("SELECT COUNT(*) FROM clip_embeddings").fetchone()[0] == 8
+    assert batch_sizes
+    assert max(batch_sizes) > 1
+    conn.close()

@@ -58,6 +58,56 @@
       <div class="progress-bar-wrap" id="prog-wrap-detect_faces"><div class="progress-bar" id="prog-bar-detect_faces"></div></div>
       <div class="job-current-item" id="current-item-detect_faces"></div>
       <div class="job-status" id="status-detect_faces"></div>
+
+      <div class="runs-section">
+        <h3>Face Detection Runs</h3>
+        {% if detection_runs %}
+          <div class="runs-list runs-list-compact" id="face-detection-runs-list">
+            {% for run in detection_runs %}
+            <div class="run-card" id="face-detection-run-card-{{ run.run_id }}">
+              <div class="run-thumb-placeholder">Faces</div>
+              <div class="run-body">
+                <div class="run-title">Face detection #{{ run.run_id }}</div>
+                <div>
+                  <span class="run-badge run-badge-faces">
+                    {{ run.n_faces }} face{{ 's' if run.n_faces != 1 else '' }}
+                  </span>
+                  <span class="run-badge run-badge-params">{{ run.model_id }}</span>
+                  {% if run.finished_at %}
+                  <span class="run-badge run-badge-params">Finished</span>
+                  {% else %}
+                  <span class="run-badge run-badge-params">Incomplete</span>
+                  {% endif %}
+                  {% if run.params %}
+                    {% for k, v in run.params.items() %}
+                    <span class="run-badge run-badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
+                    {% endfor %}
+                  {% endif %}
+                </div>
+                <div class="run-meta">
+                  <span title="Started at">Started {{ run.started_at | timestamp_fmt }}</span>
+                  {% if run.finished_at %}
+                  <span title="Finished at">Finished {{ run.finished_at | timestamp_fmt }}</span>
+                  {% endif %}
+                </div>
+                <div class="run-delete-status" id="face-detection-del-status-{{ run.run_id }}"></div>
+              </div>
+              <div class="run-actions">
+                <button
+                  class="btn btn-danger"
+                  title="Delete this face detection run"
+                  onclick="deleteFaceDetectionRun({{ run.run_id }})"
+                >Delete</button>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty-state empty-state-compact">
+            <p>No face detection runs yet.</p>
+          </div>
+        {% endif %}
+      </div>
     </div>
 
     <div class="job-card" id="card-cluster_faces">
@@ -344,6 +394,15 @@
       cardId: 'face-run-card-' + runId,
       statusId: 'face-del-status-' + runId,
       url: '/api/faces/cluster-run/' + runId
+    });
+  };
+
+  window.deleteFaceDetectionRun = function(runId) {
+    deleteSavedRun({
+      confirmMessage: 'Delete this face detection run, its face embeddings, and dependent face clusterings? This cannot be undone.',
+      cardId: 'face-detection-run-card-' + runId,
+      statusId: 'face-detection-del-status-' + runId,
+      url: '/api/faces/detection-run/' + runId
     });
   };
 })();

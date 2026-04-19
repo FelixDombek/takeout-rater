@@ -13,16 +13,16 @@ Takeout directory in two distinct phases:
    * Parses the sidecar JSON in parallel (if present)
    * Acquires a single shared mutex (:data:`_claim_lock`) only for the critical section:
      check ``lookup_sha256`` → ``upsert_asset`` (which records aliases if needed)
-   * After claiming ownership: computes phash, then CLIP embedding (serialised
-     via a per-run lock to prevent PyTorch deadlocks), and thumbnail in
-     parallel with other workers' non-CLIP steps
+   * After claiming ownership: computes thumbnail and pHash in parallel, then
+     queues the thumbnail for a dedicated batched CLIP embedding worker
 
 The mutex guards only the minimal critical section required to prevent two
 workers from both claiming the same sha256-identified asset.  CLIP inference
-is additionally serialised (one worker at a time) to avoid a PyTorch
-thread-pool deadlock that occurs when multiple Python threads call
-``encode_image()`` concurrently.  All other per-asset work (SHA-256, sidecar
-parsing, phash, thumbnails) proceeds fully in parallel.
+runs on one dedicated worker thread that batches queued thumbnails, avoiding
+the PyTorch thread-pool deadlock that occurs when multiple Python threads call
+``encode_image()`` concurrently while still giving the GPU real image batches.
+All other per-asset work (SHA-256, sidecar parsing, phash, thumbnails)
+proceeds fully in parallel.
 
 Progress is reported via the :class:`IndexProgress` dataclass.  The
 :attr:`IndexProgress.pct` property exposes a unified 0–100 % figure that
@@ -145,6 +145,7 @@ def run_index(
     Returns:
         The final :class:`IndexProgress` describing what was indexed.
     """
+    import queue
     import threading
 
     from src.takeout_rater.clustering.phash import (
@@ -260,13 +261,110 @@ def run_index(
     # This prevents two workers from both claiming the same hash as "new".
     _claim_lock = threading.Lock()
     _progress_lock = threading.Lock()
-    # _clip_lock serialises CLIP inference to ONE worker at a time.
-    # PyTorch's internal C++ thread pool can deadlock when multiple Python
-    # threads all call encode_image() simultaneously (especially on CPU with
-    # MKL/OpenBLAS).  Serialising inference avoids that deadlock entirely while
-    # still allowing all other per-asset work (SHA-256, sidecar, phash,
-    # thumbnails) to proceed in parallel.
-    _clip_lock = threading.Lock()
+    # CLIP inference is handled by one dedicated worker that forms batches.
+    # Calling encode_image() from many Python workers can deadlock PyTorch's
+    # thread pool, but calling it serially one image at a time underutilises the
+    # GPU.  A bounded queue gives us backpressure and real CLIP batches.
+    _clip_batch_size = 32
+    _clip_queue_max = 128
+    _clip_queue: queue.Queue[object] = queue.Queue(maxsize=_clip_queue_max)
+    _clip_sentinel = object()
+
+    def _clip_batch_worker() -> None:
+        import struct
+
+        try:
+            import torch
+
+            from takeout_rater.scoring.scorers.clip_backbone import (
+                get_clip_model,
+            )
+        except ImportError:
+            return
+
+        try:
+            model, preprocess, _tokenizer, device = get_clip_model()
+        except Exception:  # noqa: BLE001
+            _log.warning("CLIP batch worker failed to load model", exc_info=True)
+            return
+
+        wconn = open_db(db_path)
+        try:
+            while True:
+                item = _clip_queue.get()
+                if item is _clip_sentinel:
+                    _clip_queue.task_done()
+                    break
+
+                batch = [item]
+                saw_sentinel = False
+                while len(batch) < _clip_batch_size:
+                    try:
+                        next_item = _clip_queue.get(timeout=0.02)
+                    except queue.Empty:
+                        break
+                    if next_item is _clip_sentinel:
+                        _clip_queue.task_done()
+                        saw_sentinel = True
+                        break
+                    batch.append(next_item)
+
+                try:
+                    asset_ids = [entry[0] for entry in batch]  # type: ignore[index]
+                    relpaths = [entry[1] for entry in batch]  # type: ignore[index]
+                    images = [entry[2] for entry in batch]  # type: ignore[index]
+                    _log.debug("CLIP batch inference start: %d image(s)", len(images))
+                    tensors = [preprocess(img) for img in images]
+                    batch_tensor = torch.stack(tensors).to(device)
+                    with torch.no_grad():
+                        embeddings = model.encode_image(batch_tensor)
+                        embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
+                        embeddings_np = embeddings.cpu().float().numpy()
+                    rows = [
+                        (asset_id, struct.pack(f"{emb.shape[0]}f", *emb), now)
+                        for asset_id, emb in zip(asset_ids, embeddings_np, strict=True)
+                    ]
+                    wconn.executemany(
+                        "INSERT OR REPLACE INTO clip_embeddings"
+                        " (asset_id, embedding, computed_at) VALUES (?, ?, ?)",
+                        rows,
+                    )
+                    wconn.commit()
+                    for relpath in relpaths:
+                        _log.debug("CLIP inference done for %r", relpath)
+                except Exception:  # noqa: BLE001
+                    _log.warning("CLIP batch embedding failed", exc_info=True)
+                finally:
+                    for _ in batch:
+                        _clip_queue.task_done()
+
+                if saw_sentinel:
+                    break
+        finally:
+            wconn.close()
+
+    _clip_thread: threading.Thread | None = None
+    if _clip_warmup_ok.is_set():
+        _clip_thread = threading.Thread(
+            target=_clip_batch_worker,
+            daemon=True,
+            name="clip-batch-embed",
+        )
+        _clip_thread.start()
+
+    def _enqueue_clip(asset_id: int, relpath: str, img_rgb: object) -> None:
+        if _clip_thread is None:
+            return
+        while True:
+            if not _clip_thread.is_alive():
+                return
+            if cancel_check is not None and cancel_check():
+                return
+            try:
+                _clip_queue.put((asset_id, relpath, img_rgb), timeout=0.25)
+                return
+            except queue.Full:
+                continue
 
     def _process_one(asset_file: object) -> None:
         """Process a single asset: hash, sidecar, claim, then thumb+phash+embed."""
@@ -454,40 +552,13 @@ def run_index(
                         _log.warning("phash failed for %r", relpath, exc_info=True)
 
                 if needs_clip and _clip_warmup_ok.is_set():
-                    # Compute CLIP embedding from thumbnail.
-                    _log.debug("CLIP inference start for %r", relpath)
+                    # Queue CLIP embedding from thumbnail.  A dedicated worker
+                    # batches these queued images for efficient GPU inference.
                     try:
-                        import struct
-
-                        import torch
-
-                        from takeout_rater.scoring.scorers.clip_backbone import (
-                            get_clip_model,
-                        )
-
-                        model, preprocess, _tokenizer, device = get_clip_model()
-                        img_rgb = thumb_img.convert("RGB")
-                        img_tensor = preprocess(img_rgb).unsqueeze(0).to(device)
-                        with _clip_lock, torch.no_grad():
-                            embedding = model.encode_image(img_tensor)
-                            embedding = embedding / embedding.norm(dim=-1, keepdim=True)
-                            embedding = embedding.cpu().float().numpy()[0]
-                        blob = struct.pack(f"{embedding.shape[0]}f", *embedding)
-                        wconn3 = open_db(db_path)
-                        try:
-                            wconn3.execute(
-                                "INSERT OR REPLACE INTO clip_embeddings"
-                                " (asset_id, embedding, computed_at) VALUES (?, ?, ?)",
-                                (asset_id, blob, now),
-                            )
-                            wconn3.commit()
-                        finally:
-                            wconn3.close()
-                        _log.debug("CLIP inference done for %r", relpath)
-                    except ImportError:
-                        pass  # torch / open_clip not available
+                        img_rgb = thumb_img.convert("RGB").copy()
+                        _enqueue_clip(asset_id, relpath, img_rgb)
                     except Exception:
-                        _log.warning("CLIP embedding failed for %r", relpath, exc_info=True)
+                        _log.warning("CLIP queueing failed for %r", relpath, exc_info=True)
 
     # Submit all workers in parallel; _process_one swallows every exception
     # internally (logging it) so future.result() never re-raises and the
@@ -496,6 +567,12 @@ def run_index(
         futures: list[Future] = [executor.submit(_process_one, af) for af in assets]
         for future in as_completed(futures):
             future.result()
+
+    if _clip_thread is not None:
+        _clip_queue.put(_clip_sentinel)
+        if _clip_thread.is_alive():
+            _clip_queue.join()
+            _clip_thread.join(timeout=30)
 
     progress.running = False
     progress.done = True

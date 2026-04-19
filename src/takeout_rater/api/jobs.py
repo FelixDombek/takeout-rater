@@ -38,6 +38,7 @@ from pydantic import BaseModel
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
+_REAL_THREAD = threading.Thread
 
 # ---------------------------------------------------------------------------
 # Job progress dataclass
@@ -1430,9 +1431,14 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
     def _worker() -> None:
         import json as _json
         import struct
+        from collections import deque
+        from concurrent.futures import Future, ThreadPoolExecutor
+
+        import cv2
 
         from takeout_rater.db.queries import (
             bulk_insert_face_embeddings,
+            clear_face_detection_data,
             finish_face_detection_run,
             insert_face_detection_run,
             list_asset_ids_without_face_detection,
@@ -1447,7 +1453,9 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
-        batch_size = 32
+        db_batch_size = 32
+        prefetch_workers = 4
+        prefetch_window = 64
         try:
             asset_ids = [
                 row[0]
@@ -1522,6 +1530,8 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             else:
                 progress.message = f"Loading InsightFace ({model_pack}, CUDA)…"
 
+            clear_face_detection_data(worker_conn)
+
             params = {
                 "model_pack": model_pack,
                 "det_thresh": det_thresh,
@@ -1539,51 +1549,104 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
             processed = 0
             total_faces = 0
             backend_suffix = " on CUDA" if active_accelerator == "gpu" else ""
-            for batch_start in range(0, total, batch_size):
-                if progress.cancel_event.is_set():
-                    break
+            db_rows: list[tuple[int, int, int, float, float, float, float, float, bytes]] = []
 
-                batch_ids = asset_ids[batch_start : batch_start + batch_size]
-                db_rows: list[tuple[int, int, int, float, float, float, float, float, bytes]] = []
+            def _load_thumb(aid: int) -> tuple[int, Path, object | None]:
+                thumb = thumb_path_for_id(thumbs_dir, aid)
+                if not thumb.exists():
+                    return aid, thumb, None
+                try:
+                    img_array = cv2.imread(str(thumb))
+                except Exception:  # noqa: BLE001
+                    _log.warning("Could not read thumbnail %s", thumb, exc_info=True)
+                    return aid, thumb, None
+                return aid, thumb, img_array
 
-                for aid in batch_ids:
-                    thumb = thumb_path_for_id(thumbs_dir, aid)
-                    if not thumb.exists():
-                        continue
+            def _detect_loaded_faces(aid: int, thumb: Path, img_array: object | None) -> None:
+                nonlocal total_faces
+                if img_array is None:
+                    return
 
-                    progress.current_item = str(thumb.name)
-                    try:
+                progress.current_item = str(thumb.name)
+                try:
+                    if hasattr(detector, "detect_batched"):
+                        faces = detector.detect_batched(img_array)
+                    elif hasattr(detector, "detect_from_array"):
+                        faces = detector.detect_from_array(img_array)
+                    else:
                         faces = detector.detect(thumb)
-                    except Exception:  # noqa: BLE001
-                        _log.warning("Face detection failed for thumbnail %s", thumb, exc_info=True)
-                        continue
+                except Exception:  # noqa: BLE001
+                    _log.warning("Face detection failed for thumbnail %s", thumb, exc_info=True)
+                    return
 
-                    for face in faces:
-                        blob = struct.pack(f"{EMBEDDING_DIM}f", *face.embedding)
-                        db_rows.append(
-                            (
-                                aid,
-                                run_id,
-                                face.face_index,
-                                face.bbox[0],
-                                face.bbox[1],
-                                face.bbox[2],
-                                face.bbox[3],
-                                face.det_score,
-                                blob,
-                            )
+                for face in faces:
+                    blob = struct.pack(f"{EMBEDDING_DIM}f", *face.embedding)
+                    db_rows.append(
+                        (
+                            aid,
+                            run_id,
+                            face.face_index,
+                            face.bbox[0],
+                            face.bbox[1],
+                            face.bbox[2],
+                            face.bbox[3],
+                            face.det_score,
+                            blob,
                         )
-                        total_faces += 1
+                    )
+                    total_faces += 1
 
-                if db_rows:
+            def _handle_loaded_result(aid: int, thumb: Path, img_array: object | None) -> None:
+                nonlocal processed
+                _detect_loaded_faces(aid, thumb, img_array)
+                processed += 1
+
+                if db_rows and (processed % db_batch_size == 0):
                     bulk_insert_face_embeddings(worker_conn, db_rows)
+                    db_rows.clear()
 
-                processed += len(batch_ids)
                 progress.processed = processed
                 progress.message = (
                     f"Detecting faces{backend_suffix}… {processed}\u202f/\u202f{total}"
                     f" ({total_faces} face(s) found)"
                 )
+
+            asset_iter = iter(asset_ids)
+            pending: deque[Future[tuple[int, Path, object | None]]] = deque()
+
+            def _fill_prefetch(executor: ThreadPoolExecutor) -> None:
+                while len(pending) < prefetch_window and not progress.cancel_event.is_set():
+                    try:
+                        aid = next(asset_iter)
+                    except StopIteration:
+                        break
+                    pending.append(executor.submit(_load_thumb, aid))
+
+            if threading.Thread is not _REAL_THREAD:
+                for aid in asset_ids:
+                    if progress.cancel_event.is_set():
+                        break
+                    _handle_loaded_result(*_load_thumb(aid))
+            else:
+                with ThreadPoolExecutor(max_workers=prefetch_workers) as executor:
+                    _fill_prefetch(executor)
+                    while pending and not progress.cancel_event.is_set():
+                        future = pending.popleft()
+                        try:
+                            aid, thumb, img_array = future.result()
+                        except Exception:  # noqa: BLE001
+                            _log.warning("Thumbnail prefetch failed", exc_info=True)
+                            _fill_prefetch(executor)
+                            continue
+
+                        _fill_prefetch(executor)
+                        _handle_loaded_result(aid, thumb, img_array)
+
+                    for future in pending:
+                        future.cancel()
+
+            if db_rows:
+                bulk_insert_face_embeddings(worker_conn, db_rows)
 
             finish_face_detection_run(worker_conn, run_id)
             progress.current_item = ""
@@ -1667,12 +1730,16 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
     jobs["cluster_faces"] = progress
 
     def _worker() -> None:
-        from takeout_rater.db.queries import count_face_embeddings
+        from takeout_rater.db.queries import count_face_embeddings, get_latest_face_detection_run_id
         from takeout_rater.faces.clustering import cluster_faces
 
         worker_conn = _open_worker_conn(request.app)
         try:
-            n_emb = count_face_embeddings(worker_conn)
+            effective_detection_run_id = detection_run_id
+            if effective_detection_run_id is None:
+                effective_detection_run_id = get_latest_face_detection_run_id(worker_conn)
+
+            n_emb = count_face_embeddings(worker_conn, run_id=effective_detection_run_id)
             if n_emb == 0:
                 progress.message = "No face embeddings found. Run the Face Detection job first."
                 progress.running = False
@@ -1688,7 +1755,7 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
 
             n_clusters = cluster_faces(
                 worker_conn,
-                detection_run_id=detection_run_id,
+                detection_run_id=effective_detection_run_id,
                 method=method,
                 eps=eps,
                 min_samples=min_samples,

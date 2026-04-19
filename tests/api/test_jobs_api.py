@@ -313,6 +313,7 @@ def test_detect_faces_tensorrt_startup_failure_falls_back_to_cuda(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import json  # noqa: E402
+    import struct  # noqa: E402
     import threading  # noqa: E402
     from types import SimpleNamespace  # noqa: E402
 
@@ -320,7 +321,11 @@ def test_detect_faces_tensorrt_startup_failure_falls_back_to_cuda(
 
     import takeout_rater.api.jobs as jobs_mod  # noqa: E402
     from takeout_rater.db.connection import open_library_db  # noqa: E402
-    from takeout_rater.db.queries import upsert_asset  # noqa: E402
+    from takeout_rater.db.queries import (  # noqa: E402
+        bulk_insert_face_embeddings,
+        insert_face_detection_run,
+        upsert_asset,
+    )
     from takeout_rater.faces.detector import EMBEDDING_DIM  # noqa: E402
     from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: E402
     from takeout_rater.ui.app import create_app  # noqa: E402
@@ -337,6 +342,23 @@ def test_detect_faces_tensorrt_startup_failure_falls_back_to_cuda(
         },
     )
     conn.commit()
+    old_run_id = insert_face_detection_run(conn, "buffalo_l", None)
+    bulk_insert_face_embeddings(
+        conn,
+        [
+            (
+                asset_id,
+                old_run_id,
+                0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                0.5,
+                struct.pack(f"{EMBEDDING_DIM}f", *([0.0] * EMBEDDING_DIM)),
+            )
+        ],
+    )
     conn.close()
 
     thumbs_dir = tmp_path / "takeout-rater" / "thumbs"
@@ -397,6 +419,7 @@ def test_detect_faces_tensorrt_startup_failure_falls_back_to_cuda(
         assert params["accelerator"] == "gpu"
         assert params["requested_accelerator"] == "tensorrt"
         assert check_conn.execute("SELECT COUNT(*) FROM face_embeddings").fetchone()[0] == 1
+        assert check_conn.execute("SELECT COUNT(*) FROM face_detection_runs").fetchone()[0] == 1
     finally:
         check_conn.close()
 
