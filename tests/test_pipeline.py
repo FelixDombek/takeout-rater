@@ -17,8 +17,8 @@ from takeout_rater.db.queries import (
     upsert_asset,
 )
 from takeout_rater.db.schema import migrate
-from takeout_rater.scoring.scorers.simple import SimpleScorer
 from takeout_rater.scoring.pipeline import run_scorer, run_scorer_by_id
+from takeout_rater.scoring.scorers.simple import SimpleScorer
 
 FIXTURE_TAKEOUT = Path(__file__).parent / "fixtures" / "takeout_tree" / "Takeout"
 

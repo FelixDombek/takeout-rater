@@ -462,8 +462,8 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     rerun = body.rerun
 
     def _worker() -> None:
-        from takeout_rater.scoring.scorers.registry import list_scorers  # noqa: PLC0415
         from takeout_rater.scoring.pipeline import run_scorer_by_id  # noqa: PLC0415
+        from takeout_rater.scoring.scorers.registry import list_scorers  # noqa: PLC0415
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
@@ -473,10 +473,19 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             # When no specific scorer is requested every available scorer is
             # run for all of its variants.
             if scorer_id:
-                target_cls = next((cls for cls in list_scorers() if cls.spec().scorer_id == scorer_id), None)
+                target_cls = next(
+                    (cls for cls in list_scorers() if cls.spec().scorer_id == scorer_id), None
+                )
                 spec = target_cls.spec()
-                target_vars = [v for v in spec.variants if v.variant_id == variant_id] if variant_id else spec.variants
-                scorer_variants = [(scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}") for v in target_vars]
+                target_vars = (
+                    [v for v in spec.variants if v.variant_id == variant_id]
+                    if variant_id
+                    else spec.variants
+                )
+                scorer_variants = [
+                    (scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}")
+                    for v in target_vars
+                ]
             else:
                 scorer_variants = [
                     (spec.scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}")
@@ -1127,13 +1136,13 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
                             from PIL import Image  # noqa: PLC0415
 
-                            from takeout_rater.db.queries import (
-                                upsert_phash,
-                            )  # noqa: PLC0415
                             from src.takeout_rater.clustering.phash import (  # noqa: PLC0415
                                 DHASH_ALGO,
                                 compute_dhash_from_image,
                             )
+                            from takeout_rater.db.queries import (
+                                upsert_phash,
+                            )  # noqa: PLC0415
 
                             thumb_img = Image.open(io.BytesIO(thumb.read_bytes()))
                             dhash_hex = compute_dhash_from_image(thumb_img)

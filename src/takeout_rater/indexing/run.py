@@ -147,6 +147,10 @@ def run_index(
     """
     import threading  # noqa: PLC0415
 
+    from src.takeout_rater.clustering.phash import (
+        DHASH_ALGO,
+        compute_dhash_from_image,
+    )  # noqa: PLC0415
     from takeout_rater.db.connection import (  # noqa: PLC0415
         library_db_path,
         library_state_dir,
@@ -160,10 +164,6 @@ def run_index(
         generate_thumbnail_from_image,
         thumb_path_for_id,
     )
-    from src.takeout_rater.clustering.phash import (
-        DHASH_ALGO,
-        compute_dhash_from_image,
-    )  # noqa: PLC0415
 
     if db_root is None:
         raise ValueError("db_root is required")
