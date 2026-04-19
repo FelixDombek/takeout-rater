@@ -226,7 +226,17 @@ class TestSearchAPI:
 
 
 class TestEmbedJob:
-    def test_start_embed_job_returns_started(self, client_with_db: TestClient) -> None:
+    def test_start_embed_job_returns_started(
+        self, client_with_db: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import threading
+
+        class _NoOpThread(threading.Thread):
+            def start(self) -> None:  # type: ignore[override]
+                return None
+
+        monkeypatch.setattr("takeout_rater.api.jobs.threading.Thread", _NoOpThread)
+
         resp = client_with_db.post("/api/jobs/embed/start", json={})
         assert resp.status_code == 200
         data = resp.json()
