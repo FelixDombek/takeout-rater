@@ -3,24 +3,8 @@
 {% block title %}{{ label or ('Person #' ~ cluster_id) }} – takeout-rater{% endblock %}
 
 {% block head %}
+<link rel="stylesheet" href="/static/clustering-shared.css">
 <style>
-  .cluster-header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-    flex-wrap: wrap;
-  }
-  .cluster-header h1 { font-size: 1.25rem; margin: 0; }
-  .member-count {
-    display: inline-block;
-    padding: 0.2rem 0.6rem;
-    background: #e8f0fe;
-    color: #1a5cdb;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
   .rename-form {
     display: flex;
     align-items: center;
@@ -35,68 +19,6 @@
     width: 220px;
   }
   .rename-status { min-height: 1em; font-size: 0.8rem; color: #888; }
-  .member-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 8px;
-  }
-  .member-card {
-    background: #fff;
-    border-radius: 6px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,.12);
-    transition: box-shadow 0.15s;
-  }
-  .member-card.is-rep { box-shadow: 0 0 0 2px #1a5cdb, 0 2px 6px rgba(0,0,0,.15); }
-  .member-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
-  .member-card.is-rep:hover { box-shadow: 0 0 0 2px #1a5cdb, 0 4px 10px rgba(0,0,0,.2); }
-  .member-card a { display: block; color: inherit; text-decoration: none; }
-  .member-thumb {
-    width: 100%;
-    aspect-ratio: 1;
-    object-fit: cover;
-    display: block;
-    background: #e0e0e0;
-  }
-  .member-thumb-placeholder {
-    width: 100%;
-    aspect-ratio: 1;
-    background: #ddd;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #999;
-    font-size: 1.2rem;
-  }
-  .member-body {
-    padding: 0.4rem 0.5rem;
-    font-size: 0.75rem;
-    color: #555;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .member-meta {
-    display: block;
-    font-size: 0.68rem;
-    color: #999;
-    margin-top: 0.15rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .rep-badge {
-    display: inline-block;
-    margin-right: 3px;
-    padding: 0 4px;
-    background: #1a5cdb;
-    color: #fff;
-    border-radius: 3px;
-    font-size: 0.65rem;
-    font-weight: 700;
-    vertical-align: middle;
-  }
-  .back-link { margin-bottom: 1rem; display: inline-block; }
 </style>
 {% endblock %}
 

@@ -3,95 +3,13 @@
 {% block title %}Faces – takeout-rater{% endblock %}
 
 {% block head %}
+<link rel="stylesheet" href="/static/clustering-shared.css">
 <style>
   .faces-page { max-width: 1200px; margin: 0 auto; }
   .faces-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   .faces-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
 
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin: 1.25rem 0;
-    flex-wrap: wrap;
-  }
-
-  .runs-list { display: flex; flex-direction: column; gap: 1rem; }
-  .run-card {
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08);
-    display: flex;
-    align-items: stretch;
-    overflow: hidden;
-    transition: box-shadow 0.15s;
-  }
-  .run-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.15); }
-  .run-thumb-link {
-    display: block;
-    flex-shrink: 0;
-    width: 80px;
-    background: #e8e8e8;
-  }
-  .run-thumb {
-    width: 80px;
-    height: 80px;
-    object-fit: cover;
-    display: block;
-  }
-  .run-thumb-placeholder {
-    width: 80px;
-    height: 80px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #999;
-    font-size: 1.8rem;
-    background: #e8e8e8;
-  }
-  .run-body {
-    flex: 1;
-    padding: 0.75rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-  .run-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #222;
-    text-decoration: none;
-  }
-  .run-title:hover { color: #1a5cdb; text-decoration: underline; }
-  .run-meta {
-    font-size: 0.8rem;
-    color: #666;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1rem;
-  }
-  .run-badge {
-    display: inline-block;
-    padding: 0 6px;
-    border-radius: 3px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-  .run-badge-clusters { background: #e8f0fe; color: #1a5cdb; }
-  .run-badge-faces { background: #e7f8ef; color: #1f7a42; }
-  .run-badge-params { background: #f3f4f6; color: #374151; font-family: monospace; }
-  .run-actions {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    padding: 0 0.75rem;
-  }
-  .run-delete-status {
-    font-size: 0.8rem;
-    min-height: 1em;
-    color: #888;
-  }
+  .faces-page .toolbar { margin: 1.25rem 0; }
   .license-note {
     font-size: 0.75rem;
     color: #999;
@@ -233,6 +151,7 @@
   no images or embeddings leave your machine.
 </p>
 
+<script src="/static/clustering-shared.js"></script>
 <script>
 (function () {
   var _pollers = {};
@@ -356,28 +275,12 @@
   };
 
   window.deleteFaceRun = function(runId) {
-    if (!confirm('Delete this face clustering run and all person groups? This cannot be undone.')) return;
-    var card = document.getElementById('face-run-card-' + runId);
-    var statusEl = document.getElementById('face-del-status-' + runId);
-    var btn = card ? card.querySelector('.run-actions .btn') : null;
-    if (btn) btn.disabled = true;
-    if (statusEl) { statusEl.textContent = 'Deleting\u2026'; statusEl.style.color = '#888'; }
-    fetch('/api/faces/cluster-run/' + runId, { method: 'DELETE' })
-      .then(function(r) {
-        if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
-        return r.json();
-      })
-      .then(function() {
-        if (card) {
-          card.style.transition = 'opacity 0.3s';
-          card.style.opacity = '0';
-          setTimeout(function() { card.remove(); }, 300);
-        }
-      })
-      .catch(function(err) {
-        if (statusEl) { statusEl.textContent = '\u2717 ' + err.message; statusEl.style.color = '#c0392b'; }
-        if (btn) btn.disabled = false;
-      });
+    deleteSavedRun({
+      confirmMessage: 'Delete this face clustering run and all person groups? This cannot be undone.',
+      cardId: 'face-run-card-' + runId,
+      statusId: 'face-del-status-' + runId,
+      url: '/api/faces/cluster-run/' + runId
+    });
   };
 })();
 </script>
