@@ -1,19 +1,22 @@
 FROM python:3.12-slim
 
-# Install git (often needed for pip installing from git repos)
+# Install system dependencies
+# git: needed for some python packages
+# build-essential: provides gcc/g++ for insightface/cython
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy only the pyproject.toml
+# Copy the pyproject.toml
 COPY pyproject.toml .
 
-# 1. Install pip-tools to handle the dependency extraction cleanly
-# 2. Extract dependencies + dev extras and install them
-# We use a python script to handle the TOML parsing since 'tomllib' is built-in to 3.11+
-RUN pip install --no-cache-dir --upgrade pip && \
+# Extract and install dependencies
+# We also install 'setuptools' and 'wheel' explicitly first to ensure 
+# building wheels for packages like insightface goes smoothly.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     python -c "import tomllib; \
     p = tomllib.load(open('pyproject.toml', 'rb')); \
     deps = p['project'].get('dependencies', []); \
@@ -21,4 +24,5 @@ RUN pip install --no-cache-dir --upgrade pip && \
     print('\n'.join(deps + dev_deps))" > requirements.txt && \
     pip install --no-cache-dir -r requirements.txt
 
-# No COPY . needed here. GitHub Actions mounts your code at runtime.
+# Final cleanup of build tools to keep the image size down (optional)
+RUN apt-get purge -y --auto-remove build-essential
