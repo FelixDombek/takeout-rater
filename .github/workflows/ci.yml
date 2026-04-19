@@ -39,14 +39,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/${{ github.repository_owner }}/takeout-rater-ci:latest
+      # Hardcoded lowercase name to satisfy Docker's requirements
+      image: ghcr.io/felixdombek/takeout-rater:latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Sync dependencies
-        # This is the "Safety Net". If the image is up to date, this takes 1-2s.
-        # If you just added a package, it installs ONLY that package.
-        run: pip install ".[dev]"
+        run: pip install --no-deps -e .
 
       - name: Run tests
         run: pytest
@@ -54,12 +53,12 @@ jobs:
   slow-tests:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/${{ github.repository_owner }}/takeout-rater-ci:latest
+      image: ghcr.io/felixdombek/takeout-rater:latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Sync dependencies
-        run: pip install ".[dev]"
+        run: pip install --no-deps -e .
 
       - name: Run slow tests
         env:
