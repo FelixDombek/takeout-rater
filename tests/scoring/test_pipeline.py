@@ -20,7 +20,7 @@ from takeout_rater.db.schema import migrate
 from takeout_rater.scoring.pipeline import run_scorer, run_scorer_by_id
 from takeout_rater.scoring.scorers.simple import SimpleScorer
 
-FIXTURE_TAKEOUT = Path(__file__).parent / "fixtures" / "takeout_tree" / "Takeout"
+FIXTURE_TAKEOUT = Path(__file__).resolve().parents[1] / "fixtures" / "takeout_tree" / "Takeout"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

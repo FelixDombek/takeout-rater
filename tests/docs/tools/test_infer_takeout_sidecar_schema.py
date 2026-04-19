@@ -6,11 +6,11 @@ tests/fixtures/takeout_sidecars/ and validates the output shape.
 
 Can also be run as a standalone script to inspect a real Takeout folder:
 
-  python tests/test_infer_takeout_sidecar_schema.py <TAKEOUT_DIR>
+  python tests/docs/tools/test_infer_takeout_sidecar_schema.py <TAKEOUT_DIR>
 
 On Windows, when .py files are associated with an editor, use:
 
-  python tests\\test_infer_takeout_sidecar_schema.py "H:\\Takeout"
+  python tests\\docs\\tools\\test_infer_takeout_sidecar_schema.py "H:\\Takeout"
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-REPO_ROOT = Path(__file__).parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "docs" / "tools" / "infer_takeout_sidecar_schema.py"
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "takeout_sidecars"
 

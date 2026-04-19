@@ -25,6 +25,7 @@ POST /api/jobs/rescan/start      – start library rescan (update indexer_versio
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import time
@@ -36,6 +37,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Job progress dataclass
@@ -1447,26 +1449,27 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
         thumbs_dir = _configured_thumbs_dir(request.app)
         batch_size = 32
         try:
-            params = {
-                "model_pack": model_pack,
-                "det_thresh": det_thresh,
-                "accelerator": accelerator,
-            }
-            params_json = _json.dumps(params, separators=(",", ":"), sort_keys=True)
-            run_id = insert_face_detection_run(worker_conn, model_pack, params_json)
-
-            asset_ids = list_asset_ids_without_face_detection(worker_conn, run_id=run_id)
+            asset_ids = [
+                row[0]
+                for row in worker_conn.execute("SELECT id FROM assets ORDER BY id").fetchall()
+            ]
             total = len(asset_ids)
             progress.total = total
             if total == 0:
                 progress.message = "All assets already have face detections."
-                finish_face_detection_run(worker_conn, run_id)
                 progress.running = False
                 progress.done = True
                 worker_conn.close()
                 return
 
-            progress.message = f"Loading InsightFace ({model_pack}, {accelerator})…"
+            probe_thumb = next(
+                (
+                    thumb_path_for_id(thumbs_dir, aid)
+                    for aid in asset_ids
+                    if thumb_path_for_id(thumbs_dir, aid).exists()
+                ),
+                None,
+            )
 
             detector = FaceDetector(
                 model_pack=model_pack,
@@ -1474,9 +1477,68 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
                 accelerator=accelerator,
                 trt_cache_dir=thumbs_dir.parent / "onnxruntime-trt",
             )
+            active_accelerator = accelerator
+            if accelerator == "tensorrt":
+                trt_cache_dir = thumbs_dir.parent / "onnxruntime-trt"
+                progress.message = "Starting TensorRT engine and building optimized engines…"
+                try:
+                    active_providers = detector.verify_tensorrt(probe_thumb)
+                    _log.info(
+                        "TensorRT face detector verified: model_pack=%s det_thresh=%.3f "
+                        "cache_dir=%s probe_thumb=%s active_providers=%s",
+                        model_pack,
+                        det_thresh,
+                        trt_cache_dir,
+                        probe_thumb,
+                        active_providers,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    try:
+                        import onnxruntime as _ort
+
+                        ort_available_providers = _ort.get_available_providers()
+                    except Exception as ort_exc:  # noqa: BLE001
+                        ort_available_providers = [f"<unavailable: {ort_exc}>"]
+                    _log.exception(
+                        "TensorRT face detector startup failed; falling back to CUDA for "
+                        "the full face-detection run. model_pack=%s det_thresh=%.3f "
+                        "cache_dir=%s probe_thumb=%s requested_providers=%s "
+                        "onnxruntime_available_providers=%s failure=%r",
+                        model_pack,
+                        det_thresh,
+                        trt_cache_dir,
+                        probe_thumb,
+                        detector._providers(),  # noqa: SLF001
+                        ort_available_providers,
+                        exc,
+                    )
+                    active_accelerator = "gpu"
+                    progress.message = "TensorRT unavailable; switching face detection to CUDA…"
+                    detector = FaceDetector(
+                        model_pack=model_pack,
+                        det_thresh=det_thresh,
+                        accelerator=active_accelerator,
+                    )
+            else:
+                progress.message = f"Loading InsightFace ({model_pack}, CUDA)…"
+
+            params = {
+                "model_pack": model_pack,
+                "det_thresh": det_thresh,
+                "accelerator": active_accelerator,
+            }
+            if active_accelerator != accelerator:
+                params["requested_accelerator"] = accelerator
+            params_json = _json.dumps(params, separators=(",", ":"), sort_keys=True)
+            run_id = insert_face_detection_run(worker_conn, model_pack, params_json)
+
+            asset_ids = list_asset_ids_without_face_detection(worker_conn, run_id=run_id)
+            total = len(asset_ids)
+            progress.total = total
 
             processed = 0
             total_faces = 0
+            backend_suffix = " on CUDA" if active_accelerator == "gpu" else ""
             for batch_start in range(0, total, batch_size):
                 if progress.cancel_event.is_set():
                     break
@@ -1493,6 +1555,7 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
                     try:
                         faces = detector.detect(thumb)
                     except Exception:  # noqa: BLE001
+                        _log.warning("Face detection failed for thumbnail %s", thumb, exc_info=True)
                         continue
 
                     for face in faces:
@@ -1518,7 +1581,7 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
                 processed += len(batch_ids)
                 progress.processed = processed
                 progress.message = (
-                    f"Detecting faces… {processed}\u202f/\u202f{total}"
+                    f"Detecting faces{backend_suffix}… {processed}\u202f/\u202f{total}"
                     f" ({total_faces} face(s) found)"
                 )
 

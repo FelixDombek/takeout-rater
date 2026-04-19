@@ -8,105 +8,90 @@
   .faces-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   .faces-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
 
-  .section { margin-bottom: 2rem; }
-  .section h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
-
-  /* Person grid */
-  .person-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 1rem;
-  }
-  .person-card {
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    padding: 0.75rem;
-    text-align: center;
-    cursor: pointer;
-    transition: box-shadow 0.2s;
-  }
-  .person-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
-  .person-card img {
-    width: 100px;
-    height: 100px;
-    object-fit: cover;
-    border-radius: 50%;
-    background: #eee;
-  }
-  .person-card .label {
-    margin-top: 0.4rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #333;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .person-card .meta {
-    font-size: 0.75rem;
-    color: #888;
-  }
-
-  /* Detail panel */
-  .detail-panel {
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    padding: 1.25rem 1.5rem;
-    margin-top: 1rem;
-    display: none;
-  }
-  .detail-panel.visible { display: block; }
-  .detail-header {
+  .toolbar {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-  .detail-header h3 { flex: 1; margin: 0; font-size: 1.1rem; }
-  .detail-header input {
-    padding: 0.3rem 0.5rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    width: 200px;
-  }
-  .photo-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 0.5rem;
-  }
-  .photo-grid img {
-    width: 100%;
-    aspect-ratio: 1;
-    object-fit: cover;
-    border-radius: 4px;
-    background: #eee;
-    cursor: pointer;
-  }
-  .photo-grid img:hover { opacity: 0.85; }
-
-  /* Similar photos section */
-  .similar-section { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #eee; }
-  .similar-section h4 { font-size: 0.95rem; margin-bottom: 0.5rem; color: #555; }
-  .similar-note { font-size: 0.8rem; color: #888; margin-bottom: 0.75rem; }
-
-  /* Run selector */
-  .run-selector {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    margin-bottom: 1.5rem;
+    margin: 1.25rem 0;
     flex-wrap: wrap;
   }
-  .run-selector select {
-    padding: 0.3rem 0.5rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 0.85rem;
-  }
 
+  .runs-list { display: flex; flex-direction: column; gap: 1rem; }
+  .run-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+    transition: box-shadow 0.15s;
+  }
+  .run-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.15); }
+  .run-thumb-link {
+    display: block;
+    flex-shrink: 0;
+    width: 80px;
+    background: #e8e8e8;
+  }
+  .run-thumb {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    display: block;
+  }
+  .run-thumb-placeholder {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #999;
+    font-size: 1.8rem;
+    background: #e8e8e8;
+  }
+  .run-body {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .run-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #222;
+    text-decoration: none;
+  }
+  .run-title:hover { color: #1a5cdb; text-decoration: underline; }
+  .run-meta {
+    font-size: 0.8rem;
+    color: #666;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+  }
+  .run-badge {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .run-badge-clusters { background: #e8f0fe; color: #1a5cdb; }
+  .run-badge-faces { background: #e7f8ef; color: #1f7a42; }
+  .run-badge-params { background: #f3f4f6; color: #374151; font-family: monospace; }
+  .run-actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 0.75rem;
+  }
+  .run-delete-status {
+    font-size: 0.8rem;
+    min-height: 1em;
+    color: #888;
+  }
   .license-note {
     font-size: 0.75rem;
     color: #999;
@@ -117,17 +102,15 @@
 
 {% block content %}
 <div class="faces-page">
-  <h1>👤 Faces &amp; People</h1>
+  <h1>Faces &amp; People</h1>
   <p class="subtitle">
-    Detect faces, group them into identity clusters, and explore your photo library by person.
-    Use the job cards below to run <strong>Face Detection</strong> and then <strong>Cluster Faces</strong>.
+    Detect faces, group them into identity clusters, and open each person group as a saved run.
   </p>
 
-  <!-- ── Face Detection & Clustering jobs ────────────────────────────────── -->
   <div class="job-cards">
     <div class="job-card" id="card-detect_faces">
       <div class="job-card-header">
-        <h2>👤 Detect Faces</h2>
+        <h2>Detect Faces</h2>
         <span class="badge-running" id="badge-detect_faces" style="display:none;">Running…</span>
         <button class="btn btn-primary btn-run" id="btn-detect_faces" onclick="startJob('detect_faces')">Run Detection</button>
       </div>
@@ -155,7 +138,7 @@
 
     <div class="job-card" id="card-cluster_faces">
       <div class="job-card-header">
-        <h2>👥 Cluster Faces</h2>
+        <h2>Cluster Faces</h2>
         <span class="badge-running" id="badge-cluster_faces" style="display:none;">Running…</span>
         <button class="btn btn-primary btn-run" id="btn-cluster_faces" onclick="startJob('cluster_faces')">Run Face Clustering</button>
       </div>
@@ -175,56 +158,82 @@
     </div>
   </div>
 
-  <!-- Run selector -->
-  <div class="run-selector" id="run-selector" style="display:none;">
-    <label for="cluster-run-select">Clustering run:</label>
-    <select id="cluster-run-select" onchange="loadClusters()"></select>
-    <button class="btn" onclick="deleteCurrentRun()" title="Delete this clustering run">🗑 Delete</button>
+  <div class="toolbar">
+    <a class="btn" href="/assets">← All photos</a>
   </div>
 
-  <!-- Person grid -->
-  <div id="person-grid-wrap" class="section">
-    <div id="person-grid" class="person-grid"></div>
-  </div>
-
-  <!-- Empty state -->
-  <div id="empty-state" class="empty-state" style="display:none;">
-    <h2>No face clusters yet</h2>
-    <p>Run <strong>Face Detection</strong> and then <strong>Cluster Faces</strong> using the
-      job cards above to get started.</p>
-  </div>
-
-  <!-- Detail panel -->
-  <div id="detail-panel" class="detail-panel">
-    <div class="detail-header">
-      <h3 id="detail-title">Person</h3>
-      <input id="rename-input" placeholder="Enter name…" onkeydown="if(event.key==='Enter')renameCluster()">
-      <button class="btn btn-primary" onclick="renameCluster()">Rename</button>
-      <button class="btn" onclick="closeDetail()">✕</button>
+  {% if runs %}
+    <div class="runs-list" id="runs-list">
+      {% for run in runs %}
+      <div class="run-card" id="face-run-card-{{ run.run_id }}">
+        <a class="run-thumb-link" href="/faces/clusterings/{{ run.run_id }}">
+          {% if run.rep_asset_id %}
+          <img
+            class="run-thumb"
+            src="/thumbs/{{ run.rep_asset_id }}"
+            alt="preview"
+            loading="lazy"
+            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+          >
+          <div class="run-thumb-placeholder" style="display:none">Person</div>
+          {% else %}
+          <div class="run-thumb-placeholder">Person</div>
+          {% endif %}
+        </a>
+        <div class="run-body">
+          <a class="run-title" href="/faces/clusterings/{{ run.run_id }}">
+            Face clustering #{{ run.run_id }}
+          </a>
+          <div>
+            <span class="run-badge run-badge-clusters">
+              {{ run.n_clusters }} person group{{ 's' if run.n_clusters != 1 else '' }}
+            </span>
+            <span class="run-badge run-badge-faces">
+              {{ run.n_faces }} face{{ 's' if run.n_faces != 1 else '' }}
+            </span>
+            <span class="run-badge run-badge-params">
+              {{ run.n_assets }} photo{{ 's' if run.n_assets != 1 else '' }}
+            </span>
+            {% if run.params %}
+              {% for k, v in run.params.items() %}
+              <span class="run-badge run-badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
+              {% endfor %}
+            {% endif %}
+          </div>
+          <div class="run-meta">
+            <span title="Created at">{{ run.created_at | timestamp_fmt }}</span>
+            {% if run.detection_run_id %}
+            <span title="Face detection run">Detection #{{ run.detection_run_id }}</span>
+            {% endif %}
+          </div>
+          <div class="run-delete-status" id="face-del-status-{{ run.run_id }}"></div>
+        </div>
+        <div class="run-actions">
+          <button
+            class="btn btn-danger"
+            title="Delete this face clustering run"
+            onclick="deleteFaceRun({{ run.run_id }})"
+          >Delete</button>
+        </div>
+      </div>
+      {% endfor %}
     </div>
-    <div id="detail-photos" class="photo-grid"></div>
-
-    <!-- Similar photos -->
-    <div class="similar-section" id="similar-section" style="display:none;">
-      <h4>🔍 Similar photos (possible hidden-face matches)</h4>
-      <p class="similar-note">
-        These photos look visually similar (clothing, setting, body) but no face was detected.
-        They are <em>suggestions</em>, not confirmed matches.
-      </p>
-      <div id="similar-photos" class="photo-grid"></div>
+  {% else %}
+    <div class="empty-state">
+      <h2>No face clusterings yet</h2>
+      <p>Run <strong>Face Detection</strong> and then <strong>Cluster Faces</strong>.</p>
     </div>
-  </div>
+  {% endif %}
 </div>
 
 <p class="license-note">
   License note: The InsightFace <code>buffalo_l</code> model pack is licensed under
   CC BY-NC 4.0 (non-commercial use only). The lighter <code>buffalo_sc</code> uses the
-  same ArcFace recogniser under the same license. All inference is performed locally —
+  same ArcFace recogniser under the same license. All inference is performed locally;
   no images or embeddings leave your machine.
 </p>
 
 <script>
-// ── Job polling & launching (shared with /jobs and /clusterings pages) ────
 (function () {
   var _pollers = {};
   var _jobStats = {};
@@ -271,11 +280,9 @@
       setJobStatus(jt, data.message, '');
     }
 
-    if (!data.running) {
-      if (_pollers[jt]) {
-        clearInterval(_pollers[jt]);
-        delete _pollers[jt];
-      }
+    if (!data.running && _pollers[jt]) {
+      clearInterval(_pollers[jt]);
+      delete _pollers[jt];
     }
   }
 
@@ -313,7 +320,7 @@
       body.det_thresh = parseFloat(document.getElementById('face-det-thresh').value) || 0.5;
     } else if (jobType === 'cluster_faces') {
       body.eps = parseFloat(document.getElementById('face-eps').value) || 0.5;
-      body.min_samples = parseInt(document.getElementById('face-min-samples').value) || 2;
+      body.min_samples = parseInt(document.getElementById('face-min-samples').value, 10) || 2;
     }
 
     setJobBtn(jobType, true);
@@ -322,6 +329,7 @@
     setJobProgress(jobType, 0);
     setJobCurrentItem(jobType, '');
     delete _jobStats[jobType];
+    delete _wasRunning[jobType];
 
     fetch('/api/jobs/' + jobType + '/start', {
       method: 'POST',
@@ -346,168 +354,31 @@
         setJobBtn(jobType, false);
       });
   };
-})();
 
-// ── Faces page logic ──────────────────────────────────────────────────────
-(function() {
-  var _currentClusterId = null;
-  var _currentRunId = null;
-
-  // ── Load cluster runs ───────────────────────────────────────────────────
-
-  function loadClusterRuns() {
-    fetch('/api/faces/cluster-runs')
-      .then(function(r) { return r.json(); })
-      .then(function(runs) {
-        if (!runs.length) {
-          document.getElementById('empty-state').style.display = 'block';
-          document.getElementById('run-selector').style.display = 'none';
-          return;
-        }
-        document.getElementById('empty-state').style.display = 'none';
-        document.getElementById('run-selector').style.display = 'flex';
-
-        var sel = document.getElementById('cluster-run-select');
-        sel.innerHTML = '';
-        runs.forEach(function(r) {
-          var opt = document.createElement('option');
-          opt.value = r.run_id;
-          var d = new Date(r.created_at * 1000);
-          opt.textContent = 'Run #' + r.run_id + ' — ' + r.n_clusters + ' person(s) — ' +
-            d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
-          sel.appendChild(opt);
-        });
-        _currentRunId = runs[0].run_id;
-        loadClusters();
-      })
-      .catch(function() {
-        document.getElementById('empty-state').style.display = 'block';
-      });
-  }
-
-  // ── Load clusters for selected run ──────────────────────────────────────
-
-  window.loadClusters = function() {
-    var runId = document.getElementById('cluster-run-select').value;
-    _currentRunId = parseInt(runId);
-    fetch('/api/faces/clusters/' + runId)
-      .then(function(r) { return r.json(); })
-      .then(function(clusters) {
-        var grid = document.getElementById('person-grid');
-        grid.innerHTML = '';
-        if (!clusters.length) {
-          grid.innerHTML = '<p style="color:#888;">No person groups in this run.</p>';
-          return;
-        }
-        clusters.forEach(function(c) {
-          var card = document.createElement('div');
-          card.className = 'person-card';
-          card.onclick = function() { openDetail(c.cluster_id, c.label); };
-          var thumbUrl = c.rep_asset_id ? '/thumbs/' + c.rep_asset_id : '';
-          card.innerHTML =
-            '<img src="' + thumbUrl + '" alt="Person" onerror="this.style.display=\'none\'">' +
-            '<div class="label">' + (c.label || 'Person #' + c.cluster_id) + '</div>' +
-            '<div class="meta">' + c.n_faces + ' face(s) · ' + c.n_assets + ' photo(s)</div>';
-          grid.appendChild(card);
-        });
-      });
-  };
-
-  // ── Open person detail ──────────────────────────────────────────────────
-
-  function openDetail(clusterId, label) {
-    _currentClusterId = clusterId;
-    document.getElementById('detail-panel').className = 'detail-panel visible';
-    document.getElementById('detail-title').textContent = label || 'Person #' + clusterId;
-    document.getElementById('rename-input').value = label || '';
-
-    // Load assets
-    fetch('/api/faces/cluster/' + clusterId)
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var grid = document.getElementById('detail-photos');
-        grid.innerHTML = '';
-        data.assets.forEach(function(a) {
-          var img = document.createElement('img');
-          img.src = '/thumbs/' + a.asset_id;
-          img.title = a.filename + ' (score: ' + (a.det_score || 0).toFixed(2) + ')';
-          img.onclick = function() { window.open('/assets?highlight=' + a.asset_id, '_blank'); };
-          grid.appendChild(img);
-        });
-      });
-
-    // Load similar photos
-    var simSection = document.getElementById('similar-section');
-    var simGrid = document.getElementById('similar-photos');
-    simGrid.innerHTML = '<span style="color:#888;">Loading…</span>';
-    simSection.style.display = 'block';
-
-    fetch('/api/faces/cluster/' + clusterId + '/similar?threshold=0.80&limit=30')
-      .then(function(r) { return r.json(); })
-      .then(function(results) {
-        simGrid.innerHTML = '';
-        if (!results.length) {
-          simGrid.innerHTML = '<span style="color:#888;">No similar photos found.</span>';
-          return;
-        }
-        results.forEach(function(r) {
-          var img = document.createElement('img');
-          img.src = '/thumbs/' + r.asset_id;
-          img.title = 'Similarity: ' + r.similarity;
-          img.onclick = function() { window.open('/assets?highlight=' + r.asset_id, '_blank'); };
-          simGrid.appendChild(img);
-        });
-      })
-      .catch(function() {
-        simGrid.innerHTML = '<span style="color:#888;">Could not load suggestions.</span>';
-      });
-  }
-
-  // ── Close detail ────────────────────────────────────────────────────────
-
-  window.closeDetail = function() {
-    document.getElementById('detail-panel').className = 'detail-panel';
-    _currentClusterId = null;
-  };
-
-  // ── Rename cluster ──────────────────────────────────────────────────────
-
-  window.renameCluster = function() {
-    if (!_currentClusterId) return;
-    var label = document.getElementById('rename-input').value.trim();
-    if (!label) return;
-
-    fetch('/api/faces/cluster/' + _currentClusterId + '/rename', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label: label })
-    })
+  window.deleteFaceRun = function(runId) {
+    if (!confirm('Delete this face clustering run and all person groups? This cannot be undone.')) return;
+    var card = document.getElementById('face-run-card-' + runId);
+    var statusEl = document.getElementById('face-del-status-' + runId);
+    var btn = card ? card.querySelector('.run-actions .btn') : null;
+    if (btn) btn.disabled = true;
+    if (statusEl) { statusEl.textContent = 'Deleting\u2026'; statusEl.style.color = '#888'; }
+    fetch('/api/faces/cluster-run/' + runId, { method: 'DELETE' })
       .then(function(r) {
-        if (!r.ok) throw new Error('Rename failed');
-        document.getElementById('detail-title').textContent = label;
-        // Refresh grid
-        loadClusters();
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
+        return r.json();
       })
-      .catch(function(err) { showError(err.message); });
-  };
-
-  // ── Delete run ──────────────────────────────────────────────────────────
-
-  window.deleteCurrentRun = function() {
-    if (!_currentRunId) return;
-    if (!confirm('Delete this clustering run and all its person groups?')) return;
-
-    fetch('/api/faces/cluster-run/' + _currentRunId, { method: 'DELETE' })
-      .then(function(r) {
-        if (!r.ok) throw new Error('Delete failed');
-        closeDetail();
-        loadClusterRuns();
+      .then(function() {
+        if (card) {
+          card.style.transition = 'opacity 0.3s';
+          card.style.opacity = '0';
+          setTimeout(function() { card.remove(); }, 300);
+        }
       })
-      .catch(function(err) { showError(err.message); });
+      .catch(function(err) {
+        if (statusEl) { statusEl.textContent = '\u2717 ' + err.message; statusEl.style.color = '#c0392b'; }
+        if (btn) btn.disabled = false;
+      });
   };
-
-  // ── Init ────────────────────────────────────────────────────────────────
-  loadClusterRuns();
 })();
 </script>
 {% endblock %}

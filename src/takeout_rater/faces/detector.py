@@ -19,7 +19,7 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
@@ -161,6 +161,67 @@ class FaceDetector:
             self._det_thresh,
         )
         return self._app
+
+    def active_providers(self) -> list[str]:
+        """Return ONNX Runtime providers currently used by loaded InsightFace models."""
+        app = self._ensure_loaded()
+        providers: list[str] = []
+        seen: set[str] = set()
+
+        for model in self._iter_insightface_models(app):
+            session = getattr(model, "session", None)
+            get_providers = getattr(session, "get_providers", None)
+            if get_providers is None:
+                continue
+            try:
+                model_providers = get_providers()
+            except Exception:  # noqa: BLE001
+                logger.debug("Could not inspect InsightFace ONNX providers", exc_info=True)
+                continue
+            for provider in model_providers:
+                if provider not in seen:
+                    seen.add(provider)
+                    providers.append(provider)
+
+        return providers
+
+    @staticmethod
+    def _iter_insightface_models(app: object) -> list[Any]:
+        """Best-effort extraction of model objects from an InsightFace app."""
+        models: list[Any] = []
+        app_models = getattr(app, "models", None)
+        if isinstance(app_models, dict):
+            models.extend(app_models.values())
+        elif isinstance(app_models, (list, tuple)):
+            models.extend(app_models)
+
+        det_model = getattr(app, "det_model", None)
+        if det_model is not None and all(model is not det_model for model in models):
+            models.append(det_model)
+        return models
+
+    def verify_tensorrt(self, probe_image: Path | None = None) -> list[str]:
+        """Load TensorRT models, optionally run one inference, and verify TRT is active.
+
+        TensorRT engine files are usually created during model preparation or the
+        first inference.  Running a probe image here keeps backend validation out
+        of the main face-detection loop, so a TensorRT failure can fall back to a
+        clean CUDA-only run before any results are written.
+        """
+        if self._accelerator != "tensorrt":
+            raise RuntimeError("TensorRT verification requested for a non-TensorRT detector.")
+
+        self._ensure_loaded()
+        if probe_image is not None:
+            self.detect(probe_image)
+
+        active_providers = self.active_providers()
+        if active_providers and "TensorrtExecutionProvider" not in active_providers:
+            raise RuntimeError(
+                "TensorRT provider was requested but is not active. "
+                f"Active providers: {active_providers}"
+            )
+        return active_providers
 
     def detect(self, image_path: Path) -> list[DetectedFace]:
         """Detect faces in a single image and return embeddings.
