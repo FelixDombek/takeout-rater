@@ -303,6 +303,98 @@ def test_start_detect_faces_rejects_unknown_accelerator(client_with_db: TestClie
     assert "accelerator" in resp.json()["detail"]
 
 
+def test_detect_faces_tensorrt_startup_failure_falls_back_to_cuda(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json  # noqa: E402
+    import threading  # noqa: E402
+    from types import SimpleNamespace  # noqa: E402
+
+    from PIL import Image  # noqa: E402
+
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+    from takeout_rater.db.queries import upsert_asset  # noqa: E402
+    from takeout_rater.faces.detector import EMBEDDING_DIM  # noqa: E402
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id  # noqa: E402
+    from takeout_rater.ui.app import create_app  # noqa: E402
+
+    conn = open_library_db(tmp_path)
+    asset_id = upsert_asset(
+        conn,
+        {
+            "relpath": "Photos/face.jpg",
+            "filename": "face.jpg",
+            "ext": ".jpg",
+            "mime": "image/jpeg",
+            "size_bytes": 1,
+        },
+    )
+    conn.commit()
+    conn.close()
+
+    thumbs_dir = tmp_path / "takeout-rater" / "thumbs"
+    thumb = thumb_path_for_id(thumbs_dir, asset_id)
+    thumb.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (16, 16), color=(100, 120, 140)).save(thumb, "JPEG")
+
+    accelerators: list[str] = []
+
+    class _FakeDetector:
+        def __init__(self, *args: object, accelerator: str, **kwargs: object) -> None:
+            self.accelerator = accelerator
+            accelerators.append(accelerator)
+
+        def verify_tensorrt(self, probe_thumb: Path | None = None) -> list[str]:
+            raise RuntimeError("TensorRT engine build failed")
+
+        def _providers(self) -> list[str]:
+            return ["TensorrtExecutionProvider", "CUDAExecutionProvider", "CPUExecutionProvider"]
+
+        def detect(self, path: Path) -> list[object]:
+            assert self.accelerator == "gpu"
+            return [
+                SimpleNamespace(
+                    embedding=[0.0] * EMBEDDING_DIM,
+                    face_index=0,
+                    bbox=(1.0, 2.0, 3.0, 4.0),
+                    det_score=0.9,
+                )
+            ]
+
+    monkeypatch.setattr("takeout_rater.faces.detector.FaceDetector", _FakeDetector)
+
+    original_thread = threading.Thread
+
+    class _SyncThread(original_thread):
+        def start(self) -> None:
+            self.run()
+
+    monkeypatch.setattr(jobs_mod.threading, "Thread", _SyncThread)
+
+    app = create_app(tmp_path, open_library_db(tmp_path), db_root=tmp_path)
+    client = TestClient(app, follow_redirects=False)
+
+    resp = client.post("/api/jobs/detect_faces/start", json={"accelerator": "tensorrt"})
+
+    assert resp.status_code == 200
+    assert accelerators == ["tensorrt", "gpu"]
+    progress = app.state.jobs["detect_faces"]  # type: ignore[union-attr]
+    assert progress.done is True
+    assert progress.error is None
+    assert "Face detection complete" in progress.message
+
+    check_conn = open_library_db(tmp_path)
+    try:
+        row = check_conn.execute("SELECT params_json FROM face_detection_runs").fetchone()
+        params = json.loads(row[0])
+        assert params["accelerator"] == "gpu"
+        assert params["requested_accelerator"] == "tensorrt"
+        assert check_conn.execute("SELECT COUNT(*) FROM face_embeddings").fetchone()[0] == 1
+    finally:
+        check_conn.close()
+
+
 # ---------------------------------------------------------------------------
 # GET /jobs page
 # ---------------------------------------------------------------------------

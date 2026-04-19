@@ -1,0 +1,225 @@
+/* Shared saved-run and drill-down styles for clustering and face clustering pages. */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.runs-list { display: flex; flex-direction: column; gap: 1rem; }
+.run-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  transition: box-shadow 0.15s;
+}
+.run-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.15); }
+.run-thumb-link {
+  display: block;
+  flex-shrink: 0;
+  width: 80px;
+  background: #e8e8e8;
+}
+.run-thumb {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  display: block;
+}
+.run-thumb-placeholder {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 1.2rem;
+  background: #e8e8e8;
+}
+.run-body {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.run-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #222;
+  text-decoration: none;
+}
+.run-title:hover { color: #1a5cdb; text-decoration: underline; }
+.run-meta {
+  font-size: 0.8rem;
+  color: #666;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+.run-badge,
+.cluster-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.run-badge-clusters,
+.cluster-chip-primary { background: #e8f0fe; color: #1a5cdb; }
+.run-badge-faces,
+.cluster-chip-success { background: #e7f8ef; color: #1f7a42; }
+.run-badge-skipped,
+.cluster-chip-warning { background: #fef3c7; color: #92400e; }
+.run-badge-params {
+  background: #f3f4f6;
+  color: #374151;
+  font-family: monospace;
+}
+.run-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 0.75rem;
+}
+.run-delete-status {
+  font-size: 0.8rem;
+  min-height: 1em;
+  color: #888;
+}
+
+.run-header,
+.cluster-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+.run-header h1,
+.cluster-header h1 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+.badge,
+.member-count,
+.cluster-diameter {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.badge-clusters,
+.member-count { background: #e8f0fe; color: #1a5cdb; }
+.badge-faces { background: #e7f8ef; color: #1f7a42; }
+.badge-params {
+  background: #f3f4f6;
+  color: #374151;
+  font-family: monospace;
+}
+.cluster-diameter { background: #fef3c7; color: #92400e; }
+.back-link { margin-bottom: 1rem; display: inline-block; }
+
+.cluster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.cluster-card,
+.member-card {
+  background: #fff;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  transition: box-shadow 0.15s;
+}
+.cluster-card:hover,
+.member-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+.cluster-card a,
+.member-card a {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.cluster-thumb,
+.member-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  background: #e0e0e0;
+}
+.cluster-thumb-placeholder,
+.member-thumb-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  background: #ddd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 1.2rem;
+}
+.cluster-body,
+.member-body {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.75rem;
+  color: #555;
+}
+.cluster-label,
+.member-body {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cluster-label {
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.member-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+.member-card.is-rep { box-shadow: 0 0 0 2px #1a5cdb, 0 2px 6px rgba(0,0,0,.15); }
+.member-card.is-rep:hover { box-shadow: 0 0 0 2px #1a5cdb, 0 4px 10px rgba(0,0,0,.2); }
+.member-card.card--active { box-shadow: 0 0 0 3px #7ec8e3, 0 4px 10px rgba(0,0,0,.2); }
+.member-meta,
+.member-phash {
+  display: block;
+  color: #999;
+  margin-top: 0.15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.member-meta { font-size: 0.68rem; }
+.member-phash {
+  font-family: monospace;
+  font-size: 0.6rem;
+}
+.rep-badge {
+  display: inline-block;
+  margin-right: 3px;
+  padding: 0 4px;
+  background: #1a5cdb;
+  color: #fff;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 4rem 1rem;
+  color: #888;
+}

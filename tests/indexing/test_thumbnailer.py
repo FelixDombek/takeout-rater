@@ -13,7 +13,7 @@ from takeout_rater.indexing.thumbnailer import (
 )
 
 FIXTURE_JPEG = (
-    Path(__file__).parent
+    Path(__file__).resolve().parents[1]
     / "fixtures"
     / "takeout_tree"
     / "Takeout"
@@ -21,7 +21,7 @@ FIXTURE_JPEG = (
     / "IMG_20230615_142301.jpg"
 )
 FIXTURE_PNG = (
-    Path(__file__).parent
+    Path(__file__).resolve().parents[1]
     / "fixtures"
     / "takeout_tree"
     / "Takeout"

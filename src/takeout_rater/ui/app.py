@@ -197,15 +197,6 @@ def create_app(
         templates = request.app.state.templates
         return templates.TemplateResponse("clip.html", {"request": request})
 
-    @app.get("/faces", response_class=HTMLResponse)
-    def faces_page(request: Request) -> HTMLResponse:
-        if request.app.state.db_conn is None:
-            from fastapi.responses import RedirectResponse as _RR
-
-            return _RR(url="/setup")  # type: ignore[return-value]
-        templates = request.app.state.templates
-        return templates.TemplateResponse("faces.html", {"request": request})
-
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_handler(
         request: Request, exc: StarletteHTTPException

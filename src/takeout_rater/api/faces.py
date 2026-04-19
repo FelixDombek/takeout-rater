@@ -14,8 +14,10 @@ DELETE /api/faces/cluster-run/<id>  – delete a face clustering run
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -34,6 +36,115 @@ def _get_conn(request: Request):  # noqa: ANN202
 
         return open_db(db_path)
     return request.app.state.db_conn
+
+
+def _close_owned_conn(request: Request, conn: object) -> None:
+    """Close per-request DB connections while leaving shared test connections open."""
+    if getattr(request.app.state, "db_path", None) is not None:
+        close = getattr(conn, "close", None)
+        if close is not None:
+            close()
+
+
+def _parse_params(params_json: str | None) -> dict:
+    """Parse a params_json string into a dict, returning {} on failure."""
+    if not params_json:
+        return {}
+    try:
+        return json.loads(params_json)
+    except (TypeError, ValueError):
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# HTML pages
+# ---------------------------------------------------------------------------
+
+
+@router.get("/faces", response_class=HTMLResponse)
+def faces_page(request: Request) -> HTMLResponse:
+    """Render the face jobs and face-clustering runs page."""
+    _require_db(request)
+    from takeout_rater.db.queries import list_face_cluster_runs
+
+    conn = _get_conn(request)
+    try:
+        runs = list_face_cluster_runs(conn)
+        for run in runs:
+            run["params"] = _parse_params(run["params_json"])
+    finally:
+        _close_owned_conn(request, conn)
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        "faces.html",
+        {
+            "request": request,
+            "runs": runs,
+        },
+    )
+
+
+@router.get("/faces/clusterings/{run_id}", response_class=HTMLResponse)
+def face_clustering_detail(run_id: int, request: Request) -> HTMLResponse:
+    """Render one face clustering run and its person clusters."""
+    _require_db(request)
+    from takeout_rater.db.queries import get_face_cluster_run, list_face_clusters_for_run
+
+    conn = _get_conn(request)
+    try:
+        run = get_face_cluster_run(conn, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"Face clustering run {run_id} not found")
+        run["params"] = _parse_params(run["params_json"])
+        clusters = list_face_clusters_for_run(conn, run_id)
+    finally:
+        _close_owned_conn(request, conn)
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        "face_clustering_detail.html",
+        {
+            "request": request,
+            "run": run,
+            "clusters": clusters,
+        },
+    )
+
+
+@router.get("/faces/clusters/{cluster_id}", response_class=HTMLResponse)
+def face_cluster_detail(cluster_id: int, request: Request) -> HTMLResponse:
+    """Render the assets in one face/person cluster."""
+    _require_db(request)
+    from takeout_rater.db.queries import (
+        get_face_cluster_assets,
+        get_face_cluster_label,
+    )
+
+    conn = _get_conn(request)
+    try:
+        assets = get_face_cluster_assets(conn, cluster_id)
+        if not assets:
+            raise HTTPException(status_code=404, detail=f"Face cluster {cluster_id} not found")
+        label = get_face_cluster_label(conn, cluster_id)
+        run_id_row = conn.execute(
+            "SELECT run_id FROM face_clusters WHERE id = ?",
+            (cluster_id,),
+        ).fetchone()
+    finally:
+        _close_owned_conn(request, conn)
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        "face_cluster_detail.html",
+        {
+            "request": request,
+            "cluster_id": cluster_id,
+            "run_id": run_id_row["run_id"] if run_id_row else None,
+            "label": label,
+            "assets": assets,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

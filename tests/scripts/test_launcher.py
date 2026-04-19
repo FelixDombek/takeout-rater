@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 # Import the launcher module from scripts/ (not a package, so use spec)
 # ---------------------------------------------------------------------------
 
-_LAUNCHER_PATH = Path(__file__).resolve().parent.parent / "scripts" / "launcher.py"
+_LAUNCHER_PATH = Path(__file__).resolve().parents[2] / "scripts" / "launcher.py"
 _spec = importlib.util.spec_from_file_location("launcher", _LAUNCHER_PATH)
 assert _spec is not None and _spec.loader is not None
 launcher = importlib.util.module_from_spec(_spec)

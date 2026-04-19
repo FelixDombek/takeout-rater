@@ -2103,9 +2103,17 @@ def list_face_cluster_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Return all face cluster runs, most recent first."""
     rows = conn.execute(
         "SELECT r.id, r.method, r.params_json, r.detection_run_id, r.created_at,"
-        "   COUNT(DISTINCT fc.id) AS n_clusters"
+        "   COUNT(DISTINCT fc.id) AS n_clusters,"
+        "   COUNT(fcm.face_id) AS n_faces,"
+        "   COUNT(DISTINCT fe.asset_id) AS n_assets,"
+        "   MIN(fe_rep.asset_id) AS rep_asset_id"
         " FROM face_cluster_runs r"
         " LEFT JOIN face_clusters fc ON fc.run_id = r.id"
+        " LEFT JOIN face_cluster_members fcm ON fcm.cluster_id = fc.id"
+        " LEFT JOIN face_embeddings fe ON fe.id = fcm.face_id"
+        " LEFT JOIN face_cluster_members fcm_rep"
+        "   ON fcm_rep.cluster_id = fc.id AND fcm_rep.is_representative = 1"
+        " LEFT JOIN face_embeddings fe_rep ON fe_rep.id = fcm_rep.face_id"
         " GROUP BY r.id"
         " ORDER BY r.created_at DESC",
     ).fetchall()
@@ -2117,9 +2125,41 @@ def list_face_cluster_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             "detection_run_id": row["detection_run_id"],
             "created_at": row["created_at"],
             "n_clusters": row["n_clusters"],
+            "n_faces": row["n_faces"],
+            "n_assets": row["n_assets"],
+            "rep_asset_id": row["rep_asset_id"],
         }
         for row in rows
     ]
+
+
+def get_face_cluster_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any] | None:
+    """Return one face clustering run with aggregate counts, or ``None``."""
+    row = conn.execute(
+        "SELECT r.id, r.method, r.params_json, r.detection_run_id, r.created_at,"
+        "   COUNT(DISTINCT fc.id) AS n_clusters,"
+        "   COUNT(fcm.face_id) AS n_faces,"
+        "   COUNT(DISTINCT fe.asset_id) AS n_assets"
+        " FROM face_cluster_runs r"
+        " LEFT JOIN face_clusters fc ON fc.run_id = r.id"
+        " LEFT JOIN face_cluster_members fcm ON fcm.cluster_id = fc.id"
+        " LEFT JOIN face_embeddings fe ON fe.id = fcm.face_id"
+        " WHERE r.id = ?"
+        " GROUP BY r.id",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "run_id": row["id"],
+        "method": row["method"],
+        "params_json": row["params_json"],
+        "detection_run_id": row["detection_run_id"],
+        "created_at": row["created_at"],
+        "n_clusters": row["n_clusters"],
+        "n_faces": row["n_faces"],
+        "n_assets": row["n_assets"],
+    }
 
 
 def list_face_clusters_for_run(

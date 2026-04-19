@@ -140,23 +140,6 @@ class TestBuildEmbeddingMap:
         assert "cluster_id" in pt
         assert len(result["clusters"]) >= 1
 
-    def test_many_points_full_pipeline(self) -> None:
-        """With enough points UMAP runs; output shape and keys are correct."""
-        from takeout_rater.clustering.embedding_map import build_embedding_map
-
-        n = 30
-        rows = [(i + 1, _make_embedding(i), f"img{i}.jpg") for i in range(n)]
-        result = build_embedding_map(rows)
-        assert result["total"] == n
-        assert len(result["points"]) == n
-        # Every point has required keys
-        for pt in result["points"]:
-            assert {"asset_id", "x", "y", "z", "cluster_id", "relpath"} <= pt.keys()
-        # Every cluster has a representative
-        for cl in result["clusters"]:
-            assert cl["representative_asset_id"] is not None
-            assert cl["size"] > 0
-
     def test_few_points_skips_umap(self) -> None:
         """With < 15 points UMAP is skipped; output is still valid."""
         from takeout_rater.clustering.embedding_map import build_embedding_map

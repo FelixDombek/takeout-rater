@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Face clustering #{{ run.run_id }} – takeout-rater{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/clustering-shared.css">
+{% endblock %}
+
+{% block content %}
+<a class="btn back-link" href="/faces">← All face clusterings</a>
+
+<div class="run-header">
+  <h1>Face clustering #{{ run.run_id }}</h1>
+  <span class="badge badge-clusters">
+    {{ clusters | length }} person group{{ 's' if clusters | length != 1 else '' }}
+  </span>
+  <span class="badge badge-faces">
+    {{ run.n_faces }} face{{ 's' if run.n_faces != 1 else '' }}
+  </span>
+  <span class="badge badge-params">DBSCAN</span>
+  {% if run.params %}
+    {% for k, v in run.params.items() %}
+    <span class="badge badge-params" title="{{ k }}">{{ k }}={{ v }}</span>
+    {% endfor %}
+  {% endif %}
+  {% if run.detection_run_id %}
+  <span class="badge badge-params">detection={{ run.detection_run_id }}</span>
+  {% endif %}
+  <span style="font-size:0.85rem; color:#888;">{{ run.created_at | timestamp_fmt }}</span>
+</div>
+
+{% if clusters %}
+  <div class="cluster-grid">
+    {% for cluster in clusters %}
+    <div class="cluster-card">
+      <a href="/faces/clusters/{{ cluster.cluster_id }}">
+        {% if cluster.rep_asset_id %}
+        <img
+          class="cluster-thumb"
+          src="/thumbs/{{ cluster.rep_asset_id }}"
+          alt="{{ cluster.label or 'Person group' }}"
+          loading="lazy"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+        >
+        <div class="cluster-thumb-placeholder" style="display:none">Person</div>
+        {% else %}
+        <div class="cluster-thumb-placeholder">Person</div>
+        {% endif %}
+        <div class="cluster-body">
+          <span class="cluster-chip cluster-chip-primary">{{ cluster.n_assets }} photo{{ 's' if cluster.n_assets != 1 else '' }}</span>
+          <span class="cluster-chip cluster-chip-success">{{ cluster.n_faces }} face{{ 's' if cluster.n_faces != 1 else '' }}</span>
+          <span class="cluster-label">{{ cluster.label or ('Person #' ~ cluster.cluster_id) }}</span>
+        </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <p>This face clustering run produced no person groups.</p>
+  </div>
+{% endif %}
+{% endblock %}

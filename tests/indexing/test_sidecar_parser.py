@@ -8,7 +8,7 @@ import pytest
 
 from takeout_rater.indexing.sidecar import SidecarData, parse_sidecar
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "takeout_sidecars"
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "takeout_sidecars"
 
 
 # ── parse_sidecar happy paths ──────────────────────────────────────────────────

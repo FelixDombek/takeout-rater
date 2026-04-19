@@ -541,6 +541,40 @@ class TestFacesUIRoutes:
         assert "Cluster Faces" in resp.text
         assert "Run Face Clustering" in resp.text
 
+    def test_faces_page_links_to_face_clustering_runs(
+        self, face_client_with_data: TestClient
+    ) -> None:
+        resp = face_client_with_data.get("/faces")
+        assert resp.status_code == 200
+        assert "Face clustering #" in resp.text
+        assert "/faces/clusterings/" in resp.text
+
+    def test_face_clustering_detail_links_to_face_clusters(
+        self, face_client_with_data: TestClient
+    ) -> None:
+        runs = face_client_with_data.get("/api/faces/cluster-runs").json()
+        run_id = runs[0]["run_id"]
+
+        resp = face_client_with_data.get(f"/faces/clusterings/{run_id}")
+
+        assert resp.status_code == 200
+        assert "Face clustering #" in resp.text
+        assert "/faces/clusters/" in resp.text
+
+    def test_face_cluster_detail_links_to_asset_detail(
+        self, face_client_with_data: TestClient
+    ) -> None:
+        runs = face_client_with_data.get("/api/faces/cluster-runs").json()
+        run_id = runs[0]["run_id"]
+        clusters = face_client_with_data.get(f"/api/faces/clusters/{run_id}").json()
+        cluster_id = clusters[0]["cluster_id"]
+
+        resp = face_client_with_data.get(f"/faces/clusters/{cluster_id}")
+
+        assert resp.status_code == 200
+        assert "TestPerson" in resp.text
+        assert "/assets/1" in resp.text
+
 
 class TestFaceDetectorAccelerator:
     def test_rejects_unknown_accelerator(self) -> None:

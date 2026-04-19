@@ -13,7 +13,7 @@ from takeout_rater.indexing.scanner import (
     scan_photos_tree,
 )
 
-TREE_FIXTURES = Path(__file__).parent / "fixtures" / "takeout_tree" / "Takeout"
+TREE_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "takeout_tree" / "Takeout"
 
 
 # ── AssetFile data structure ───────────────────────────────────────────────────

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}{{ label or ('Person #' ~ cluster_id) }} – takeout-rater{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/clustering-shared.css">
+<style>
+  .rename-form {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .rename-form input {
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    width: 220px;
+  }
+  .rename-status { min-height: 1em; font-size: 0.8rem; color: #888; }
+</style>
+{% endblock %}
+
+{% block content %}
+<a class="btn back-link" href="{{ '/faces/clusterings/' ~ run_id if run_id is not none else '/faces' }}">← Back to face clustering</a>
+
+<div class="cluster-header">
+  <h1 id="face-cluster-title">{{ label or ('Person #' ~ cluster_id) }}</h1>
+  <span class="member-count">{{ assets | length }} photo{{ 's' if assets | length != 1 else '' }}</span>
+  <form class="rename-form" onsubmit="renameFaceCluster(event)">
+    <input id="rename-input" value="{{ label or '' }}" placeholder="Enter name">
+    <button class="btn btn-primary" type="submit">Rename</button>
+    <span class="rename-status" id="rename-status"></span>
+  </form>
+</div>
+
+<div class="member-grid">
+  {% for asset in assets %}
+  <div class="member-card{% if asset.is_representative %} is-rep{% endif %}">
+    <a href="/assets/{{ asset.asset_id }}">
+      <img
+        class="member-thumb"
+        src="/thumbs/{{ asset.asset_id }}"
+        alt="{{ asset.filename }}"
+        loading="lazy"
+        onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"
+      >
+      <div class="member-thumb-placeholder" style="display:none">Photo</div>
+      <div class="member-body">
+        {% if asset.is_representative %}<span class="rep-badge">REP</span>{% endif %}
+        {{ asset.filename }}
+        <span class="member-meta">
+          confidence={{ "%.2f" | format(asset.det_score or 0) }}
+          {% if asset.distance is not none %} · distance={{ "%.4f" | format(asset.distance) }}{% endif %}
+        </span>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+function renameFaceCluster(event) {
+  event.preventDefault();
+  var input = document.getElementById('rename-input');
+  var statusEl = document.getElementById('rename-status');
+  var label = input.value.trim();
+  if (!label) return;
+  statusEl.textContent = 'Saving\u2026';
+  fetch('/api/faces/cluster/{{ cluster_id }}/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: label })
+  })
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
+      return r.json();
+    })
+    .then(function() {
+      document.getElementById('face-cluster-title').textContent = label;
+      statusEl.textContent = 'Saved.';
+      statusEl.style.color = '#1e7e34';
+    })
+    .catch(function(err) {
+      statusEl.textContent = '\u2717 ' + err.message;
+      statusEl.style.color = '#c0392b';
+    });
+}
+</script>
+{% endblock %}
