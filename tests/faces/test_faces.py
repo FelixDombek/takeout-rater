@@ -672,9 +672,7 @@ class TestFacesUIRoutes:
         assert "Face clustering #" in resp.text
         assert "/faces/clusterings/" in resp.text
 
-    def test_faces_page_lists_face_detection_runs(
-        self, face_client_with_data: TestClient
-    ) -> None:
+    def test_faces_page_lists_face_detection_runs(self, face_client_with_data: TestClient) -> None:
         resp = face_client_with_data.get("/faces")
 
         assert resp.status_code == 200

@@ -68,9 +68,7 @@ def test_run_index_separate_db_root(tmp_path: Path) -> None:
     assert not library_db_path(photos_root).exists()
 
 
-def test_run_index_batches_clip_embeddings(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_run_index_batches_clip_embeddings(tmp_path: Path, monkeypatch) -> None:
     import torch
     from PIL import Image
 
@@ -105,7 +103,9 @@ def test_run_index_batches_clip_embeddings(
         )
 
     monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.is_available", lambda: True)
-    monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.get_clip_model", _fake_get_clip_model)
+    monkeypatch.setattr(
+        "takeout_rater.scoring.scorers.clip_backbone.get_clip_model", _fake_get_clip_model
+    )
 
     run_index(photos_root, conn, db_root=db_root)
 
