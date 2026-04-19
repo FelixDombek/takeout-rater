@@ -1,13 +1,13 @@
-"""DBSCAN-based clustering of face embeddings into identity groups.
+"""Clustering of face embeddings into identity groups.
 
 Clusters face embeddings (512-d ArcFace vectors) into person groups using
-DBSCAN with cosine distance.  Each cluster represents a likely unique person.
+DBSCAN or HDBSCAN.  Each cluster represents a likely unique person.
 
 Usage::
 
     from takeout_rater.faces.clustering import cluster_faces
 
-    n = cluster_faces(conn, detection_run_id=1, eps=0.5, min_samples=2)
+    n = cluster_faces(conn, detection_run_id=1, method="hdbscan", min_cluster_size=2)
 """
 
 from __future__ import annotations
@@ -20,31 +20,40 @@ from collections.abc import Callable
 
 from takeout_rater.faces.detector import EMBEDDING_DIM
 
-_METHOD = "dbscan"
+_SUPPORTED_METHODS = {"dbscan", "hdbscan"}
 
 
 def cluster_faces(
     conn: sqlite3.Connection,
     *,
     detection_run_id: int | None = None,
+    method: str = "hdbscan",
     eps: float = 0.5,
     min_samples: int = 2,
+    min_cluster_size: int = 2,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> int:
-    """Cluster face embeddings into person groups using DBSCAN.
+    """Cluster face embeddings into person groups using DBSCAN or HDBSCAN.
 
     All face embeddings from the specified detection run (or all runs if
-    *detection_run_id* is ``None``) are loaded, clustered via DBSCAN with
-    cosine distance, and persisted to the ``face_cluster_runs``,
+    *detection_run_id* is ``None``) are loaded, clustered, and persisted to the
+    ``face_cluster_runs``,
     ``face_clusters``, and ``face_cluster_members`` tables.
 
     Args:
         conn: Open library database connection.
         detection_run_id: Restrict to faces from a specific detection run.
             When ``None``, all face embeddings are used.
+        method: Clustering algorithm: ``"hdbscan"`` (default) or ``"dbscan"``.
         eps: DBSCAN neighbourhood radius (cosine distance).  Smaller values
-            produce tighter (more precise) clusters.  Default: 0.5.
-        min_samples: Minimum number of face embeddings to form a cluster.
+            produce tighter (more precise) clusters. Used only for DBSCAN.
+            Default: 0.5.
+        min_samples: Minimum number of neighbours/samples. For DBSCAN this is
+            the minimum number of face embeddings to form a dense region. For
+            HDBSCAN it is the conservativeness parameter; when omitted by the
+            caller the default is 2.
+        min_cluster_size: Minimum number of face embeddings to form an HDBSCAN
+            cluster. Used only for HDBSCAN.
             Default: 2.
         on_progress: Optional callback ``(processed, total)``.
 
@@ -52,7 +61,13 @@ def cluster_faces(
         Number of person clusters created.
     """
     import numpy as np
-    from sklearn.cluster import DBSCAN
+
+    if method not in _SUPPORTED_METHODS:
+        raise ValueError(f"Unsupported face clustering method: {method}")
+    if min_samples < 1:
+        raise ValueError("min_samples must be at least 1")
+    if min_cluster_size < 2:
+        raise ValueError("min_cluster_size must be at least 2")
 
     # Load face embeddings
     if detection_run_id is not None:
@@ -91,9 +106,24 @@ def cluster_faces(
 
     matrix = np.stack(vectors)  # (N, 512)
 
-    # Run DBSCAN with cosine distance
-    db = DBSCAN(eps=eps, min_samples=min_samples, metric="cosine")
-    labels = db.fit_predict(matrix)
+    if method == "dbscan":
+        from sklearn.cluster import DBSCAN
+
+        clusterer = DBSCAN(eps=eps, min_samples=min_samples, metric="cosine")
+        labels = clusterer.fit_predict(matrix)
+    else:
+        from sklearn.cluster import HDBSCAN
+
+        # ArcFace embeddings are L2-normalised. Euclidean distance on these
+        # vectors is monotonic with cosine distance and is supported by sklearn
+        # HDBSCAN's fast neighbour search path.
+        clusterer = HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            metric="euclidean",
+            copy=True,
+        )
+        labels = clusterer.fit_predict(matrix)
 
     if on_progress:
         on_progress(len(face_ids), len(face_ids))
@@ -109,7 +139,11 @@ def cluster_faces(
         return 0
 
     # Persist
-    params = {"eps": eps, "min_samples": min_samples}
+    params: dict[str, float | int] = {"min_samples": min_samples}
+    if method == "dbscan":
+        params["eps"] = eps
+    else:
+        params["min_cluster_size"] = min_cluster_size
     if detection_run_id is not None:
         params["detection_run_id"] = detection_run_id
     params_json = json.dumps(params, separators=(",", ":"), sort_keys=True)
@@ -118,7 +152,7 @@ def cluster_faces(
     run_row = conn.execute(
         "INSERT INTO face_cluster_runs (method, params_json, detection_run_id, created_at)"
         " VALUES (?, ?, ?, ?) RETURNING id",
-        (_METHOD, params_json, detection_run_id, now),
+        (method, params_json, detection_run_id, now),
     ).fetchone()
     run_id = run_row[0]
     conn.commit()

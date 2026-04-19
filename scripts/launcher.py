@@ -14,7 +14,8 @@ What this script does
    has changed (detected via a SHA-256 hash stored in ``.venv/.deps_hash``).
    3a. Before installing the rest of the package, installs the correct
        CUDA-enabled torch wheel when an NVIDIA GPU is detected.
-4. Prints GPU/CPU diagnostics so the user knows which device will be used.
+4. Prints GPU/CPU diagnostics so the user knows which device will be used,
+   and adds TensorRT libraries to the PATH, if found.
 5. Starts the ``takeout-rater serve`` server in a subprocess.
 6. Waits for the server to become ready (polls ``/health``).
 7. Opens the default browser to the UI.
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import signal
 import subprocess
@@ -64,7 +66,6 @@ _DB_FILENAME = "library.sqlite"
 # Dependency definition files whose content determines whether a reinstall is
 # needed.  Add ``requirements*.txt`` here if you introduce them in future.
 _DEP_FILES = ["pyproject.toml"]
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -367,9 +368,17 @@ def main() -> None:
         print("Setup complete.\n")
 
     # ------------------------------------------------------------------
-    # 3. GPU diagnostics
+    # 3. GPU diagnostics + TensorRT binaries setup
     # ------------------------------------------------------------------
     _print_gpu_diagnostics()
+
+    TENSORRT_BIN_DIR = ROOT / "tensorrt_bin"
+    if os.path.exists(TENSORRT_BIN_DIR):
+        os.add_dll_directory(TENSORRT_BIN_DIR)
+        os.environ["PATH"] = str(TENSORRT_BIN_DIR) + os.pathsep + os.environ["PATH"]
+        print(f"TensorRT library folder for faster face detection: {TENSORRT_BIN_DIR}")
+    else:
+        print(f"TensorRT library folder for faster face detection not found: {TENSORRT_BIN_DIR}")
 
     # ------------------------------------------------------------------
     # 4. Launch server

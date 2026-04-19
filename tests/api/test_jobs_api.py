@@ -303,6 +303,12 @@ def test_start_detect_faces_rejects_unknown_accelerator(client_with_db: TestClie
     assert "accelerator" in resp.json()["detail"]
 
 
+def test_start_cluster_faces_rejects_unknown_method(client_with_db: TestClient) -> None:
+    resp = client_with_db.post("/api/jobs/cluster_faces/start", json={"method": "bogus"})
+    assert resp.status_code == 400
+    assert "method" in resp.json()["detail"]
+
+
 def test_detect_faces_tensorrt_startup_failure_falls_back_to_cuda(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
