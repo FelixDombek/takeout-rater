@@ -473,10 +473,19 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             # When no specific scorer is requested every available scorer is
             # run for all of its variants.
             if scorer_id:
-                target_cls = next((cls for cls in list_scorers() if cls.spec().scorer_id == scorer_id), None)
+                target_cls = next(
+                    (cls for cls in list_scorers() if cls.spec().scorer_id == scorer_id), None
+                )
                 spec = target_cls.spec()
-                target_vars = [v for v in spec.variants if v.variant_id == variant_id] if variant_id else spec.variants
-                scorer_variants = [(scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}") for v in target_vars]
+                target_vars = (
+                    [v for v in spec.variants if v.variant_id == variant_id]
+                    if variant_id
+                    else spec.variants
+                )
+                scorer_variants = [
+                    (scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}")
+                    for v in target_vars
+                ]
             else:
                 scorer_variants = [
                     (spec.scorer_id, v.variant_id, f"{spec.display_name} {v.display_name}")
