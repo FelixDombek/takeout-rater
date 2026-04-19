@@ -17,36 +17,29 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           token: ${{ secrets.CI_WRITE_PAT }}
-
-      - name: Run Ruff (Fix and Format)
+      - name: Run Ruff Check
         uses: astral-sh/ruff-action@v1
         with:
           args: "check --fix ."
-
       - name: Run Ruff Format
         uses: astral-sh/ruff-action@v1
         with:
           args: "format ."
-
       - name: Commit and Push changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "style: ruff auto-fix and format"
-          commit_user_name: github-actions[bot]
-          commit_user_email: github-actions[bot]@users.noreply.github.com
-          skip_dirty_check: false
 
   test:
     runs-on: ubuntu-latest
     container:
-      # Hardcoded lowercase name to satisfy Docker's requirements
       image: ghcr.io/felixdombek/takeout-rater:latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Sync dependencies
+      - name: Install current package
+        # --no-deps is critical: it prevents pip from trying to 
+        # re-verify/download the massive torch/onnx packages.
         run: pip install --no-deps -e .
-
       - name: Run tests
         run: pytest
 
@@ -56,10 +49,8 @@ jobs:
       image: ghcr.io/felixdombek/takeout-rater:latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Sync dependencies
+      - name: Install current package
         run: pip install --no-deps -e .
-
       - name: Run slow tests
         env:
           HF_HUB_OFFLINE: "1"

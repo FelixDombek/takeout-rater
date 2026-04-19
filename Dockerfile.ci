@@ -1,11 +1,24 @@
 FROM python:3.12-slim
 
+# Install git (often needed for pip installing from git repos)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Pre-install the heavy stuff
+# Copy only the pyproject.toml
 COPY pyproject.toml .
-RUN pip install --no-cache-dir ".[dev]"
+
+# 1. Install pip-tools to handle the dependency extraction cleanly
+# 2. Extract dependencies + dev extras and install them
+# We use a python script to handle the TOML parsing since 'tomllib' is built-in to 3.11+
+RUN pip install --no-cache-dir --upgrade pip && \
+    python -c "import tomllib; \
+    p = tomllib.load(open('pyproject.toml', 'rb')); \
+    deps = p['project'].get('dependencies', []); \
+    dev_deps = p['project'].get('optional-dependencies', {}).get('dev', []); \
+    print('\n'.join(deps + dev_deps))" > requirements.txt && \
+    pip install --no-cache-dir -r requirements.txt
+
+# No COPY . needed here. GitHub Actions mounts your code at runtime.
