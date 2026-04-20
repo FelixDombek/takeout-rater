@@ -282,6 +282,20 @@ class TestClipBackbone:
 
         assert EMBEDDING_DIM == 768
 
+    def test_fast_preprocess_returns_clip_tensor(self) -> None:
+        import torch
+        from PIL import Image
+
+        from takeout_rater.scoring.scorers.clip_backbone import preprocess_clip_image_fast
+
+        image = Image.new("RGB", (512, 320), color=(96, 128, 160))
+
+        tensor = preprocess_clip_image_fast(image)
+
+        assert tensor.shape == (3, 224, 224)
+        assert tensor.dtype == torch.float32
+        assert torch.isfinite(tensor).all()
+
     def test_get_clip_model_passes_quick_gelu(self, monkeypatch) -> None:
         """get_clip_model must pass quick_gelu=True to suppress the openai pretrained warning."""
         from unittest.mock import MagicMock

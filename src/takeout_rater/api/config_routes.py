@@ -11,9 +11,10 @@ POST /api/config/open-picker   – open a native OS directory picker (Tkinter)
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -22,11 +23,13 @@ from takeout_rater.config import (
     get_app_dir,
     get_db_root,
     get_library,
+    get_performance_settings,
     get_photos_root,
     list_libraries,
     set_current_library,
+    set_performance_settings,
 )
-from takeout_rater.db.connection import library_state_dir, open_library_db
+from takeout_rater.db.connection import library_db_path, library_state_dir, open_library_db
 from takeout_rater.db.queries import CURRENT_INDEXER_VERSION
 
 router = APIRouter()
@@ -59,8 +62,35 @@ def get_config() -> JSONResponse:
             "db_root": str(db_root) if db_root else None,
             "app_dir": str(get_app_dir()),
             "libraries": list_libraries(),
+            "performance": get_performance_settings(),
         }
     )
+
+
+class _PerformanceSettingsBody(BaseModel):
+    clip_accelerator: str
+    clip_batch_size: int
+    clip_fp16: bool
+
+
+@router.get("/api/config/performance")
+def get_performance_config() -> JSONResponse:
+    """Return indexing/performance settings used by background jobs."""
+    return JSONResponse(get_performance_settings())
+
+
+@router.post("/api/config/performance")
+def set_performance_config(body: _PerformanceSettingsBody) -> JSONResponse:
+    """Persist indexing/performance settings used by future background jobs."""
+    try:
+        settings = set_performance_settings(
+            clip_accelerator=body.clip_accelerator,
+            clip_batch_size=body.clip_batch_size,
+            clip_fp16=body.clip_fp16,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"status": "ok", "performance": settings})
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +218,86 @@ def set_path(body: _PhotosPathBody, request: Request) -> JSONResponse:
             "status": "ok",
             "photos_root": str(photos_root),
             "db_root": str(db_root),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Config write – delete the current DB and re-index from scratch
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/config/reset-library")
+def reset_library(request: Request) -> JSONResponse:
+    """Delete the configured library database and start a fresh index run.
+
+    This is intentionally narrower than deleting the whole state directory:
+    thumbnails are removed with the SQLite database so re-index performance can
+    be measured from a cold thumbnail cache, while exports and model caches
+    remain on disk.
+    """
+    photos_root: Path | None = request.app.state.photos_root
+    db_root: Path | None = request.app.state.db_root
+    if photos_root is None or db_root is None:
+        raise HTTPException(status_code=503, detail="Library not configured.")
+
+    jobs = getattr(request.app.state, "jobs", {}) or {}
+    running = [
+        job_type for job_type, progress in jobs.items() if getattr(progress, "running", False)
+    ]
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot reset while background job(s) are running: {', '.join(running)}",
+        )
+
+    old_conn = request.app.state.db_conn
+    if old_conn is not None:
+        old_conn.close()
+        request.app.state.db_conn = None
+
+    db_path = library_db_path(db_root)
+    state_dir = library_state_dir(db_root)
+    thumbs_dir = state_dir / "thumbs"
+    for candidate in (
+        db_path,
+        db_path.with_name(f"{db_path.name}-wal"),
+        db_path.with_name(f"{db_path.name}-shm"),
+    ):
+        try:
+            candidate.unlink(missing_ok=True)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not delete database file {candidate}: {exc}",
+            ) from exc
+
+    if thumbs_dir.exists():
+        try:
+            shutil.rmtree(thumbs_dir)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not delete thumbnail directory {thumbs_dir}: {exc}",
+            ) from exc
+
+    conn = open_library_db(db_root)
+    request.app.state.db_conn = conn
+    request.app.state.db_path = db_path
+    request.app.state.thumbs_dir = state_dir / "thumbs"
+    request.app.state.clip_index = None
+    request.app.state.clip_embedding_map = None
+
+    from takeout_rater.api.jobs import _start_index_job
+
+    _start_index_job(request.app, photos_root, db_root=db_root)
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "photos_root": str(photos_root),
+            "db_root": str(db_root),
+            "db_path": str(db_path),
         }
     )
 

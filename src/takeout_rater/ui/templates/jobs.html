@@ -4,11 +4,40 @@
 
 {% block head %}
 <style>
-  .jobs-page { max-width: 780px; margin: 0 auto; }
+  .jobs-page { max-width: 900px; margin: 0 auto; }
   .jobs-page h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   .jobs-page .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
   .btn-cancel { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
   .btn-cancel:hover { background: #fee2e2; }
+  .job-diagnostics {
+    display: none;
+    margin-top: 0.8rem;
+    border-top: 1px solid #eee;
+    padding-top: 0.8rem;
+    font-size: 0.82rem;
+    color: #444;
+  }
+  .job-diagnostics.visible { display: block; }
+  .job-diagnostics-title {
+    font-weight: 600;
+    margin-bottom: 0.45rem;
+  }
+  .job-diagnostics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 0.35rem 1rem;
+  }
+  .job-diagnostics-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-bottom: 1px dotted #ddd;
+    padding-bottom: 0.15rem;
+  }
+  .job-diagnostics-row span:last-child {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
 </style>
 {% endblock %}
 
@@ -70,6 +99,7 @@
     <div class="progress-bar-wrap" id="prog-wrap-index"><div class="progress-bar" id="prog-bar-index"></div></div>
     <div class="job-current-item" id="current-item-index"></div>
     <div class="job-status" id="status-index"></div>
+    <div class="job-diagnostics" id="diagnostics-index"></div>
   </div>
 
 </div>
@@ -79,6 +109,153 @@
   // ── Poll all job statuses on page load and after each action ──
   var _pollers = {};  // job_type -> interval handle
   var _jobStats = {}; // job_type -> {startTime, startProcessed}
+
+  function formatDiagSeconds(value) {
+    var n = Number(value || 0);
+    if (!isFinite(n) || n <= 0) return '0.00s';
+    if (n < 10) return n.toFixed(2) + 's';
+    if (n < 60) return n.toFixed(1) + 's';
+    return formatJobEta(Math.round(n));
+  }
+
+  function formatDiagCount(value) {
+    var n = Number(value || 0);
+    if (!isFinite(n)) return '0';
+    return String(Math.round(n));
+  }
+
+  function formatDiagMs(value) {
+    var n = Number(value || 0);
+    if (!isFinite(n) || n <= 0) return '0.0ms';
+    if (n < 10) return n.toFixed(2) + 'ms';
+    return n.toFixed(1) + 'ms';
+  }
+
+  function workerSuffixForDiag(key, diagnostics) {
+    var indexWorkerKeys = {
+      sha_seconds: true,
+      sidecar_seconds: true,
+      db_claim_seconds: true,
+      db_claim_enqueue_wait_seconds: true,
+      db_claim_future_wait_seconds: true,
+      thumbnail_seconds: true,
+      thumbnail_decode_seconds: true,
+      thumbnail_decode_path_seconds: true,
+      thumbnail_decode_bytes_seconds: true,
+      thumbnail_resize_seconds: true,
+      thumbnail_write_seconds: true,
+      phash_seconds: true,
+      clip_queue_wait_seconds: true
+    };
+    if (indexWorkerKeys[key]) {
+      return diagnostics.index_workers ? ' /' + diagnostics.index_workers : '';
+    }
+    if (key === 'clip_preprocess_seconds') {
+      return diagnostics.clip_preprocess_workers ? ' /' + diagnostics.clip_preprocess_workers : '';
+    }
+    if (key === 'clip_tensor_queue_wait_seconds') {
+      return diagnostics.clip_preprocess_workers ? ' /' + diagnostics.clip_preprocess_workers : '';
+    }
+    return '';
+  }
+
+  function renderIndexDiagnostics(diagnostics) {
+    var el = document.getElementById('diagnostics-index');
+    if (!el) return;
+    diagnostics = diagnostics || {};
+    if (!Object.keys(diagnostics).length) {
+      el.className = 'job-diagnostics';
+      el.textContent = '';
+      return;
+    }
+
+    var counts = [
+      ['Found', 'assets_found'],
+      ['Indexed', 'assets_indexed'],
+      ['Index workers', 'index_workers'],
+      ['New rows', 'assets_new'],
+      ['Existing rows', 'assets_existing'],
+      ['Thumbnails', 'thumbnails_generated'],
+      ['Thumbs from path', 'thumbnails_from_path'],
+      ['Thumbs from bytes', 'thumbnails_from_bytes'],
+      ['pHashes', 'phashes_computed'],
+      ['pHash commits', 'phash_commits'],
+      ['CLIP embeddings', 'clip_embeddings_computed'],
+      ['CLIP batches', 'clip_batches'],
+      ['CLIP batch target', 'clip_batch_size'],
+      ['CLIP preprocess workers', 'clip_preprocess_workers'],
+      ['DB claims', 'db_claims_committed']
+    ];
+    var details = [
+      ['CLIP accelerator', 'clip_accelerator']
+    ];
+    var timings = [
+      ['Scan', 'scan_seconds'],
+      ['CLIP warmup wait', 'clip_warmup_wait_seconds'],
+      ['Processing', 'processing_seconds'],
+      ['SHA reads', 'sha_seconds'],
+      ['Sidecars', 'sidecar_seconds'],
+      ['DB claims', 'db_claim_seconds'],
+      ['DB claim enqueue wait', 'db_claim_enqueue_wait_seconds'],
+      ['DB claim future wait', 'db_claim_future_wait_seconds'],
+      ['DB claim writer', 'db_claim_writer_seconds'],
+      ['DB claim commits', 'db_claim_commit_seconds'],
+      ['Thumbnails', 'thumbnail_seconds'],
+      ['Thumb decode', 'thumbnail_decode_seconds'],
+      ['Thumb decode path', 'thumbnail_decode_path_seconds'],
+      ['Thumb decode bytes', 'thumbnail_decode_bytes_seconds'],
+      ['Thumb resize', 'thumbnail_resize_seconds'],
+      ['Thumb write', 'thumbnail_write_seconds'],
+      ['pHash', 'phash_seconds'],
+      ['pHash DB writes', 'phash_write_seconds'],
+      ['CLIP queue wait', 'clip_queue_wait_seconds'],
+      ['CLIP preprocess', 'clip_preprocess_seconds'],
+      ['CLIP tensor queue wait', 'clip_tensor_queue_wait_seconds'],
+      ['CLIP inference', 'clip_inference_seconds'],
+      ['CLIP DB writes', 'clip_write_seconds']
+    ];
+    var averages = [
+      ['SHA / asset', 'sha_ms_per_asset'],
+      ['Sidecar / asset', 'sidecar_ms_per_asset'],
+      ['DB claim / asset', 'db_claim_ms_per_asset'],
+      ['DB writer / asset', 'db_claim_writer_ms_per_asset'],
+      ['DB commit / asset', 'db_claim_commit_ms_per_asset'],
+      ['Thumbnail / thumb', 'thumbnail_ms_per_thumb'],
+      ['pHash / hash', 'phash_ms_per_hash'],
+      ['CLIP inference / image', 'clip_inference_ms_per_embedding'],
+      ['CLIP inference / batch', 'clip_inference_ms_per_batch']
+    ];
+
+    el.textContent = '';
+    el.className = 'job-diagnostics visible';
+    var title = document.createElement('div');
+    title.className = 'job-diagnostics-title';
+    title.textContent = 'Index diagnostics';
+    el.appendChild(title);
+
+    var grid = document.createElement('div');
+    grid.className = 'job-diagnostics-grid';
+    counts.concat(details).concat(timings).concat(averages).forEach(function (item, idx) {
+      var label = item[0];
+      var key = item[1];
+      var row = document.createElement('div');
+      row.className = 'job-diagnostics-row';
+      var left = document.createElement('span');
+      var right = document.createElement('span');
+      left.textContent = label + workerSuffixForDiag(key, diagnostics);
+      right.textContent = idx < counts.length
+        ? formatDiagCount(diagnostics[key])
+        : (idx < counts.length + details.length
+          ? String(diagnostics[key] || '')
+          : (idx < counts.length + details.length + timings.length
+          ? formatDiagSeconds(diagnostics[key])
+          : formatDiagMs(diagnostics[key])));
+      row.appendChild(left);
+      row.appendChild(right);
+      grid.appendChild(row);
+    });
+    el.appendChild(grid);
+  }
 
   function applyJobState(data) {
     var jt = data.job_type;
@@ -94,6 +271,7 @@
     if (jt === 'index') {
       var cancelBtn = document.getElementById('btn-cancel-index');
       if (cancelBtn) cancelBtn.style.display = data.running ? '' : 'none';
+      renderIndexDiagnostics(data.diagnostics || {});
     }
 
     if (data.running) {

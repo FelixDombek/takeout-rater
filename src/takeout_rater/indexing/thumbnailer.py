@@ -7,6 +7,7 @@ under ``<db_root>/takeout-rater/thumbs/``.
 from __future__ import annotations
 
 from pathlib import Path
+from time import perf_counter
 
 try:
     import pillow_heif
@@ -18,6 +19,20 @@ except ImportError:
 THUMB_MAX_PX: int = 512
 THUMB_FORMAT: str = "JPEG"
 THUMB_QUALITY: int = 85
+
+
+def _empty_timings() -> dict[str, float]:
+    return {"decode": 0.0, "resize": 0.0, "write": 0.0}
+
+
+def _request_decoder_downscale(img: object) -> None:
+    """Ask Pillow-backed decoders to reduce at load time when supported."""
+    draft = getattr(img, "draft", None)
+    if callable(draft):
+        try:
+            draft("RGB", (THUMB_MAX_PX, THUMB_MAX_PX))
+        except Exception:  # noqa: BLE001
+            return
 
 
 def thumb_path_for_id(thumbs_dir: Path, asset_id: int) -> Path:
@@ -68,6 +83,7 @@ def generate_thumbnail_from_image(img: object, output_path: Path) -> object:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Apply EXIF orientation on the source image (mutates a copy).
+    _request_decoder_downscale(img)
     img = ImageOps.exif_transpose(img) or img  # type: ignore[arg-type]
     if img.mode not in ("RGB", "L"):  # type: ignore[union-attr]
         img = img.convert("RGB")  # type: ignore[union-attr]
@@ -78,6 +94,40 @@ def generate_thumbnail_from_image(img: object, output_path: Path) -> object:
         thumb = thumb.convert("RGB")
     thumb.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
     return thumb
+
+
+def generate_thumbnail_from_image_timed(
+    img: object, output_path: Path
+) -> tuple[object, dict[str, float]]:
+    """Generate a thumbnail from an open image and return stage timings."""
+    try:
+        from PIL import ImageOps
+    except ImportError as exc:
+        raise ImportError(
+            "Pillow is required for thumbnail generation. Install it with: pip install Pillow>=10.0"
+        ) from exc
+
+    timings = _empty_timings()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    start = perf_counter()
+    _request_decoder_downscale(img)
+    img = ImageOps.exif_transpose(img) or img  # type: ignore[arg-type]
+    if img.mode not in ("RGB", "L"):  # type: ignore[union-attr]
+        img = img.convert("RGB")  # type: ignore[union-attr]
+    thumb = img.copy()  # type: ignore[union-attr]
+    timings["decode"] += perf_counter() - start
+
+    start = perf_counter()
+    thumb.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX))
+    if thumb.mode not in ("RGB", "L"):
+        thumb = thumb.convert("RGB")
+    timings["resize"] += perf_counter() - start
+
+    start = perf_counter()
+    thumb.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+    timings["write"] += perf_counter() - start
+    return thumb, timings
 
 
 def generate_thumbnail(image_path: Path, output_path: Path) -> None:
@@ -108,6 +158,7 @@ def generate_thumbnail(image_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with Image.open(image_path) as img:
+        _request_decoder_downscale(img)
         # Apply EXIF orientation so thumbnails are always visually correct.
         img = ImageOps.exif_transpose(img) or img
         # Convert to RGB so JPEG output always succeeds (handles RGBA, P, etc.)
@@ -115,3 +166,43 @@ def generate_thumbnail(image_path: Path, output_path: Path) -> None:
             img = img.convert("RGB")
         img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX))
         img.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+
+
+def generate_thumbnail_timed(image_path: Path, output_path: Path) -> dict[str, float]:
+    """Generate a thumbnail from a path and return decode/resize/write timings."""
+    _thumb, timings = generate_thumbnail_from_path_timed(image_path, output_path)
+    return timings
+
+
+def generate_thumbnail_from_path_timed(
+    image_path: Path, output_path: Path
+) -> tuple[object, dict[str, float]]:
+    """Generate a thumbnail from a path and return the image plus timings."""
+    try:
+        from PIL import Image, ImageOps
+    except ImportError as exc:
+        raise ImportError(
+            "Pillow is required for thumbnail generation. Install it with: pip install Pillow>=10.0"
+        ) from exc
+
+    timings = _empty_timings()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(image_path) as img:
+        start = perf_counter()
+        _request_decoder_downscale(img)
+        img = ImageOps.exif_transpose(img) or img
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        timings["decode"] += perf_counter() - start
+
+        start = perf_counter()
+        img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX))
+        timings["resize"] += perf_counter() - start
+
+        start = perf_counter()
+        img.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+        timings["write"] += perf_counter() - start
+        thumb = img.copy()
+
+    return thumb, timings

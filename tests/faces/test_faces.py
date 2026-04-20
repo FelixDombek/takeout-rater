@@ -12,12 +12,15 @@ from fastapi.testclient import TestClient
 
 from takeout_rater.db.queries import (
     bulk_insert_face_embeddings,
+    clear_face_detection_data,
     count_face_embeddings,
     count_faces_for_asset,
     delete_face_cluster_run,
+    delete_face_detection_run,
     finish_face_detection_run,
     get_face_cluster_assets,
     get_face_cluster_label,
+    get_latest_face_detection_run_id,
     insert_face_detection_run,
     list_asset_ids_without_face_detection,
     list_face_cluster_runs,
@@ -154,6 +157,61 @@ class TestFaceEmbeddingQueries:
         missing_r1 = list_asset_ids_without_face_detection(conn, run_id=run1)
         assert a1 not in missing_r1
         assert a2 in missing_r1
+
+    def test_count_face_embeddings_can_filter_by_run(self) -> None:
+        conn = _make_db()
+        aid = _add_asset(conn, "Photos/a.jpg")
+        run1 = insert_face_detection_run(conn, "buffalo_l", None)
+        run2 = insert_face_detection_run(conn, "buffalo_l", None)
+        blob = _make_embedding(1.0)
+        bulk_insert_face_embeddings(
+            conn,
+            [
+                (aid, run1, 0, 0, 0, 10, 10, 0.9, blob),
+                (aid, run2, 0, 0, 0, 10, 10, 0.9, blob),
+            ],
+        )
+
+        assert count_face_embeddings(conn) == 2
+        assert count_face_embeddings(conn, run_id=run2) == 1
+
+    def test_clear_face_detection_data_removes_stale_runs_and_clusters(self) -> None:
+        conn = _make_db()
+        cluster_run_id, _, _ = TestFaceClusterQueries()._setup_clusters(conn)
+
+        assert count_face_embeddings(conn) == 2
+        assert list_face_cluster_runs(conn)[0]["run_id"] == cluster_run_id
+
+        clear_face_detection_data(conn)
+
+        assert count_face_embeddings(conn) == 0
+        assert list_face_detection_runs(conn) == []
+        assert list_face_cluster_runs(conn) == []
+
+    def test_get_latest_face_detection_run_id_prefers_finished_runs(self) -> None:
+        conn = _make_db()
+        old_finished = insert_face_detection_run(conn, "buffalo_l", None)
+        finish_face_detection_run(conn, old_finished)
+        newer_unfinished = insert_face_detection_run(conn, "buffalo_l", None)
+
+        assert newer_unfinished > old_finished
+        assert get_latest_face_detection_run_id(conn) == old_finished
+
+    def test_delete_face_detection_run_removes_embeddings_and_clusters(self) -> None:
+        conn = _make_db()
+        cluster_run_id, _, det_run = TestFaceClusterQueries()._setup_clusters(conn)
+
+        assert delete_face_detection_run(conn, det_run) is True
+
+        assert conn.execute("SELECT COUNT(*) FROM face_detection_runs").fetchone()[0] == 0
+        assert count_face_embeddings(conn) == 0
+        assert list_face_cluster_runs(conn) == []
+        assert delete_face_cluster_run(conn, cluster_run_id) is False
+
+    def test_delete_face_detection_run_missing_returns_false(self) -> None:
+        conn = _make_db()
+
+        assert delete_face_detection_run(conn, 9999) is False
 
 
 class TestFaceClusterQueries:
@@ -532,8 +590,22 @@ class TestFacesAPI:
         assert resp.status_code == 200
         assert face_client_with_data.get("/api/faces/cluster-runs").json() == []
 
+    def test_delete_detection_run(self, face_client_with_data: TestClient) -> None:
+        runs = face_client_with_data.get("/api/faces/detection-runs").json()
+        run_id = runs[0]["run_id"]
+
+        resp = face_client_with_data.delete(f"/api/faces/detection-run/{run_id}")
+
+        assert resp.status_code == 200
+        assert face_client_with_data.get("/api/faces/detection-runs").json() == []
+        assert face_client_with_data.get("/api/faces/cluster-runs").json() == []
+
     def test_delete_nonexistent_run(self, face_client: TestClient) -> None:
         resp = face_client.delete("/api/faces/cluster-run/99999")
+        assert resp.status_code == 404
+
+    def test_delete_nonexistent_detection_run(self, face_client: TestClient) -> None:
+        resp = face_client.delete("/api/faces/detection-run/99999")
         assert resp.status_code == 404
 
     def test_face_count_for_asset(self, face_client_with_data: TestClient) -> None:
@@ -577,6 +649,7 @@ class TestFacesUIRoutes:
         resp = face_client.get("/faces")
         assert "Detect Faces" in resp.text
         assert "Run Detection" in resp.text
+        assert "Face Detection Runs" in resp.text
         assert 'data-face-accelerator="tensorrt"' in resp.text
         assert 'data-face-accelerator="gpu"' in resp.text
         assert 'class="seg-tab active" id="face-accelerator-tensorrt"' in resp.text
@@ -598,6 +671,14 @@ class TestFacesUIRoutes:
         assert resp.status_code == 200
         assert "Face clustering #" in resp.text
         assert "/faces/clusterings/" in resp.text
+
+    def test_faces_page_lists_face_detection_runs(self, face_client_with_data: TestClient) -> None:
+        resp = face_client_with_data.get("/faces")
+
+        assert resp.status_code == 200
+        assert "Face detection #" in resp.text
+        assert "deleteFaceDetectionRun" in resp.text
+        assert "/api/faces/detection-run/" in resp.text
 
     def test_face_clustering_detail_links_to_face_clusters(
         self, face_client_with_data: TestClient
@@ -645,6 +726,79 @@ class TestFaceDetectorAccelerator:
 
         assert providers[0][0] == "TensorrtExecutionProvider"
         assert providers[1:] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    def test_detect_batched_batches_recognition(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys
+        from types import SimpleNamespace
+
+        import numpy as np
+
+        class _FakeDetModel:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def detect(self, img_array, max_num=0, metric="default"):  # type: ignore[no-untyped-def]
+                self.calls += 1
+                bboxes = np.array(
+                    [
+                        [1.0, 2.0, 11.0, 12.0, 0.9],
+                        [3.0, 4.0, 13.0, 14.0, 0.8],
+                    ],
+                    dtype=np.float32,
+                )
+                kpss = np.zeros((2, 5, 2), dtype=np.float32)
+                return bboxes, kpss
+
+        class _FakeRecModel:
+            input_size = (112, 112)
+
+            def __init__(self) -> None:
+                self.batch_sizes: list[int] = []
+
+            def get_feat(self, imgs):  # type: ignore[no-untyped-def]
+                self.batch_sizes.append(len(imgs))
+                embeddings = np.zeros((len(imgs), EMBEDDING_DIM), dtype=np.float32)
+                embeddings[:, 0] = 2.0
+                return embeddings
+
+        fake_cv2 = SimpleNamespace(
+            BORDER_CONSTANT=0,
+            warpAffine=lambda img, transform, size, borderMode=0: np.zeros(
+                (size[1], size[0], 3),
+                dtype=np.uint8,
+            ),
+        )
+        fake_face_align = SimpleNamespace(
+            estimate_norm=lambda kps, image_size=112: np.array(
+                [[1, 0, 0], [0, 1, 0]],
+                dtype=np.float32,
+            )
+        )
+        monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+        monkeypatch.setitem(
+            sys.modules,
+            "insightface.utils",
+            SimpleNamespace(face_align=fake_face_align),
+        )
+
+        det_model = _FakeDetModel()
+        rec_model = _FakeRecModel()
+        detector = FaceDetector(recognition_batching=True)
+        detector._app = type("_FakeApp", (), {"det_model": det_model})()
+        detector._rec_model = rec_model
+
+        faces = detector.detect_batched(np.zeros((32, 32, 3), dtype=np.uint8))
+
+        assert det_model.calls == 1
+        assert rec_model.batch_sizes == [2]
+        assert len(faces) == 2
+        assert faces[0].embedding[0] == pytest.approx(1.0)
+        assert faces[1].face_index == 1
+
+    def test_tensorrt_disables_recognition_batching_by_default(self) -> None:
+        detector = FaceDetector(accelerator="tensorrt")
+
+        assert detector._recognition_batching is False
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ GET  /api/faces/cluster/<id>        – get assets in a person group
 POST /api/faces/cluster/<id>/rename – rename a person group
 GET  /api/faces/cluster/<id>/similar – CLIP-based similar-photo suggestions
 GET  /api/faces/asset/<id>/count    – face count for an asset
+DELETE /api/faces/detection-run/<id> – delete a face detection run
 DELETE /api/faces/cluster-run/<id>  – delete a face clustering run
 """
 
@@ -65,10 +66,13 @@ def _parse_params(params_json: str | None) -> dict:
 def faces_page(request: Request) -> HTMLResponse:
     """Render the face jobs and face-clustering runs page."""
     _require_db(request)
-    from takeout_rater.db.queries import list_face_cluster_runs
+    from takeout_rater.db.queries import list_face_cluster_runs, list_face_detection_runs
 
     conn = _get_conn(request)
     try:
+        detection_runs = list_face_detection_runs(conn)
+        for run in detection_runs:
+            run["params"] = _parse_params(run["params_json"])
         runs = list_face_cluster_runs(conn)
         for run in runs:
             run["params"] = _parse_params(run["params_json"])
@@ -80,6 +84,7 @@ def faces_page(request: Request) -> HTMLResponse:
         "faces.html",
         {
             "request": request,
+            "detection_runs": detection_runs,
             "runs": runs,
         },
     )
@@ -283,6 +288,27 @@ def face_count_for_asset(asset_id: int, request: Request) -> JSONResponse:
     conn = _get_conn(request)
     count = count_faces_for_asset(conn, asset_id)
     return JSONResponse({"asset_id": asset_id, "face_count": count})
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/faces/detection-run/{run_id}
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/api/faces/detection-run/{run_id}")
+def delete_detection_run(run_id: int, request: Request) -> JSONResponse:
+    """Delete a face detection run, its embeddings, and dependent clusters."""
+    _require_db(request)
+    from takeout_rater.db.queries import delete_face_detection_run
+
+    conn = _get_conn(request)
+    try:
+        ok = delete_face_detection_run(conn, run_id)
+    finally:
+        _close_owned_conn(request, conn)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Face detection run not found.")
+    return JSONResponse({"status": "deleted"})
 
 
 # ---------------------------------------------------------------------------
