@@ -255,7 +255,11 @@ class FaceDetector:
             logger.debug("Could not read image: %s", image_path)
             return []
 
-        return self.detect_batched(img) if self._recognition_batching else self._detect_via_face_analysis(img)
+        return (
+            self.detect_batched(img)
+            if self._recognition_batching
+            else self._detect_via_face_analysis(img)
+        )
 
     def detect_from_array(self, img_array: object) -> list[DetectedFace]:
         """Detect faces from a numpy BGR array (e.g. already-loaded thumbnail).
