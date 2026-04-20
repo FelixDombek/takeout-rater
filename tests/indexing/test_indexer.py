@@ -63,14 +63,14 @@ def test_run_index_separate_db_root(tmp_path: Path) -> None:
 
     assert progress.done is True
     assert progress.error is None
+    assert progress.diagnostics["assets_found"] == 0
+    assert "scan_seconds" in progress.diagnostics
     assert library_db_path(db_root).exists()
     # DB must NOT be inside photos_root
     assert not library_db_path(photos_root).exists()
 
 
-def test_run_index_batches_clip_embeddings(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_run_index_batches_clip_embeddings(tmp_path: Path, monkeypatch) -> None:
     import torch
     from PIL import Image
 
@@ -105,11 +105,20 @@ def test_run_index_batches_clip_embeddings(
         )
 
     monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.is_available", lambda: True)
-    monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.get_clip_model", _fake_get_clip_model)
+    monkeypatch.setattr(
+        "takeout_rater.scoring.scorers.clip_backbone.get_clip_model", _fake_get_clip_model
+    )
+    monkeypatch.setenv("TAKEOUT_RATER_CLIP_ACCELERATOR", "torch")
 
-    run_index(photos_root, conn, db_root=db_root)
+    progress = run_index(photos_root, conn, db_root=db_root)
 
     assert conn.execute("SELECT COUNT(*) FROM clip_embeddings").fetchone()[0] == 8
     assert batch_sizes
     assert max(batch_sizes) > 1
+    assert progress.diagnostics["assets_found"] == 8
+    assert progress.diagnostics["assets_indexed"] == 8
+    assert progress.diagnostics["clip_embeddings_computed"] == 8
+    assert progress.diagnostics["clip_batches"] >= 1
+    assert progress.diagnostics["clip_preprocess_workers"] >= 1
+    assert "clip_inference_seconds" in progress.diagnostics
     conn.close()

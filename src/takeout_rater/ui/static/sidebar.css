@@ -1,0 +1,125 @@
+/* Shared flat sidebar layout used by browse and setup pages. */
+
+.sidebar-layout {
+  display: flex;
+  align-items: stretch;
+  min-height: calc(100vh - 52px);
+  margin: -1.5rem;
+}
+
+.app-sidebar {
+  width: 260px;
+  min-width: 220px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid #dedede;
+  padding: 1rem;
+  position: sticky;
+  top: 52px;
+  height: calc(100vh - 52px);
+  overflow-y: auto;
+}
+
+.sidebar-main {
+  flex: 1;
+  min-width: 0;
+  padding: 1.5rem;
+}
+
+.sidebar-count { margin-bottom: 0.6rem; }
+.sidebar-count .toolbar-count {
+  display: block;
+  font-size: 0.82rem;
+  color: #555;
+  margin-bottom: 0.4rem;
+  line-height: 1.4;
+}
+
+.sidebar-fav-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: #e4e4e4;
+  margin: 0.85rem 0;
+}
+
+.sidebar-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #888;
+  margin-bottom: 0.4rem;
+}
+
+.sidebar-note {
+  font-size: 0.78rem;
+  color: #666;
+  line-height: 1.45;
+}
+
+.sidebar-radio-group {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sidebar-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: #333;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.sidebar-radio input {
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.sidebar-radio small {
+  display: block;
+  color: #777;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  margin-top: 0.1rem;
+}
+
+.sidebar-apply {
+  width: 100%;
+  margin-top: 0.7rem;
+  font-size: 0.85rem;
+}
+
+.sidebar-status {
+  margin-top: 0.55rem;
+  min-height: 1.2em;
+  font-size: 0.78rem;
+  color: #666;
+}
+.sidebar-status.ok { color: #1e7e34; }
+.sidebar-status.error { color: #c0392b; }
+.sidebar-status.info { color: #1a5cdb; }
+
+@media (max-width: 800px) {
+  .sidebar-layout {
+    flex-direction: column;
+    margin: -1.5rem;
+  }
+  .app-sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid #dedede;
+    overflow-y: visible;
+  }
+}
+

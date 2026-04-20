@@ -84,6 +84,48 @@ def test_get_config_configured(
     assert data["photos_root"] == str(tmp_path)
 
 
+def test_performance_config_round_trip(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import takeout_rater.config as cfg_mod  # noqa: E402
+
+    cfg_file = tmp_path / "config.json"
+    monkeypatch.setattr(cfg_mod, "_CONFIG_FILE", cfg_file)
+
+    resp = client.get("/api/config/performance")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "clip_accelerator": "torch",
+        "clip_batch_size": 128,
+        "clip_fp16": True,
+    }
+
+    resp = client.post(
+        "/api/config/performance",
+        json={"clip_accelerator": "torch", "clip_batch_size": 96, "clip_fp16": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["performance"] == {
+        "clip_accelerator": "torch",
+        "clip_batch_size": 96,
+        "clip_fp16": False,
+    }
+    assert client.get("/api/config/performance").json()["clip_batch_size"] == 96
+
+
+def test_performance_config_rejects_invalid_batch_size(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import takeout_rater.config as cfg_mod  # noqa: E402
+
+    monkeypatch.setattr(cfg_mod, "_CONFIG_FILE", tmp_path / "config.json")
+    resp = client.post(
+        "/api/config/performance",
+        json={"clip_accelerator": "auto", "clip_batch_size": 999, "clip_fp16": True},
+    )
+    assert resp.status_code == 400
+
+
 def test_get_config_includes_db_root(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -296,6 +338,21 @@ def test_setup_page_contains_form_elements(
     assert "Save" in resp.text
 
 
+def test_setup_page_contains_reset_button_when_configured(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import takeout_rater.config as cfg_mod  # noqa: E402
+
+    monkeypatch.setattr(cfg_mod, "get_photos_root", lambda: tmp_path)
+    monkeypatch.setattr(cfg_mod, "get_db_root", lambda: tmp_path / "state")
+
+    resp = client.get("/setup")
+
+    assert resp.status_code == 200
+    assert "btn-reset-library" in resp.text
+    assert "Delete database &amp; re-index" in resp.text
+
+
 def test_setup_page_lists_known_libraries(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -431,6 +488,74 @@ def test_set_path_triggers_index_job(
     assert calls[0] == tmp_path.resolve()
 
 
+def test_reset_library_deletes_database_and_starts_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    from takeout_rater.db.connection import (  # noqa: E402
+        library_db_path,
+        library_state_dir,
+        open_library_db,
+    )
+
+    photos_root = tmp_path / "photos"
+    photos_root.mkdir()
+    db_root = tmp_path / "state"
+    conn = open_library_db(db_root)
+    conn.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO marker (id) VALUES (1)")
+    conn.commit()
+    thumbs_dir = library_state_dir(db_root) / "thumbs"
+    thumbs_dir.mkdir(parents=True)
+    (thumbs_dir / "old-thumb.jpg").write_bytes(b"old")
+
+    calls: list[Path] = []
+
+    def _fake_start(app: object, photos_root: Path, db_root: Path) -> None:
+        calls.append(photos_root)
+
+    import takeout_rater.api.jobs as jobs_mod  # noqa: E402
+
+    monkeypatch.setattr(jobs_mod, "_start_index_job", _fake_start)
+
+    app = create_app(photos_root, conn, db_root=db_root)
+    client = TestClient(app, follow_redirects=False)
+
+    resp = client.post("/api/config/reset-library")
+
+    assert resp.status_code == 200
+    assert calls == [photos_root]
+    db_path = library_db_path(db_root)
+    assert db_path.exists()
+    assert not thumbs_dir.exists()
+
+    check = sqlite3.connect(db_path)
+    try:
+        marker = check.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'marker'"
+        ).fetchone()
+    finally:
+        check.close()
+    assert marker is None
+
+
+def test_reset_library_rejects_while_job_running(tmp_path: Path) -> None:
+    from takeout_rater.api.jobs import JobProgress  # noqa: E402
+    from takeout_rater.db.connection import open_library_db  # noqa: E402
+
+    photos_root = tmp_path / "photos"
+    photos_root.mkdir()
+    db_root = tmp_path / "state"
+    app = create_app(photos_root, open_library_db(db_root), db_root=db_root)
+    app.state.jobs["score"] = JobProgress(job_type="score", running=True)  # type: ignore[union-attr]
+    client = TestClient(app, follow_redirects=False)
+
+    resp = client.post("/api/config/reset-library")
+
+    assert resp.status_code == 409
+
+
 # ---------------------------------------------------------------------------
 # Jobs API for index status
 # ---------------------------------------------------------------------------
@@ -446,6 +571,7 @@ def test_index_status_via_jobs_api(client: TestClient) -> None:
     assert data["done"] is False
     assert data["error"] is None
     assert "current_item" in data
+    assert data["diagnostics"] == {}
 
 
 def test_index_status_reflects_stored_job_progress(client: TestClient) -> None:
@@ -460,6 +586,7 @@ def test_index_status_reflects_stored_job_progress(client: TestClient) -> None:
         total=42,
         message="Indexed 42 photo(s).",
         current_item="",
+        diagnostics={"scan_seconds": 1.25, "assets_indexed": 42},
     )
     from takeout_rater.api.jobs import _get_jobs  # noqa: E402
 
@@ -473,3 +600,5 @@ def test_index_status_reflects_stored_job_progress(client: TestClient) -> None:
     assert data["total"] == 42
     assert data["message"] == "Indexed 42 photo(s)."
     assert data["current_item"] == ""
+    assert data["diagnostics"]["scan_seconds"] == 1.25
+    assert data["diagnostics"]["assets_indexed"] == 42

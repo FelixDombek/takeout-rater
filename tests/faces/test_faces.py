@@ -730,8 +730,10 @@ class TestFaceDetectorAccelerator:
         assert providers[1:] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
     def test_detect_batched_batches_recognition(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys
+        from types import SimpleNamespace
+
         import numpy as np
-        from insightface.utils import face_align
 
         class _FakeDetModel:
             def __init__(self) -> None:
@@ -761,10 +763,24 @@ class TestFaceDetectorAccelerator:
                 embeddings[:, 0] = 2.0
                 return embeddings
 
-        monkeypatch.setattr(
-            face_align,
-            "estimate_norm",
-            lambda kps, image_size=112: np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32),
+        fake_cv2 = SimpleNamespace(
+            BORDER_CONSTANT=0,
+            warpAffine=lambda img, transform, size, borderMode=0: np.zeros(
+                (size[1], size[0], 3),
+                dtype=np.uint8,
+            ),
+        )
+        fake_face_align = SimpleNamespace(
+            estimate_norm=lambda kps, image_size=112: np.array(
+                [[1, 0, 0], [0, 1, 0]],
+                dtype=np.float32,
+            )
+        )
+        monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+        monkeypatch.setitem(
+            sys.modules,
+            "insightface.utils",
+            SimpleNamespace(face_align=fake_face_align),
         )
 
         det_model = _FakeDetModel()

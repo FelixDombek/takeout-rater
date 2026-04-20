@@ -15,6 +15,13 @@ from pathlib import Path
 
 _APP_DIR = Path.home() / ".takeout_rater"
 _CONFIG_FILE = _APP_DIR / "config.json"
+_PERFORMANCE_DEFAULTS: dict[str, object] = {
+    "clip_accelerator": "torch",
+    "clip_batch_size": 128,
+    "clip_fp16": True,
+}
+_CLIP_ACCELERATORS = {"auto", "onnx", "torch", "tensorrt"}
+_CLIP_BATCH_SIZES = {64, 96, 128, 160}
 
 
 def get_app_dir() -> Path:
@@ -53,6 +60,51 @@ def _save(data: dict) -> None:
     """Persist *data* to the config file."""
     _CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     _CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _normalize_performance_settings(raw: object) -> dict[str, object]:
+    settings = dict(_PERFORMANCE_DEFAULTS)
+    if not isinstance(raw, dict):
+        return settings
+
+    accelerator = raw.get("clip_accelerator")
+    if isinstance(accelerator, str) and accelerator in _CLIP_ACCELERATORS:
+        settings["clip_accelerator"] = accelerator
+
+    batch_size = raw.get("clip_batch_size")
+    if isinstance(batch_size, int) and batch_size in _CLIP_BATCH_SIZES:
+        settings["clip_batch_size"] = batch_size
+
+    fp16 = raw.get("clip_fp16")
+    if isinstance(fp16, bool):
+        settings["clip_fp16"] = fp16
+
+    return settings
+
+
+def get_performance_settings() -> dict[str, object]:
+    """Return persisted indexing/performance settings with defaults filled in."""
+    return _normalize_performance_settings(_load().get("performance"))
+
+
+def set_performance_settings(
+    *, clip_accelerator: str, clip_batch_size: int, clip_fp16: bool
+) -> dict[str, object]:
+    """Persist indexing/performance settings and return the normalised values."""
+    if clip_accelerator not in _CLIP_ACCELERATORS:
+        raise ValueError(f"Unsupported CLIP accelerator: {clip_accelerator}")
+    if clip_batch_size not in _CLIP_BATCH_SIZES:
+        raise ValueError(f"Unsupported CLIP batch size: {clip_batch_size}")
+    data = _load()
+    data["performance"] = _normalize_performance_settings(
+        {
+            "clip_accelerator": clip_accelerator,
+            "clip_batch_size": clip_batch_size,
+            "clip_fp16": clip_fp16,
+        }
+    )
+    _save(data)
+    return dict(data["performance"])
 
 
 def _library_record(photos_root: Path, db_root: Path) -> dict[str, str]:

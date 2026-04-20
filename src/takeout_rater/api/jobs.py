@@ -82,6 +82,9 @@ class JobProgress:
             ``"export"``, ``"rescan"``.
         cancel_event: Set this event to request cancellation of the running
             job.  The worker checks it between batches and exits early.
+        diagnostics: Optional job-specific counters and timing information.
+            For indexing this contains stage-level timing and throughput
+            counters surfaced in the Jobs UI.
     """
 
     job_type: str = ""
@@ -94,6 +97,7 @@ class JobProgress:
     current_item: str = ""
     current_scorer_id: str = ""
     current_variant_id: str = ""
+    diagnostics: dict[str, object] = field(default_factory=dict)
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
@@ -118,6 +122,7 @@ def _job_status_dict(p: JobProgress) -> dict:
         "current_item": p.current_item,
         "current_scorer_id": p.current_scorer_id,
         "current_variant_id": p.current_variant_id,
+        "diagnostics": p.diagnostics,
         "cancelled": p.cancel_event.is_set(),
     }
 
@@ -206,6 +211,8 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "total": 0,
                     "current_item": "",
                     "current_scorer_id": "",
+                    "current_variant_id": "",
+                    "diagnostics": {},
                     "cancelled": False,
                 }
             )
@@ -227,6 +234,8 @@ def jobs_status(request: Request, job_type: str | None = None) -> JSONResponse:
                     "total": 0,
                     "current_item": "",
                     "current_scorer_id": "",
+                    "current_variant_id": "",
+                    "diagnostics": {},
                     "cancelled": False,
                 }
             )
@@ -265,6 +274,7 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
     _db_root = db_root  # capture for closure
 
     def _worker() -> None:
+        from takeout_rater.config import get_performance_settings
         from takeout_rater.db.connection import (
             open_library_db as _open,
         )
@@ -280,6 +290,7 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
                 progress.total = p.found
                 progress.processed = p.indexed
 
+            progress.diagnostics = dict(p.diagnostics)
             progress.current_item = p.current_dir
             if p.phase == "scanning" and p.total_dirs > 0:
                 msg = (
@@ -300,13 +311,18 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
 
         worker_conn = _open(_db_root)
         try:
+            perf = get_performance_settings()
             result = run_index(
                 photos_root,
                 worker_conn,
                 db_root=_db_root,
                 on_progress=_cb,
                 cancel_check=progress.cancel_event.is_set,
+                clip_batch_size=int(perf["clip_batch_size"]),
+                clip_accelerator=str(perf["clip_accelerator"]),
+                clip_fp16=bool(perf["clip_fp16"]),
             )
+            progress.diagnostics = dict(result.diagnostics)
             progress.total = result.found
             progress.processed = result.indexed
             progress.current_item = ""
@@ -1434,8 +1450,6 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
         from collections import deque
         from concurrent.futures import Future, ThreadPoolExecutor
 
-        import cv2
-
         from takeout_rater.db.queries import (
             bulk_insert_face_embeddings,
             clear_face_detection_data,
@@ -1556,7 +1570,11 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
                 if not thumb.exists():
                     return aid, thumb, None
                 try:
+                    import cv2
+
                     img_array = cv2.imread(str(thumb))
+                except ImportError:
+                    return aid, thumb, None
                 except Exception:  # noqa: BLE001
                     _log.warning("Could not read thumbnail %s", thumb, exc_info=True)
                     return aid, thumb, None
@@ -1564,14 +1582,16 @@ def start_detect_faces_job(body: _DetectFacesStartBody, request: Request) -> JSO
 
             def _detect_loaded_faces(aid: int, thumb: Path, img_array: object | None) -> None:
                 nonlocal total_faces
-                if img_array is None:
+                if img_array is None and (
+                    hasattr(detector, "detect_batched") or hasattr(detector, "detect_from_array")
+                ):
                     return
 
                 progress.current_item = str(thumb.name)
                 try:
-                    if hasattr(detector, "detect_batched"):
+                    if img_array is not None and hasattr(detector, "detect_batched"):
                         faces = detector.detect_batched(img_array)
-                    elif hasattr(detector, "detect_from_array"):
+                    elif img_array is not None and hasattr(detector, "detect_from_array"):
                         faces = detector.detect_from_array(img_array)
                     else:
                         faces = detector.detect(thumb)

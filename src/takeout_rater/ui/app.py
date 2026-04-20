@@ -143,6 +143,7 @@ def create_app(
         from takeout_rater.config import (
             get_app_dir,
             get_db_root,
+            get_performance_settings,
             get_photos_root,
             list_libraries,
         )
@@ -158,6 +159,7 @@ def create_app(
                 "current_db_root": str(current_db_root) if current_db_root else None,
                 "app_dir": str(get_app_dir()),
                 "known_libraries": list_libraries(),
+                "performance": get_performance_settings(),
             },
         )
 

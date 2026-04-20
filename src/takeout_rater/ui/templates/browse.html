@@ -7,51 +7,6 @@
   /* ── Remove the global max-width cap so the grid expands on wide screens */
   main { max-width: none; }
 
-  /* ── Browse layout: sidebar + main ───────────────────────────────────── */
-  .browse-layout {
-    display: flex;
-    gap: 1.25rem;
-    align-items: flex-start;
-  }
-  .browse-sidebar {
-    width: 240px;
-    min-width: 200px;
-    flex-shrink: 0;
-    background: #fff;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    padding: 1rem;
-    position: sticky;
-    top: calc(52px + 1rem);
-    max-height: calc(100vh - 52px - 2rem);
-    overflow-y: auto;
-  }
-  .browse-main { flex: 1; min-width: 0; }
-  .sidebar-count { margin-bottom: 0.6rem; }
-  .sidebar-count .toolbar-count {
-    display: block;
-    font-size: 0.82rem;
-    color: #555;
-    margin-bottom: 0.4rem;
-    line-height: 1.4;
-  }
-  .sidebar-fav-btn {
-    display: block;
-    width: 100%;
-    text-align: center;
-    margin-bottom: 0.4rem;
-    font-size: 0.82rem;
-  }
-  .sidebar-divider { height: 1px; background: #e4e4e4; margin: 0.65rem 0; }
-  .sidebar-section-title {
-    font-size: 0.68rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #888;
-    margin-bottom: 0.4rem;
-  }
-
   /* ── Sort panels ──────────────────────────────────────────────────────── */
   #sort-panels { margin-bottom: 0.6rem; }
   .sort-panel {
@@ -107,7 +62,7 @@
     gap: 0.3rem;
   }
   .sort-panel-desc.hidden { display: none; }
-  .sidebar-apply { width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
+  .browse-sidebar .sidebar-apply { margin-bottom: 0.65rem; }
 
   /* ── Presets ──────────────────────────────────────────────────────────── */
   .sidebar-presets { margin-bottom: 0.65rem; }
@@ -129,16 +84,6 @@
   }
   .sidebar-save-preset .btn { width: 100%; font-size: 0.82rem; }
 
-  /* ── Mobile: sidebar stacks above the grid ───────────────────────────── */
-  @media (max-width: 800px) {
-    .browse-layout { flex-direction: column; }
-    .browse-sidebar {
-      width: 100%;
-      position: static;
-      max-height: none;
-      overflow-y: visible;
-    }
-  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -351,10 +296,10 @@
 </div>
 <div id="timeline-year-tooltip"></div>
 
-<div class="browse-layout">
+<div class="browse-layout sidebar-layout">
 
 {# ── Sidebar ─────────────────────────────────────────────────────────────── #}
-<aside class="browse-sidebar">
+<aside class="browse-sidebar app-sidebar">
 
   {# Photo count + favorites toggle #}
   <div class="sidebar-count">
@@ -496,7 +441,7 @@
 </aside>{# .browse-sidebar #}
 
 {# ── Main content ─────────────────────────────────────────────────────────── #}
-<div class="browse-main">
+<div class="browse-main sidebar-main">
 
 {% if assets %}
   <div class="grid" id="photo-grid">

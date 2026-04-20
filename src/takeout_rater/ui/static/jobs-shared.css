@@ -18,7 +18,7 @@
 }
 
 /* ── Job-card component ──────────────────────────────────────────────── */
-.job-cards { margin-bottom: 1.5rem; }
+.job-cards { max-width: 900px; margin: 0 auto 1.5rem; }
 .job-card {
   background: #fff;
   border: 1px solid #e0e0e0;

@@ -5,11 +5,11 @@
 {% block head %}
 <style>
   .setup-card {
-    max-width: 600px;
-    margin: 3rem auto;
+    max-width: 720px;
+    margin: 0 auto;
     background: #fff;
-    border-radius: 10px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.1);
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
     padding: 2rem 2.5rem;
   }
   .setup-card h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
@@ -82,10 +82,81 @@
     word-break: break-all;
     margin-bottom: 0.5rem;
   }
+  .setup-layout {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+    margin-top: -1.5rem;
+    margin-bottom: -1.5rem;
+  }
 </style>
 {% endblock %}
 
 {% block content %}
+<div class="setup-layout sidebar-layout">
+<aside class="setup-sidebar app-sidebar">
+  <div class="sidebar-section-title">Indexing</div>
+  <p class="sidebar-note">
+    These settings apply to future indexing and re-indexing jobs.
+  </p>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">CLIP accelerator</div>
+  <div class="sidebar-radio-group" id="clip-accelerator-group">
+    <label class="sidebar-radio">
+      <input type="radio" name="clip_accelerator" value="torch"
+             {% if performance.clip_accelerator == "torch" %}checked{% endif %}>
+      <span>Torch<small>Use the OpenCLIP PyTorch model directly.</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" name="clip_accelerator" value="auto"
+             {% if performance.clip_accelerator == "auto" %}checked{% endif %}>
+      <span>Auto<small>Use ONNX Runtime CUDA when available, otherwise Torch.</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" name="clip_accelerator" value="onnx"
+             {% if performance.clip_accelerator == "onnx" %}checked{% endif %}>
+      <span>ONNX CUDA<small>Force ONNX Runtime CUDA with Torch fallback.</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" name="clip_accelerator" value="tensorrt"
+             {% if performance.clip_accelerator == "tensorrt" %}checked{% endif %}>
+      <span>TensorRT<small>Opt-in engine build through ONNX Runtime.</small></span>
+    </label>
+  </div>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">CLIP batch target</div>
+  <div class="sidebar-radio-group" id="clip-batch-group">
+    {% for size in [64, 96, 128, 160] %}
+    <label class="sidebar-radio">
+      <input type="radio" name="clip_batch_size" value="{{ size }}"
+             {% if performance.clip_batch_size == size %}checked{% endif %}>
+      <span>{{ size }}</span>
+    </label>
+    {% endfor %}
+  </div>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Torch fp16</div>
+  <div class="sidebar-radio-group" id="clip-fp16-group">
+    <label class="sidebar-radio">
+      <input type="radio" name="clip_fp16" value="1"
+             {% if performance.clip_fp16 %}checked{% endif %}>
+      <span>Enabled<small>Use CUDA autocast for Torch CLIP inference.</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" name="clip_fp16" value="0"
+             {% if not performance.clip_fp16 %}checked{% endif %}>
+      <span>Disabled<small>Use full precision Torch CLIP inference.</small></span>
+    </label>
+  </div>
+
+  <button class="btn btn-primary sidebar-apply" id="btn-save-performance">Save settings</button>
+  <div class="sidebar-status" id="performance-status"></div>
+</aside>
+
+<div class="setup-main sidebar-main">
 <div class="setup-card">
   <h1>📁 Select your photos folder</h1>
   <p>
@@ -142,6 +213,15 @@
       You can change the folder at any time by entering a new path above and clicking
       <em>Save &amp; continue</em>.
     </p>
+    <div class="actions">
+      <button class="btn" id="btn-reset-library">
+        Delete database &amp; re-index
+      </button>
+    </div>
+    <p style="font-size:0.8rem; color:#8a4b00; margin-top:0.6rem;">
+      Deletes the current SQLite database and thumbnails, keeps your photos, then starts
+      indexing from an empty thumbnail cache.
+    </p>
   </div>
   {% endif %}
 
@@ -171,17 +251,64 @@
     <div id="switch-status-msg"></div>
   </div>
 </div>
+</div>
+</div>
 
 <script>
 (function () {
   var btnPick    = document.getElementById('btn-pick');
   var btnSave    = document.getElementById('btn-save');
+  var btnReset   = document.getElementById('btn-reset-library');
+  var btnPerf    = document.getElementById('btn-save-performance');
   var pathInput  = document.getElementById('path-input');
   var statusMsg  = document.getElementById('status-msg');
+  var perfStatus = document.getElementById('performance-status');
 
   function showStatus(msg, cls) {
     statusMsg.textContent = msg;
     statusMsg.className = cls;
+  }
+
+  function selectedRadio(name) {
+    var checked = document.querySelector('input[name="' + name + '"]:checked');
+    return checked ? checked.value : '';
+  }
+
+  function showPerformanceStatus(msg, cls) {
+    if (!perfStatus) return;
+    perfStatus.textContent = msg;
+    perfStatus.className = 'sidebar-status' + (cls ? ' ' + cls : '');
+  }
+
+  if (btnPerf) {
+    btnPerf.addEventListener('click', function () {
+      btnPerf.disabled = true;
+      showPerformanceStatus('Saving…', 'info');
+      fetch('/api/config/performance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clip_accelerator: selectedRadio('clip_accelerator'),
+          clip_batch_size: Number(selectedRadio('clip_batch_size')),
+          clip_fp16: selectedRadio('clip_fp16') === '1'
+        })
+      })
+        .then(function (r) {
+          if (!r.ok) {
+            return r.json().then(function (d) { throw new Error(d.detail || r.statusText); });
+          }
+          return r.json();
+        })
+        .then(function () {
+          showPerformanceStatus('Saved for future jobs.', 'ok');
+        })
+        .catch(function (err) {
+          showPerformanceStatus('Error: ' + err.message, 'error');
+        })
+        .finally(function () {
+          btnPerf.disabled = false;
+        });
+    });
   }
 
   // ETA tracking anchor
@@ -282,6 +409,34 @@
         btnSave.disabled = false;
       });
   });
+
+  if (btnReset) {
+    btnReset.addEventListener('click', function () {
+      if (!window.confirm('Delete the current database and re-index this library from scratch?')) {
+        return;
+      }
+      btnReset.disabled = true;
+      btnSave.disabled = true;
+      showStatus('Deleting database and starting a fresh index…', 'info');
+      setProgressBar('progress-wrap', 'progress-bar', 0);
+      fetch('/api/config/reset-library', { method: 'POST' })
+        .then(function (r) {
+          if (!r.ok) {
+            return r.json().then(function (d) { throw new Error(d.detail || r.statusText); });
+          }
+          return r.json();
+        })
+        .then(function () {
+          _indexStats = null;
+          setTimeout(pollIndexStatus, 500);
+        })
+        .catch(function (err) {
+          showStatus('Error: ' + err.message, 'error');
+          btnReset.disabled = false;
+          btnSave.disabled = false;
+        });
+    });
+  }
 
   // ── Switch to existing library ─────────────────────────────────────────────
   var switchStatusMsg = document.getElementById('switch-status-msg');
