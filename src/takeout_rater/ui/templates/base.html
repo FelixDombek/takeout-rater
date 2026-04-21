@@ -119,7 +119,7 @@
         .catch(function () { /* leave default text on error */ });
     })();
   </script>
-  <main>
+  <main class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 </body>

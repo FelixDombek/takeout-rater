@@ -2,8 +2,15 @@
 
 {% block title %}Setup – takeout-rater{% endblock %}
 
+{% block main_class %}setup-shell{% endblock %}
+
 {% block head %}
 <style>
+  main.setup-shell {
+    max-width: none;
+    margin: 0;
+    padding: 1.5rem;
+  }
   .setup-card {
     max-width: 720px;
     margin: 0 auto;
@@ -81,13 +88,6 @@
     color: #555;
     word-break: break-all;
     margin-bottom: 0.5rem;
-  }
-  .setup-layout {
-    width: 100vw;
-    margin-left: calc(50% - 50vw);
-    margin-right: calc(50% - 50vw);
-    margin-top: -1.5rem;
-    margin-bottom: -1.5rem;
   }
 </style>
 {% endblock %}
