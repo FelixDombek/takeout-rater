@@ -8,6 +8,16 @@
 {% endblock %}
 
 {% block content %}
+<div class="sidebar-layout">
+  <aside class="app-sidebar">
+    <div class="sidebar-section-title">Navigation</div>
+    <p class="sidebar-note">Use the top navigation bar to move between takeout-rater tools.</p>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section-title">Page options</div>
+    <p class="sidebar-note">No page-specific sidebar controls are available yet.</p>
+  </aside>
+  <div class="sidebar-main">
+
 <a class="btn back-link" href="{{ '/clusterings/' ~ run_id if run_id is not none else '/clusterings' }}">← Back to clustering</a>
 
 <div class="cluster-header">
@@ -97,4 +107,6 @@ SharedLightbox.init({
   cardSelector: '.member-card[data-lb-id]',
 });
 </script>
+  </div>
+</div>
 {% endblock %}
