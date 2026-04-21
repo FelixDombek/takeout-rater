@@ -21,11 +21,7 @@ and much more.
 git clone https://github.com/FelixDombek/takeout-rater.git
 cd takeout-rater
 
-# macOS / Linux
 ./run
-
-# Windows
-run.bat
 ```
 
 The launcher will:
