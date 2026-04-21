@@ -184,10 +184,17 @@ def run_index(
         "phashes_computed": 0,
         "clip_embeddings_computed": 0,
         "clip_batches": 0,
+        "clip_batch_items": 0,
         "clip_batch_size": 0,
+        "clip_batch_max_size": 0,
+        "clip_batch_fill_wait_seconds": 0.0,
         "clip_accelerator": "",
+        "clip_status": "",
+        "clip_providers": "",
         "clip_preprocess_workers": 0,
         "clip_queue_wait_seconds": 0.0,
+        "clip_inference_active_seconds": 0.0,
+        "clip_first_inference_seconds": 0.0,
         "scan_seconds": 0.0,
         "clip_warmup_wait_seconds": 0.0,
         "processing_seconds": 0.0,
@@ -212,6 +219,8 @@ def run_index(
         "phash_seconds": 0.0,
         "clip_preprocess_seconds": 0.0,
         "clip_tensor_queue_wait_seconds": 0.0,
+        "clip_onnx_input_seconds": 0.0,
+        "clip_onnx_run_seconds": 0.0,
         "clip_inference_seconds": 0.0,
         "clip_write_seconds": 0.0,
     }
@@ -226,6 +235,9 @@ def run_index(
         phashes = int(snapshot.get("phashes_computed", 0))
         clips = int(snapshot.get("clip_embeddings_computed", 0))
         clip_batches = int(snapshot.get("clip_batches", 0))
+        infer_started = float(snapshot.get("clip_inference_started_at", 0.0) or 0.0)
+        if infer_started:
+            snapshot["clip_inference_active_seconds"] = time.perf_counter() - infer_started
         if assets_indexed:
             snapshot["sha_ms_per_asset"] = (
                 float(snapshot.get("sha_seconds", 0.0)) * 1000.0 / assets_indexed
@@ -255,6 +267,9 @@ def run_index(
                 float(snapshot.get("clip_inference_seconds", 0.0)) * 1000.0 / clips
             )
         if clip_batches:
+            snapshot["clip_batch_avg_size"] = (
+                float(snapshot.get("clip_batch_items", 0.0)) / clip_batches
+            )
             snapshot["clip_inference_ms_per_batch"] = (
                 float(snapshot.get("clip_inference_seconds", 0.0)) * 1000.0 / clip_batches
             )
@@ -273,6 +288,11 @@ def run_index(
     def _diag_inc(key: str, amount: int = 1) -> None:
         with _diagnostics_lock:
             _diagnostics[key] = int(_diagnostics.get(key, 0)) + amount
+            progress.diagnostics = dict(_diagnostics)
+
+    def _diag_max(key: str, value: int) -> None:
+        with _diagnostics_lock:
+            _diagnostics[key] = max(int(_diagnostics.get(key, 0)), value)
             progress.diagnostics = dict(_diagnostics)
 
     progress.diagnostics = _diag_snapshot()
@@ -389,6 +409,10 @@ def run_index(
     if _clip_accelerator not in {"auto", "tensorrt", "onnx", "cuda", "torch"}:
         _clip_accelerator = "torch"
     _clip_preprocess_workers = max(1, min(4, num_workers // 2))
+    _clip_batch_fill_wait_seconds = max(
+        0.02,
+        float(os.environ.get("TAKEOUT_RATER_CLIP_BATCH_FILL_WAIT_SECONDS", "0.35")),
+    )
     _clip_image_queue_max = max(256, _clip_batch_size * 4)
     _clip_tensor_queue_max = max(_clip_batch_size * 2, _clip_preprocess_workers * 8)
     _clip_image_queue: queue.Queue[object] = queue.Queue(maxsize=_clip_image_queue_max)
@@ -406,6 +430,7 @@ def run_index(
 
             from takeout_rater.scoring.scorers.clip_backbone import (
                 CLIP_IMAGE_INPUT_NAME,
+                CLIP_IMAGE_OUTPUT_NAME,
                 get_clip_model,
                 get_clip_onnx_session,
                 preprocess_clip_image_fast,
@@ -418,6 +443,7 @@ def run_index(
         device = None
         try:
             if _clip_accelerator != "torch":
+                _diag_set("clip_status", "initializing ONNX/TensorRT session")
                 try:
                     onnx_bundle = get_clip_onnx_session(
                         library_state_dir(db_root) / "onnxruntime-clip",
@@ -434,17 +460,24 @@ def run_index(
                     onnx_bundle = None
                 if onnx_bundle is not None:
                     onnx_session, _preprocess, onnx_providers = onnx_bundle
+                    _diag_set("clip_providers", ", ".join(onnx_providers))
                     if any(p == "TensorrtExecutionProvider" for p in onnx_providers):
                         _diag_set("clip_accelerator", "tensorrt")
+                        _diag_set(
+                            "clip_status", "TensorRT session ready; first batch may build engine"
+                        )
                     elif any(p == "CUDAExecutionProvider" for p in onnx_providers):
                         _diag_set("clip_accelerator", "onnx-cuda")
+                        _diag_set("clip_status", "ONNX Runtime CUDA session ready")
                     else:
                         onnx_session = None
             if onnx_session is None:
+                _diag_set("clip_status", "loading Torch CLIP model")
                 model, _preprocess, _tokenizer, device = get_clip_model()
                 _diag_set(
                     "clip_accelerator", "torch-cuda" if str(device).startswith("cuda") else "torch"
                 )
+                _diag_set("clip_status", "Torch CLIP model ready")
         except Exception:  # noqa: BLE001
             _log.warning("CLIP batch worker failed to load model", exc_info=True)
             return
@@ -459,9 +492,83 @@ def run_index(
 
             if onnx_session is not None:
                 try:
-                    batch_tensor = torch.stack(tensors).cpu().float().numpy()
-                    _clip_infer_start = time.perf_counter()
-                    embeddings_np = onnx_session.run(None, {CLIP_IMAGE_INPUT_NAME: batch_tensor})[0]
+                    _onnx_input_start = time.perf_counter()
+                    batch_tensor = torch.stack(tensors).contiguous()
+                    embeddings_np = None
+                    use_cuda_binding = (
+                        torch.cuda.is_available()
+                        and "CPUExecutionProvider" not in onnx_session.get_providers()[:1]
+                    )
+                    if use_cuda_binding:
+                        try:
+                            cuda_tensor = batch_tensor.pin_memory().to(
+                                "cuda",
+                                non_blocking=True,
+                            )
+                            if torch.cuda.is_available():
+                                torch.cuda.synchronize()
+                            _diag_add(
+                                "clip_onnx_input_seconds",
+                                time.perf_counter() - _onnx_input_start,
+                            )
+                            first_onnx_batch = int(_diagnostics.get("clip_batches", 0)) == 0
+                            if first_onnx_batch:
+                                _diag_set("clip_status", "TensorRT first inference / engine build")
+                            else:
+                                _diag_set("clip_status", "ONNX/TensorRT inference")
+                            _clip_infer_start = time.perf_counter()
+                            _diag_set("clip_inference_started_at", _clip_infer_start)
+                            io_binding = onnx_session.io_binding()
+                            io_binding.bind_input(
+                                name=CLIP_IMAGE_INPUT_NAME,
+                                device_type="cuda",
+                                device_id=0,
+                                element_type=np.float32,
+                                shape=tuple(cuda_tensor.shape),
+                                buffer_ptr=cuda_tensor.data_ptr(),
+                            )
+                            io_binding.bind_output(CLIP_IMAGE_OUTPUT_NAME, "cpu")
+                            _onnx_run_start = time.perf_counter()
+                            onnx_session.run_with_iobinding(io_binding)
+                            _diag_add(
+                                "clip_onnx_run_seconds",
+                                time.perf_counter() - _onnx_run_start,
+                            )
+                            embeddings_np = io_binding.copy_outputs_to_cpu()[0]
+                        except Exception:  # noqa: BLE001
+                            _log.warning(
+                                "CLIP ONNX CUDA I/O binding failed; falling back to CPU input",
+                                exc_info=True,
+                            )
+                    if embeddings_np is None:
+                        batch_np = batch_tensor.cpu().float().numpy()
+                        _diag_add(
+                            "clip_onnx_input_seconds",
+                            time.perf_counter() - _onnx_input_start,
+                        )
+                        first_onnx_batch = int(_diagnostics.get("clip_batches", 0)) == 0
+                        if first_onnx_batch:
+                            _diag_set("clip_status", "TensorRT first inference / engine build")
+                        else:
+                            _diag_set("clip_status", "ONNX/TensorRT inference")
+                        _clip_infer_start = time.perf_counter()
+                        _diag_set("clip_inference_started_at", _clip_infer_start)
+                        _onnx_run_start = time.perf_counter()
+                        embeddings_np = onnx_session.run(
+                            None,
+                            {CLIP_IMAGE_INPUT_NAME: batch_np},
+                        )[0]
+                        _diag_add(
+                            "clip_onnx_run_seconds",
+                            time.perf_counter() - _onnx_run_start,
+                        )
+                    _diag_set("clip_inference_started_at", 0.0)
+                    if first_onnx_batch:
+                        _diag_set(
+                            "clip_first_inference_seconds",
+                            time.perf_counter() - _clip_infer_start,
+                        )
+                        _diag_set("clip_status", "ONNX/TensorRT inference ready")
                     norms = np.linalg.norm(embeddings_np, axis=-1, keepdims=True)
                     embeddings_np = embeddings_np / np.maximum(norms, 1e-12)
                     _diag_add("clip_inference_seconds", time.perf_counter() - _clip_infer_start)
@@ -473,21 +580,27 @@ def run_index(
                         "and falling back to Torch",
                         exc_info=_log.isEnabledFor(logging.DEBUG),
                     )
+                    _diag_set("clip_inference_started_at", 0.0)
+                    _diag_set("clip_status", "ONNX/TensorRT failed; falling back to Torch")
                     onnx_session = None
 
             try:
                 if model is None or device is None:
+                    _diag_set("clip_status", "loading Torch CLIP model")
                     model, _preprocess, _tokenizer, device = get_clip_model()
                     _diag_set(
                         "clip_accelerator",
                         "torch-cuda" if str(device).startswith("cuda") else "torch",
                     )
+                    _diag_set("clip_status", "Torch CLIP model ready")
                 batch_tensor = torch.stack(tensors)
                 if str(device).startswith("cuda"):
                     batch_tensor = batch_tensor.pin_memory().to(device, non_blocking=True)
                 else:
                     batch_tensor = batch_tensor.to(device)
                 _clip_infer_start = time.perf_counter()
+                _diag_set("clip_status", "Torch CLIP inference")
+                _diag_set("clip_inference_started_at", _clip_infer_start)
                 with torch.inference_mode():
                     use_fp16 = str(device).startswith("cuda") and (
                         clip_fp16
@@ -501,6 +614,8 @@ def run_index(
                         embeddings = model.encode_image(batch_tensor)
                     embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
                     embeddings_np = embeddings.cpu().float().numpy()
+                _diag_set("clip_inference_started_at", 0.0)
+                _diag_set("clip_status", "Torch CLIP inference ready")
                 _diag_add("clip_inference_seconds", time.perf_counter() - _clip_infer_start)
                 _diag_inc("clip_batches")
                 return embeddings_np
@@ -564,13 +679,18 @@ def run_index(
                     continue
 
                 batch = [item]
+                _batch_fill_start = time.perf_counter()
+                _batch_fill_deadline = _batch_fill_start + _clip_batch_fill_wait_seconds
                 while len(batch) < _clip_batch_size:
                     if preprocess_sentinels_seen >= _clip_preprocess_workers:
                         break
-                    try:
-                        next_item = _clip_tensor_queue.get(timeout=0.02)
-                    except queue.Empty:
+                    remaining = _batch_fill_deadline - time.perf_counter()
+                    if remaining <= 0:
                         break
+                    try:
+                        next_item = _clip_tensor_queue.get(timeout=min(0.05, remaining))
+                    except queue.Empty:
+                        continue
                     if next_item is _clip_tensor_sentinel:
                         _clip_tensor_queue.task_done()
                         preprocess_sentinels_seen += 1
@@ -587,6 +707,10 @@ def run_index(
                     relpaths = [entry[1] for entry in batch]  # type: ignore[index]
                     tensors = [entry[2] for entry in batch]  # type: ignore[index]
                     _log.debug("CLIP batch inference start: %d tensor(s)", len(tensors))
+                    _diag_add(
+                        "clip_batch_fill_wait_seconds",
+                        time.perf_counter() - _batch_fill_start,
+                    )
                     embeddings_np = _encode_tensors(tensors)
                     rows = [
                         (asset_id, struct.pack(f"{emb.shape[0]}f", *emb), now)
@@ -601,6 +725,8 @@ def run_index(
                     wconn.commit()
                     _diag_add("clip_write_seconds", time.perf_counter() - _clip_write_start)
                     _diag_inc("clip_embeddings_computed", len(rows))
+                    _diag_inc("clip_batch_items", len(rows))
+                    _diag_max("clip_batch_max_size", len(rows))
                     for relpath in relpaths:
                         _log.debug("CLIP inference done for %r", relpath)
                 except Exception:  # noqa: BLE001

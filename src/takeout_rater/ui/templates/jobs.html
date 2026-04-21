@@ -37,6 +37,23 @@
   .job-diagnostics-row span:last-child {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+    text-align: right;
+  }
+  .job-diagnostics-section {
+    grid-column: 1 / -1;
+    margin-top: 0.65rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid #e5e5e5;
+    color: #666;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .job-diagnostics-section:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
   }
 </style>
 {% endblock %}
@@ -131,6 +148,18 @@
     return n.toFixed(1) + 'ms';
   }
 
+  function formatDiagProviders(value) {
+    return String(value || '')
+      .split(',')
+      .map(function (provider) {
+        provider = provider.trim().replace(/ExecutionProvider$/, '');
+        if (provider === 'Tensorrt') return 'TensorRT';
+        return provider;
+      })
+      .filter(Boolean)
+      .join(', ');
+  }
+
   function workerSuffixForDiag(key, diagnostics) {
     var indexWorkerKeys = {
       sha_seconds: true,
@@ -169,61 +198,94 @@
       return;
     }
 
-    var counts = [
-      ['Found', 'assets_found'],
-      ['Indexed', 'assets_indexed'],
-      ['Index workers', 'index_workers'],
-      ['New rows', 'assets_new'],
-      ['Existing rows', 'assets_existing'],
-      ['Thumbnails', 'thumbnails_generated'],
-      ['Thumbs from path', 'thumbnails_from_path'],
-      ['Thumbs from bytes', 'thumbnails_from_bytes'],
-      ['pHashes', 'phashes_computed'],
-      ['pHash commits', 'phash_commits'],
-      ['CLIP embeddings', 'clip_embeddings_computed'],
-      ['CLIP batches', 'clip_batches'],
-      ['CLIP batch target', 'clip_batch_size'],
-      ['CLIP preprocess workers', 'clip_preprocess_workers'],
-      ['DB claims', 'db_claims_committed']
-    ];
-    var details = [
-      ['CLIP accelerator', 'clip_accelerator']
-    ];
-    var timings = [
-      ['Scan', 'scan_seconds'],
-      ['CLIP warmup wait', 'clip_warmup_wait_seconds'],
-      ['Processing', 'processing_seconds'],
-      ['SHA reads', 'sha_seconds'],
-      ['Sidecars', 'sidecar_seconds'],
-      ['DB claims', 'db_claim_seconds'],
-      ['DB claim enqueue wait', 'db_claim_enqueue_wait_seconds'],
-      ['DB claim future wait', 'db_claim_future_wait_seconds'],
-      ['DB claim writer', 'db_claim_writer_seconds'],
-      ['DB claim commits', 'db_claim_commit_seconds'],
-      ['Thumbnails', 'thumbnail_seconds'],
-      ['Thumb decode', 'thumbnail_decode_seconds'],
-      ['Thumb decode path', 'thumbnail_decode_path_seconds'],
-      ['Thumb decode bytes', 'thumbnail_decode_bytes_seconds'],
-      ['Thumb resize', 'thumbnail_resize_seconds'],
-      ['Thumb write', 'thumbnail_write_seconds'],
-      ['pHash', 'phash_seconds'],
-      ['pHash DB writes', 'phash_write_seconds'],
-      ['CLIP queue wait', 'clip_queue_wait_seconds'],
-      ['CLIP preprocess', 'clip_preprocess_seconds'],
-      ['CLIP tensor queue wait', 'clip_tensor_queue_wait_seconds'],
-      ['CLIP inference', 'clip_inference_seconds'],
-      ['CLIP DB writes', 'clip_write_seconds']
-    ];
-    var averages = [
-      ['SHA / asset', 'sha_ms_per_asset'],
-      ['Sidecar / asset', 'sidecar_ms_per_asset'],
-      ['DB claim / asset', 'db_claim_ms_per_asset'],
-      ['DB writer / asset', 'db_claim_writer_ms_per_asset'],
-      ['DB commit / asset', 'db_claim_commit_ms_per_asset'],
-      ['Thumbnail / thumb', 'thumbnail_ms_per_thumb'],
-      ['pHash / hash', 'phash_ms_per_hash'],
-      ['CLIP inference / image', 'clip_inference_ms_per_embedding'],
-      ['CLIP inference / batch', 'clip_inference_ms_per_batch']
+    var sections = [
+      {
+        title: 'Progress',
+        kind: 'count',
+        items: [
+          ['Found', 'assets_found'],
+          ['Indexed', 'assets_indexed'],
+          ['Index workers', 'index_workers'],
+          ['New rows', 'assets_new'],
+          ['Existing rows', 'assets_existing']
+        ]
+      },
+      {
+        title: 'Derived Assets',
+        kind: 'count',
+        items: [
+          ['Thumbnails', 'thumbnails_generated'],
+          ['Thumbs from path', 'thumbnails_from_path'],
+          ['Thumbs from bytes', 'thumbnails_from_bytes'],
+          ['pHashes', 'phashes_computed'],
+          ['pHash commits', 'phash_commits'],
+          ['DB claims', 'db_claims_committed']
+        ]
+      },
+      {
+        title: 'CLIP',
+        kind: 'mixed',
+        items: [
+          ['CLIP accelerator', 'clip_accelerator', 'detail'],
+          ['CLIP status', 'clip_status', 'detail'],
+          ['CLIP providers', 'clip_providers', 'providers'],
+          ['CLIP embeddings', 'clip_embeddings_computed', 'count'],
+          ['CLIP batches', 'clip_batches', 'count'],
+          ['CLIP batch target', 'clip_batch_size', 'count'],
+          ['CLIP batch average', 'clip_batch_avg_size', 'number'],
+          ['CLIP batch max', 'clip_batch_max_size', 'count'],
+          ['CLIP preprocess workers', 'clip_preprocess_workers', 'count']
+        ]
+      },
+      {
+        title: 'Timings',
+        kind: 'seconds',
+        items: [
+          ['Scan', 'scan_seconds'],
+          ['CLIP warmup wait', 'clip_warmup_wait_seconds'],
+          ['Processing', 'processing_seconds'],
+          ['SHA reads', 'sha_seconds'],
+          ['Sidecars', 'sidecar_seconds'],
+          ['DB claims', 'db_claim_seconds'],
+          ['DB claim enqueue wait', 'db_claim_enqueue_wait_seconds'],
+          ['DB claim future wait', 'db_claim_future_wait_seconds'],
+          ['DB claim writer', 'db_claim_writer_seconds'],
+          ['DB claim commits', 'db_claim_commit_seconds'],
+          ['Thumbnails', 'thumbnail_seconds'],
+          ['Thumb decode', 'thumbnail_decode_seconds'],
+          ['Thumb decode path', 'thumbnail_decode_path_seconds'],
+          ['Thumb decode bytes', 'thumbnail_decode_bytes_seconds'],
+          ['Thumb resize', 'thumbnail_resize_seconds'],
+          ['Thumb write', 'thumbnail_write_seconds'],
+          ['pHash', 'phash_seconds'],
+          ['pHash DB writes', 'phash_write_seconds'],
+          ['CLIP queue wait', 'clip_queue_wait_seconds'],
+          ['CLIP preprocess', 'clip_preprocess_seconds'],
+          ['CLIP tensor queue wait', 'clip_tensor_queue_wait_seconds'],
+          ['CLIP batch fill wait', 'clip_batch_fill_wait_seconds'],
+          ['CLIP ONNX input', 'clip_onnx_input_seconds'],
+          ['CLIP ONNX run', 'clip_onnx_run_seconds'],
+          ['CLIP current inference', 'clip_inference_active_seconds'],
+          ['CLIP first inference', 'clip_first_inference_seconds'],
+          ['CLIP inference', 'clip_inference_seconds'],
+          ['CLIP DB writes', 'clip_write_seconds']
+        ]
+      },
+      {
+        title: 'Averages',
+        kind: 'ms',
+        items: [
+          ['SHA / asset', 'sha_ms_per_asset'],
+          ['Sidecar / asset', 'sidecar_ms_per_asset'],
+          ['DB claim / asset', 'db_claim_ms_per_asset'],
+          ['DB writer / asset', 'db_claim_writer_ms_per_asset'],
+          ['DB commit / asset', 'db_claim_commit_ms_per_asset'],
+          ['Thumbnail / thumb', 'thumbnail_ms_per_thumb'],
+          ['pHash / hash', 'phash_ms_per_hash'],
+          ['CLIP inference / image', 'clip_inference_ms_per_embedding'],
+          ['CLIP inference / batch', 'clip_inference_ms_per_batch']
+        ]
+      }
     ];
 
     el.textContent = '';
@@ -235,24 +297,38 @@
 
     var grid = document.createElement('div');
     grid.className = 'job-diagnostics-grid';
-    counts.concat(details).concat(timings).concat(averages).forEach(function (item, idx) {
-      var label = item[0];
-      var key = item[1];
-      var row = document.createElement('div');
-      row.className = 'job-diagnostics-row';
-      var left = document.createElement('span');
-      var right = document.createElement('span');
-      left.textContent = label + workerSuffixForDiag(key, diagnostics);
-      right.textContent = idx < counts.length
-        ? formatDiagCount(diagnostics[key])
-        : (idx < counts.length + details.length
-          ? String(diagnostics[key] || '')
-          : (idx < counts.length + details.length + timings.length
-          ? formatDiagSeconds(diagnostics[key])
-          : formatDiagMs(diagnostics[key])));
-      row.appendChild(left);
-      row.appendChild(right);
-      grid.appendChild(row);
+    sections.forEach(function (section) {
+      var sectionTitle = document.createElement('div');
+      sectionTitle.className = 'job-diagnostics-section';
+      sectionTitle.textContent = section.title;
+      grid.appendChild(sectionTitle);
+
+      section.items.forEach(function (item) {
+        var label = item[0];
+        var key = item[1];
+        var kind = item[2] || section.kind;
+        var row = document.createElement('div');
+        row.className = 'job-diagnostics-row';
+        var left = document.createElement('span');
+        var right = document.createElement('span');
+        left.textContent = label + workerSuffixForDiag(key, diagnostics);
+        if (kind === 'count') {
+          right.textContent = formatDiagCount(diagnostics[key]);
+        } else if (kind === 'seconds') {
+          right.textContent = formatDiagSeconds(diagnostics[key]);
+        } else if (kind === 'ms') {
+          right.textContent = formatDiagMs(diagnostics[key]);
+        } else if (kind === 'number') {
+          right.textContent = Number(diagnostics[key] || 0).toFixed(1);
+        } else if (kind === 'providers') {
+          right.textContent = formatDiagProviders(diagnostics[key]);
+        } else {
+          right.textContent = String(diagnostics[key] || '');
+        }
+        row.appendChild(left);
+        row.appendChild(right);
+        grid.appendChild(row);
+      });
     });
     el.appendChild(grid);
   }

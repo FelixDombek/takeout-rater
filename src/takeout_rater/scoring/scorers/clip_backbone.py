@@ -13,6 +13,8 @@ Usage::
 
 from __future__ import annotations
 
+import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -205,16 +207,25 @@ def get_clip_onnx_session(
     Runtime is unavailable or when ``accelerator`` explicitly selects Torch.
     """
 
+    log = logging.getLogger(__name__)
     if accelerator == "torch":
         return None
 
     try:
         import onnxruntime as ort
     except ImportError:
+        log.info("ONNX Runtime is not installed; using Torch CLIP")
         return None
+    if os.environ.get("TAKEOUT_RATER_ORT_VERBOSE", "1") != "0":
+        try:
+            ort.set_default_logger_severity(0)
+        except Exception:  # noqa: BLE001
+            log.debug("Could not set ONNX Runtime default logger severity", exc_info=True)
 
     available = set(ort.get_available_providers())
+    log.info("ONNX Runtime providers available for CLIP: %s", ", ".join(sorted(available)))
     if accelerator == "auto" and "CUDAExecutionProvider" not in available:
+        log.info("ONNX Runtime CUDA provider is unavailable; using Torch CLIP")
         return None
 
     _model, preprocess, _tokenizer, _device = get_clip_model()
@@ -230,17 +241,43 @@ def get_clip_onnx_session(
                     "trt_engine_cache_enable": True,
                     "trt_engine_cache_path": str(trt_cache_dir),
                     "trt_fp16_enable": True,
+                    "trt_detailed_build_log": True,
+                    "trt_dump_subgraphs": True,
                 },
             )
+        )
+    elif accelerator == "tensorrt":
+        log.warning(
+            "TensorRT accelerator was requested, but TensorrtExecutionProvider is unavailable; "
+            "available providers: %s",
+            ", ".join(sorted(available)),
         )
     if accelerator in {"auto", "tensorrt", "onnx", "cuda"} and "CUDAExecutionProvider" in available:
         providers.append("CUDAExecutionProvider")
     providers.append("CPUExecutionProvider")
+    log.info("Creating CLIP ONNX Runtime session with providers: %s", providers)
+
+    session_options = ort.SessionOptions()
+    if os.environ.get("TAKEOUT_RATER_ORT_VERBOSE", "1") != "0":
+        session_options.log_severity_level = 0
+        session_options.log_verbosity_level = int(
+            os.environ.get("TAKEOUT_RATER_ORT_VERBOSITY", "1")
+        )
+        log.info(
+            "Verbose ONNX Runtime/TensorRT logging is enabled for CLIP "
+            "(set TAKEOUT_RATER_ORT_VERBOSE=0 to silence it)"
+        )
 
     try:
-        session = ort.InferenceSession(str(onnx_path), providers=providers)
+        session = ort.InferenceSession(
+            str(onnx_path),
+            sess_options=session_options,
+            providers=providers,
+        )
     except Exception:
+        log.warning("CLIP ONNX Runtime session creation failed", exc_info=True)
         return None
+    log.info("CLIP ONNX Runtime active providers: %s", ", ".join(session.get_providers()))
     return session, preprocess, session.get_providers()
 
 
