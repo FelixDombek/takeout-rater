@@ -247,6 +247,53 @@
 </style>
 {% endblock %}
 
+{% block page_sidebar %}
+<aside class="app-sidebar">
+  <div class="sidebar-section-title">Scorer settings</div>
+  <p class="sidebar-note">
+    Settings below affect scorer throughput, CLIP execution, and model source selection.
+  </p>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Saved config (Setup page)</div>
+  <div class="sidebar-radio-group">
+    <label class="sidebar-radio">
+      <input type="radio" checked disabled>
+      <span>CLIP accelerator<small><code>performance.clip_accelerator</code> (auto / onnx / torch / tensorrt)</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" checked disabled>
+      <span>CLIP batch size<small><code>performance.clip_batch_size</code> (64 / 96 / 128 / 160)</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" checked disabled>
+      <span>Torch fp16<small><code>performance.clip_fp16</code> (enabled / disabled)</small></span>
+    </label>
+  </div>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Environment variables</div>
+  <div class="sidebar-radio-group">
+    <label class="sidebar-radio">
+      <input type="radio" checked disabled>
+      <span><code>TAKEOUT_RATER_SCORE_BATCH_SIZE</code><small>Override scorer batch size used by scoring jobs.</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" checked disabled>
+      <span><code>TAKEOUT_RATER_AESTHETIC_REPO</code><small>Override Hugging Face repo used by the LAION aesthetic scorer.</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" checked disabled>
+      <span><code>TAKEOUT_RATER_ORT_VERBOSE</code><small>Enable/disable verbose ONNX Runtime logging for CLIP scorers.</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" checked disabled>
+      <span><code>TAKEOUT_RATER_ORT_VERBOSITY</code><small>Set ONNX Runtime log verbosity level when verbose logging is enabled.</small></span>
+    </label>
+  </div>
+</aside>
+{% endblock %}
+
 {% block content %}
 <div class="scoring-page">
   <h1>🎯 Scoring</h1>
