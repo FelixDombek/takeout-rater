@@ -177,6 +177,35 @@ def test_run_scorer_progress_callback(tmp_path: Path) -> None:
     assert calls[-1][0] == calls[-1][1]
 
 
+def test_run_scorer_diagnostics_callback(tmp_path: Path) -> None:
+    conn = _open_in_memory()
+    thumbs_dir = tmp_path / "thumbs"
+    for i in range(3):
+        aid = _add_asset(conn, f"p/{i}.jpg")
+        _make_thumbnail(thumbs_dir, aid)
+
+    calls: list[dict[str, object]] = []
+    scorer = SimpleScorer.create(variant_id="blur")
+    run_scorer(
+        conn,
+        scorer,
+        thumbs_dir,
+        batch_size=2,
+        on_diagnostics=lambda d: calls.append(d),
+    )
+
+    assert calls
+    latest = calls[-1]
+    assert latest["scorer_id"] == "simple"
+    assert latest["variant_id"] == "blur"
+    assert latest["score_assets_total"] == 3
+    assert latest["score_assets_seen"] == 3
+    assert latest["score_assets_with_thumbnails"] == 3
+    assert latest["score_batches"] == 2
+    assert latest["score_rows_written"] == 3
+    assert "score_batch_ms_per_asset" in latest
+
+
 def test_run_scorer_explicit_asset_ids(tmp_path: Path) -> None:
     conn = _open_in_memory()
     thumbs_dir = tmp_path / "thumbs"

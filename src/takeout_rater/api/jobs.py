@@ -481,12 +481,40 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     rerun = body.rerun
 
     def _worker() -> None:
+        import os
+        import time
+
         from takeout_rater.scoring.pipeline import run_scorer_by_id
         from takeout_rater.scoring.scorers.registry import list_scorers
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
         try:
+            score_batch_size = max(1, int(os.environ.get("TAKEOUT_RATER_SCORE_BATCH_SIZE", "64")))
+        except ValueError:
+            score_batch_size = 64
+        score_job_started = time.perf_counter()
+        progress.diagnostics = {
+            "score_variants_total": 0,
+            "score_variants_completed": 0,
+            "score_job_seconds": 0.0,
+            "score_batch_size": score_batch_size,
+        }
+        try:
+            asset_count_row = worker_conn.execute("SELECT COUNT(*) FROM assets").fetchone()
+            asset_count = (
+                int(asset_count_row[0])
+                if asset_count_row is not None and asset_count_row[0] is not None
+                else 0
+            )
+            progress.diagnostics["score_assets_total"] = asset_count
+            if asset_count == 0:
+                progress.message = "Scoring complete."
+                progress.running = False
+                progress.done = True
+                progress.diagnostics["score_job_seconds"] = time.perf_counter() - score_job_started
+                return
+
             # ── Run scorers ──────────────────────────────────────────────────
             # Build the list of (scorer_id, variant_id, display_name) tuples to run.
             # When no specific scorer is requested every available scorer is
@@ -514,6 +542,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                 ]
 
             total_pairs = len(scorer_variants)
+            progress.diagnostics["score_variants_total"] = total_pairs
             for idx, (sid, vid, display_name) in enumerate(scorer_variants):
                 if progress.cancel_event.is_set():
                     break
@@ -523,21 +552,41 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                 progress.message = f"Scoring with {_scorer_label}…"
                 progress.processed = 0
                 progress.total = 0
+                progress.diagnostics.update(
+                    {
+                        "score_variants_completed": idx,
+                        "score_job_seconds": time.perf_counter() - score_job_started,
+                        "scorer_id": sid,
+                        "variant_id": vid or "",
+                    }
+                )
 
                 def _cb(scored: int, total: int, _label: str = _scorer_label) -> None:
                     progress.processed = scored
                     progress.total = total
                     progress.message = f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
 
+                def _diag_cb(diagnostics: dict[str, object], _idx: int = idx) -> None:
+                    progress.diagnostics.update(diagnostics)
+                    progress.diagnostics["score_variants_total"] = total_pairs
+                    progress.diagnostics["score_variants_completed"] = _idx
+                    progress.diagnostics["score_job_seconds"] = (
+                        time.perf_counter() - score_job_started
+                    )
+
                 run_scorer_by_id(
                     worker_conn,
                     sid,
                     thumbs_dir,
                     variant_id=vid,
+                    batch_size=score_batch_size,
                     skip_existing=not rerun,
                     on_progress=_cb,
+                    on_diagnostics=_diag_cb,
                     cancel_check=progress.cancel_event.is_set,
                 )
+                progress.diagnostics["score_variants_completed"] = idx + 1
+                progress.diagnostics["score_job_seconds"] = time.perf_counter() - score_job_started
 
             progress.current_scorer_id = ""
             progress.current_variant_id = ""
