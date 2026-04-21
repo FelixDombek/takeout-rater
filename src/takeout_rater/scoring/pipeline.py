@@ -14,8 +14,12 @@ The function iterates over assets in configurable batches, calls
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 import sqlite3
+import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -87,6 +91,7 @@ def run_scorer(
     batch_size: int = 32,
     skip_existing: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
+    on_diagnostics: Callable[[dict[str, object]], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """Run *scorer* over assets and persist the results to the library DB.
@@ -113,6 +118,8 @@ def run_scorer(
             first metric as the primary "scored" indicator.
         on_progress: Optional callback invoked after each batch with
             ``(scored_so_far, total)`` integers.
+        on_diagnostics: Optional callback invoked with cumulative counters and
+            timings after target selection and each processed batch.
         cancel_check: Optional callable that returns ``True`` when the run
             should be aborted.  Checked after each batch; when it returns
             ``True`` the loop exits early.
@@ -124,9 +131,73 @@ def run_scorer(
     scorer_id = spec.scorer_id
     variant_id = scorer.variant_id
     scorer_version = spec.version
+    started_at = time.perf_counter()
+    diagnostics: dict[str, object] = {
+        "scorer_id": scorer_id,
+        "variant_id": variant_id,
+        "scorer_version": scorer_version,
+        "score_batch_size": batch_size,
+        "score_assets_total": 0,
+        "score_assets_seen": 0,
+        "score_assets_with_thumbnails": 0,
+        "score_thumbnails_missing": 0,
+        "score_batches": 0,
+        "score_rows_written": 0,
+        "score_metrics_written": 0,
+        "score_target_select_seconds": 0.0,
+        "score_path_build_seconds": 0.0,
+        "score_thumbnail_exists_seconds": 0.0,
+        "score_batch_seconds": 0.0,
+        "score_db_write_seconds": 0.0,
+        "score_total_seconds": 0.0,
+    }
+
+    def _refresh_cuda_diagnostics() -> None:
+        torch_mod = sys.modules.get("torch")
+        if torch_mod is None:
+            diagnostics["torch_cuda_available"] = "not loaded"
+            return
+        try:
+            cuda_available = bool(torch_mod.cuda.is_available())
+            diagnostics["torch_cuda_available"] = cuda_available
+            diagnostics["torch_cuda_device_count"] = (
+                int(torch_mod.cuda.device_count()) if cuda_available else 0
+            )
+            if cuda_available:
+                diagnostics["torch_cuda_device"] = torch_mod.cuda.get_device_name(0)
+        except Exception:  # noqa: BLE001
+            diagnostics["torch_cuda_available"] = "unknown"
+
+    def _emit_diagnostics() -> None:
+        _refresh_cuda_diagnostics()
+        diagnostics["score_total_seconds"] = time.perf_counter() - started_at
+        assets_seen = int(diagnostics.get("score_assets_seen", 0))
+        rows_written = int(diagnostics.get("score_rows_written", 0))
+        batches = int(diagnostics.get("score_batches", 0))
+        if assets_seen:
+            diagnostics["score_batch_ms_per_asset"] = (
+                float(diagnostics.get("score_batch_seconds", 0.0)) * 1000.0 / assets_seen
+            )
+        if rows_written:
+            diagnostics["score_db_write_ms_per_row"] = (
+                float(diagnostics.get("score_db_write_seconds", 0.0)) * 1000.0 / rows_written
+            )
+        if batches:
+            diagnostics["score_batch_seconds_per_batch"] = (
+                float(diagnostics.get("score_batch_seconds", 0.0)) / batches
+            )
+        if on_diagnostics is not None:
+            on_diagnostics(dict(diagnostics))
+
+    def _diag_add(key: str, seconds: float) -> None:
+        diagnostics[key] = float(diagnostics.get(key, 0.0)) + seconds
+
+    def _diag_inc(key: str, amount: int = 1) -> None:
+        diagnostics[key] = int(diagnostics.get(key, 0)) + amount
 
     # Determine which assets to score
     stream_all_assets = False
+    select_start = time.perf_counter()
     if asset_ids is None:
         variant_metrics = spec.metrics_for_variant(variant_id)
         if skip_existing and variant_metrics:
@@ -141,17 +212,23 @@ def run_scorer(
             )
         else:
             stream_all_assets = True
+    _diag_add("score_target_select_seconds", time.perf_counter() - select_start)
 
     # Nothing to score — return early.
     if asset_ids is not None and not asset_ids:
+        _emit_diagnostics()
         return 0
 
     scored = 0
 
     if stream_all_assets:
+        count_start = time.perf_counter()
         cur = conn.execute("SELECT COUNT(*) FROM assets")
         row = cur.fetchone()
         total = int(row[0]) if row is not None and row[0] is not None else 0
+        _diag_add("score_target_select_seconds", time.perf_counter() - count_start)
+        diagnostics["score_assets_total"] = total
+        _emit_diagnostics()
 
         id_cur = conn.execute("SELECT id FROM assets ORDER BY id")
         while True:
@@ -164,14 +241,26 @@ def run_scorer(
             batch_ids = [int(r[0]) for r in id_rows]
 
             valid_pairs: list[tuple[int, Path]] = []
+            path_start = time.perf_counter()
             for aid in batch_ids:
                 thumb = thumb_path_for_id(thumbs_dir, aid)
+                exists_start = time.perf_counter()
                 if thumb.exists():
+                    _diag_add("score_thumbnail_exists_seconds", time.perf_counter() - exists_start)
                     valid_pairs.append((aid, thumb))
+                else:
+                    _diag_add("score_thumbnail_exists_seconds", time.perf_counter() - exists_start)
+                    _diag_inc("score_thumbnails_missing")
+            _diag_add("score_path_build_seconds", time.perf_counter() - path_start)
+            _diag_inc("score_assets_seen", len(batch_ids))
+            _diag_inc("score_assets_with_thumbnails", len(valid_pairs))
 
             if valid_pairs:
                 paths = [p for _, p in valid_pairs]
+                batch_start = time.perf_counter()
                 score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
+                _diag_add("score_batch_seconds", time.perf_counter() - batch_start)
+                _diag_inc("score_batches")
 
                 rows: list[tuple[int, str, float]] = []
                 for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):
@@ -179,6 +268,7 @@ def run_scorer(
                         rows.append((aid, metric_key, value))
 
                 if rows:
+                    write_start = time.perf_counter()
                     upsert_asset_scores(
                         conn,
                         scorer_id,
@@ -186,14 +276,20 @@ def run_scorer(
                         rows,
                         scorer_version=scorer_version,
                     )
+                    _diag_add("score_db_write_seconds", time.perf_counter() - write_start)
+                    _diag_inc("score_rows_written", len(rows))
+                    _diag_inc("score_metrics_written", sum(len(score) for score in score_dicts))
 
             scored += len(batch_ids)
+            _emit_diagnostics()
             if on_progress is not None:
                 on_progress(scored, total)
 
     else:
         assert asset_ids is not None
         total = len(asset_ids)
+        diagnostics["score_assets_total"] = total
+        _emit_diagnostics()
 
         for batch_start in range(0, total, batch_size):
             if cancel_check is not None and cancel_check():
@@ -202,14 +298,26 @@ def run_scorer(
 
             # Build (asset_id, thumb_path) pairs, skipping missing thumbnails
             valid_pairs = []
+            path_start = time.perf_counter()
             for aid in batch_ids:
                 thumb = thumb_path_for_id(thumbs_dir, aid)
+                exists_start = time.perf_counter()
                 if thumb.exists():
+                    _diag_add("score_thumbnail_exists_seconds", time.perf_counter() - exists_start)
                     valid_pairs.append((aid, thumb))
+                else:
+                    _diag_add("score_thumbnail_exists_seconds", time.perf_counter() - exists_start)
+                    _diag_inc("score_thumbnails_missing")
+            _diag_add("score_path_build_seconds", time.perf_counter() - path_start)
+            _diag_inc("score_assets_seen", len(batch_ids))
+            _diag_inc("score_assets_with_thumbnails", len(valid_pairs))
 
             if valid_pairs:
                 paths = [p for _, p in valid_pairs]
+                score_start = time.perf_counter()
                 score_dicts = _score_batch_with_context(scorer, paths, scorer_id, variant_id)
+                _diag_add("score_batch_seconds", time.perf_counter() - score_start)
+                _diag_inc("score_batches")
 
                 rows = []
                 for (aid, _), score_dict in zip(valid_pairs, score_dicts, strict=True):
@@ -217,6 +325,7 @@ def run_scorer(
                         rows.append((aid, metric_key, value))
 
                 if rows:
+                    write_start = time.perf_counter()
                     upsert_asset_scores(
                         conn,
                         scorer_id,
@@ -224,8 +333,12 @@ def run_scorer(
                         rows,
                         scorer_version=scorer_version,
                     )
+                    _diag_add("score_db_write_seconds", time.perf_counter() - write_start)
+                    _diag_inc("score_rows_written", len(rows))
+                    _diag_inc("score_metrics_written", sum(len(score) for score in score_dicts))
 
             scored += len(batch_ids)
+            _emit_diagnostics()
             if on_progress is not None:
                 on_progress(scored, total)
 
@@ -242,6 +355,7 @@ def run_scorer_by_id(
     batch_size: int = 32,
     skip_existing: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
+    on_diagnostics: Callable[[dict[str, object]], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """Look up *scorer_id* in the registry and call :func:`run_scorer`.
@@ -276,6 +390,10 @@ def run_scorer_by_id(
             f"Install the required extras: {cls.spec().requires_extras}"
         )
     scorer = cls.create(variant_id=variant_id)
+    env_batch_size = os.environ.get("TAKEOUT_RATER_SCORE_BATCH_SIZE")
+    if env_batch_size and batch_size == 32:
+        with contextlib.suppress(ValueError):
+            batch_size = max(1, int(env_batch_size))
     return run_scorer(
         conn,
         scorer,
@@ -284,5 +402,6 @@ def run_scorer_by_id(
         batch_size=batch_size,
         skip_existing=skip_existing,
         on_progress=on_progress,
+        on_diagnostics=on_diagnostics,
         cancel_check=cancel_check,
     )

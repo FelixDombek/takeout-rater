@@ -205,6 +205,37 @@
     width: 100%;
     margin-top: 0;
   }
+  .score-diagnostics {
+    display: none;
+    flex: 0 0 100%;
+    width: 100%;
+    margin-top: 0.3rem;
+    border-top: 1px solid #d7def6;
+    padding-top: 0.75rem;
+    font-size: 0.8rem;
+    color: #444;
+  }
+  .score-diagnostics.visible { display: block; }
+  .score-diagnostics-title {
+    font-weight: 600;
+    margin-bottom: 0.45rem;
+  }
+  .score-diagnostics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 0.35rem 1rem;
+  }
+  .score-diagnostics-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-bottom: 1px dotted #ccd4ec;
+    padding-bottom: 0.15rem;
+  }
+  .score-diagnostics-row span:last-child {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
 
   .run-all-options {
     display: flex;
@@ -253,6 +284,7 @@
       <div id="global-progress-bar" class="progress-bar" style="width:0%"></div>
     </div>
     <div id="global-running-status" class="job-status info" style="display:none;"></div>
+    <div id="score-diagnostics" class="score-diagnostics"></div>
   </div>
 
   <!-- ── Scorer list (populated by JS) ──────────────────────────────────── -->
@@ -460,6 +492,108 @@
     return card;
   }
 
+  function formatDiagSeconds(value) {
+    var n = Number(value || 0);
+    if (!isFinite(n) || n <= 0) return '0.00s';
+    if (n < 10) return n.toFixed(2) + 's';
+    if (n < 60) return n.toFixed(1) + 's';
+    return formatJobEta(Math.round(n));
+  }
+
+  function formatDiagCount(value) {
+    var n = Number(value || 0);
+    if (!isFinite(n)) return '0';
+    return String(Math.round(n));
+  }
+
+  function formatDiagMs(value) {
+    var n = Number(value || 0);
+    if (!isFinite(n) || n <= 0) return '0.0ms';
+    if (n < 10) return n.toFixed(2) + 'ms';
+    return n.toFixed(1) + 'ms';
+  }
+
+  function renderScoreDiagnostics(diagnostics) {
+    var el = document.getElementById('score-diagnostics');
+    if (!el) return;
+    diagnostics = diagnostics || {};
+    if (!Object.keys(diagnostics).length) {
+      el.className = 'score-diagnostics';
+      el.textContent = '';
+      return;
+    }
+
+    var counts = [
+      ['Variants', 'score_variants_completed', 'score_variants_total'],
+      ['Assets total', 'score_assets_total'],
+      ['Assets seen', 'score_assets_seen'],
+      ['With thumbnails', 'score_assets_with_thumbnails'],
+      ['Missing thumbs', 'score_thumbnails_missing'],
+      ['Batches', 'score_batches'],
+      ['Batch target', 'score_batch_size'],
+      ['Rows written', 'score_rows_written'],
+      ['Metrics written', 'score_metrics_written']
+    ];
+    var details = [
+      ['Scorer', 'scorer_id'],
+      ['Variant', 'variant_id'],
+      ['CUDA', 'torch_cuda_available'],
+      ['CUDA device', 'torch_cuda_device']
+    ];
+    var timings = [
+      ['Job time', 'score_job_seconds'],
+      ['Variant time', 'score_total_seconds'],
+      ['Target select', 'score_target_select_seconds'],
+      ['Path build', 'score_path_build_seconds'],
+      ['Thumb exists', 'score_thumbnail_exists_seconds'],
+      ['Score batches', 'score_batch_seconds'],
+      ['DB writes', 'score_db_write_seconds']
+    ];
+    var averages = [
+      ['Scoring / asset', 'score_batch_ms_per_asset'],
+      ['Scoring / batch', 'score_batch_seconds_per_batch', 'seconds'],
+      ['DB write / row', 'score_db_write_ms_per_row']
+    ];
+
+    el.textContent = '';
+    el.className = 'score-diagnostics visible';
+    var title = document.createElement('div');
+    title.className = 'score-diagnostics-title';
+    title.textContent = 'Scoring diagnostics';
+    el.appendChild(title);
+
+    var grid = document.createElement('div');
+    grid.className = 'score-diagnostics-grid';
+    counts.concat(details).concat(timings).concat(averages).forEach(function (item, idx) {
+      var label = item[0];
+      var key = item[1];
+      if (diagnostics[key] === undefined && item.length < 3) return;
+      var row = document.createElement('div');
+      row.className = 'score-diagnostics-row';
+      var left = document.createElement('span');
+      var right = document.createElement('span');
+      left.textContent = label;
+      if (item.length === 3 && key === 'score_variants_completed') {
+        right.textContent = formatDiagCount(diagnostics[key]) + ' / ' +
+          formatDiagCount(diagnostics[item[2]]);
+      } else if (idx < counts.length) {
+        right.textContent = formatDiagCount(diagnostics[key]);
+      } else if (idx < counts.length + details.length) {
+        right.textContent = String(diagnostics[key] || '');
+      } else if (idx < counts.length + details.length + timings.length) {
+        right.textContent = formatDiagSeconds(diagnostics[key]);
+      } else if (item[2] === 'seconds') {
+        right.textContent = formatDiagSeconds(diagnostics[key]);
+      } else {
+        right.textContent = formatDiagMs(diagnostics[key]);
+      }
+      row.appendChild(left);
+      row.appendChild(right);
+      grid.appendChild(row);
+    });
+    el.appendChild(grid);
+  }
+
   // ---------------------------------------------------------------------------
   // Poll /api/jobs/status?job_type=score and distribute to cards
   // ---------------------------------------------------------------------------
@@ -476,6 +610,7 @@
     var activeSid = data.current_scorer_id || '';
     var activeVid = data.current_variant_id || '';
     var cancelled = data.cancelled || false;
+    renderScoreDiagnostics(data.diagnostics || {});
 
     // Progress / ETA
     var pct = null;
