@@ -10,7 +10,6 @@ import pytest
 
 from takeout_rater.scoring.scorers import clip_backbone
 
-
 _TEST_TOTAL_DURATIONS: defaultdict[str, float] = defaultdict(float)
 _PYTEST_CONFIG: pytest.Config | None = None
 
