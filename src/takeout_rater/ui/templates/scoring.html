@@ -247,8 +247,7 @@
 </style>
 {% endblock %}
 
-{% block content %}
-<div class="sidebar-layout">
+{% block page_sidebar %}
 <aside class="app-sidebar">
   <div class="sidebar-section-title">Scorer settings</div>
   <p class="sidebar-note">
@@ -293,7 +292,9 @@
     </label>
   </div>
 </aside>
-<div class="sidebar-main">
+{% endblock %}
+
+{% block content %}
 <div class="scoring-page">
   <h1>🎯 Scoring</h1>
   <p class="subtitle">
@@ -914,6 +915,4 @@
   }
 })();
 </script>
-</div>
-</div>
 {% endblock %}
