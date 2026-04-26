@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
 
 from takeout_rater.scoring.scorers import clip_backbone
+
+_TEST_TOTAL_DURATIONS: defaultdict[str, float] = defaultdict(float)
+_PYTEST_CONFIG: pytest.Config | None = None
 
 
 @pytest.fixture(autouse=True)
@@ -49,3 +53,24 @@ if os.name == "nt":
         return _ORIGINAL_MKDIR(self, mode=mode, parents=parents, exist_ok=exist_ok)
 
     Path.mkdir = _mkdir_sandbox_safe  # type: ignore[method-assign]
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Print total runtime for each test case as soon as it finishes."""
+    _TEST_TOTAL_DURATIONS[report.nodeid] += report.duration
+    if report.when != "teardown":
+        return
+
+    if _PYTEST_CONFIG is None:
+        return
+    terminal_reporter = _PYTEST_CONFIG.pluginmanager.get_plugin("terminalreporter")
+    if terminal_reporter is not None:
+        terminal_reporter.write_line(
+            f"runtime {report.nodeid}: {_TEST_TOTAL_DURATIONS.pop(report.nodeid):.4f}s",
+        )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Capture pytest config so report hooks can access terminal reporter."""
+    global _PYTEST_CONFIG  # noqa: PLW0603
+    _PYTEST_CONFIG = config

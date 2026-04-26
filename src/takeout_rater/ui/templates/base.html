@@ -120,7 +120,20 @@
     })();
   </script>
   <main class="{% block main_class %}{% endblock %}">
-    {% block content %}{% endblock %}
+    <div class="{% block page_layout_class %}sidebar-layout{% endblock %}">
+      {% block page_sidebar %}
+      <aside class="app-sidebar">
+        <div class="sidebar-section-title">Navigation</div>
+        <p class="sidebar-note">Use the top navigation bar to move between library tools.</p>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section-title">Page options</div>
+        <p class="sidebar-note">This page does not expose extra sidebar controls yet.</p>
+      </aside>
+      {% endblock %}
+      <div class="{% block page_main_class %}sidebar-main{% endblock %}">
+        {% block content %}{% endblock %}
+      </div>
+    </div>
   </main>
 </body>
 </html>
