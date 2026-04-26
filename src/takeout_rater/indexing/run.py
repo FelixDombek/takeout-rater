@@ -164,7 +164,9 @@ def run_index(
     from takeout_rater.indexing.sidecar import parse_sidecar
     from takeout_rater.indexing.thumbnailer import (
         generate_thumbnail_from_image_timed,
+        generate_thumbnail_from_jpeg_bytes_nvjpeg_timed,
         generate_thumbnail_from_path_timed,
+        nvjpeg_enabled,
         thumb_path_for_id,
     )
 
@@ -211,10 +213,16 @@ def run_index(
         "thumbnail_seconds": 0.0,
         "thumbnail_decode_seconds": 0.0,
         "thumbnail_decode_bytes_seconds": 0.0,
+        "thumbnail_decode_nvjpeg_seconds": 0.0,
+        "thumbnail_nvjpeg_decoder_seconds": 0.0,
+        "thumbnail_nvjpeg_decoder_init_seconds": 0.0,
+        "thumbnail_nvjpeg_decoder_inits": 0,
         "thumbnail_decode_path_seconds": 0.0,
         "thumbnail_resize_seconds": 0.0,
         "thumbnail_write_seconds": 0.0,
         "thumbnails_from_bytes": 0,
+        "thumbnails_from_nvjpeg": 0,
+        "thumbnail_nvjpeg_fallbacks": 0,
         "thumbnails_from_path": 0,
         "phash_seconds": 0.0,
         "clip_preprocess_seconds": 0.0,
@@ -929,6 +937,7 @@ def run_index(
 
     _db_thread = threading.Thread(target=_db_writer, daemon=True, name="index-db-writer")
     _db_thread.start()
+    _use_nvjpeg = nvjpeg_enabled()
 
     def _claim_asset(asset_row: dict, album_relpaths: list[str]) -> tuple[int, bool]:
         future: Future = Future()
@@ -1063,22 +1072,60 @@ def run_index(
             _thumb_start = time.perf_counter()
             generated_thumb = False
             if file_bytes:
-                try:
-                    import io
-
-                    from PIL import Image
-
-                    with Image.open(io.BytesIO(file_bytes)) as full_img:
-                        thumb_img, thumb_timings = generate_thumbnail_from_image_timed(
-                            full_img, thumb
+                is_jpeg = (
+                    Path(relpath).suffix.lower() in {".jpg", ".jpeg"}
+                    or asset_file.mime == "image/jpeg"  # type: ignore[union-attr]
+                )
+                if _use_nvjpeg and is_jpeg:
+                    try:
+                        thumb_img, thumb_timings = generate_thumbnail_from_jpeg_bytes_nvjpeg_timed(
+                            file_bytes,
+                            thumb,
                         )
-                    _diag_add("thumbnail_decode_seconds", thumb_timings["decode"])
-                    _diag_add("thumbnail_decode_bytes_seconds", thumb_timings["decode"])
-                    _diag_add("thumbnail_resize_seconds", thumb_timings["resize"])
-                    _diag_add("thumbnail_write_seconds", thumb_timings["write"])
-                    _diag_inc("thumbnails_generated")
-                    _diag_inc("thumbnails_from_bytes")
-                    generated_thumb = True
+                        _diag_add("thumbnail_decode_seconds", thumb_timings["decode"])
+                        _diag_add("thumbnail_decode_bytes_seconds", thumb_timings["decode"])
+                        _diag_add("thumbnail_decode_nvjpeg_seconds", thumb_timings["decode"])
+                        _diag_add("thumbnail_nvjpeg_decoder_seconds", thumb_timings["decoder"])
+                        _diag_add(
+                            "thumbnail_nvjpeg_decoder_init_seconds",
+                            thumb_timings["decoder_init"],
+                        )
+                        if thumb_timings["decoder_init"] > 0.0:
+                            _diag_inc("thumbnail_nvjpeg_decoder_inits")
+                        _diag_add("thumbnail_resize_seconds", thumb_timings["resize"])
+                        _diag_add("thumbnail_write_seconds", thumb_timings["write"])
+                        _diag_inc("thumbnails_generated")
+                        _diag_inc("thumbnails_from_bytes")
+                        _diag_inc("thumbnails_from_nvjpeg")
+                        generated_thumb = True
+                    except ImportError:
+                        _diag_inc("thumbnail_nvjpeg_fallbacks")
+                    except Exception:
+                        _diag_inc("thumbnail_nvjpeg_fallbacks")
+                        _log.debug(
+                            "nvJPEG thumbnail generation failed for %r; falling back to Pillow",
+                            relpath,
+                            exc_info=True,
+                        )
+                        with contextlib.suppress(OSError):
+                            thumb.unlink(missing_ok=True)
+                try:
+                    if not generated_thumb:
+                        import io
+
+                        from PIL import Image
+
+                        with Image.open(io.BytesIO(file_bytes)) as full_img:
+                            thumb_img, thumb_timings = generate_thumbnail_from_image_timed(
+                                full_img, thumb
+                            )
+                        _diag_add("thumbnail_decode_seconds", thumb_timings["decode"])
+                        _diag_add("thumbnail_decode_bytes_seconds", thumb_timings["decode"])
+                        _diag_add("thumbnail_resize_seconds", thumb_timings["resize"])
+                        _diag_add("thumbnail_write_seconds", thumb_timings["write"])
+                        _diag_inc("thumbnails_generated")
+                        _diag_inc("thumbnails_from_bytes")
+                        generated_thumb = True
                 except ImportError:
                     pass  # Pillow not available
                 except Exception:

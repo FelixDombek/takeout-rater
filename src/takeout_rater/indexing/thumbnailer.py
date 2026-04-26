@@ -6,6 +6,9 @@ under ``<db_root>/takeout-rater/thumbs/``.
 
 from __future__ import annotations
 
+import os
+import sys
+import threading
 from pathlib import Path
 from time import perf_counter
 
@@ -19,10 +22,64 @@ except ImportError:
 THUMB_MAX_PX: int = 512
 THUMB_FORMAT: str = "JPEG"
 THUMB_QUALITY: int = 85
+THUMB_OPTIMIZE: bool = False
+
+_nvjpeg_dll_handles: list[object] = []
+_nvjpeg_dll_lock = threading.Lock()
+_nvjpeg_tls = threading.local()
 
 
 def _empty_timings() -> dict[str, float]:
-    return {"decode": 0.0, "resize": 0.0, "write": 0.0}
+    return {
+        "decoder": 0.0,
+        "decoder_init": 0.0,
+        "decode": 0.0,
+        "resize": 0.0,
+        "write": 0.0,
+    }
+
+
+def nvjpeg_enabled() -> bool:
+    """Return true when experimental nvJPEG thumbnail decode is enabled."""
+
+    return os.environ.get("TAKEOUT_RATER_NVJPEG", "0").strip().lower() not in {
+        "",
+        "0",
+        "false",
+        "off",
+        "no",
+    }
+
+
+def _prepare_nvjpeg_dll_dirs() -> None:
+    """Register Windows DLL search paths needed by optional pynvjpeg."""
+
+    if os.name != "nt":
+        return
+    with _nvjpeg_dll_lock:
+        if _nvjpeg_dll_handles:
+            return
+        cuda_path = os.environ.get("CUDA_PATH")
+        if cuda_path:
+            cuda_bin = Path(cuda_path) / "bin"
+            if cuda_bin.exists():
+                _nvjpeg_dll_handles.append(os.add_dll_directory(str(cuda_bin)))
+        base = Path(sys.base_prefix)
+        python_dll = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+        if (base / python_dll).exists():
+            _nvjpeg_dll_handles.append(os.add_dll_directory(str(base)))
+
+
+def _get_nvjpeg_decoder() -> tuple[object, bool]:
+    decoder = getattr(_nvjpeg_tls, "decoder", None)
+    if decoder is not None:
+        return decoder, False
+    _prepare_nvjpeg_dll_dirs()
+    from nvjpeg import NvJpeg
+
+    decoder = NvJpeg()
+    _nvjpeg_tls.decoder = decoder
+    return decoder, True
 
 
 def _request_decoder_downscale(img: object) -> None:
@@ -92,7 +149,12 @@ def generate_thumbnail_from_image(img: object, output_path: Path) -> object:
     # Ensure RGB before saving as JPEG (L mode is fine, but be safe).
     if thumb.mode not in ("RGB", "L"):
         thumb = thumb.convert("RGB")
-    thumb.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+    thumb.save(
+        output_path,
+        format=THUMB_FORMAT,
+        quality=THUMB_QUALITY,
+        optimize=THUMB_OPTIMIZE,
+    )
     return thumb
 
 
@@ -125,7 +187,61 @@ def generate_thumbnail_from_image_timed(
     timings["resize"] += perf_counter() - start
 
     start = perf_counter()
-    thumb.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+    thumb.save(
+        output_path,
+        format=THUMB_FORMAT,
+        quality=THUMB_QUALITY,
+        optimize=THUMB_OPTIMIZE,
+    )
+    timings["write"] += perf_counter() - start
+    return thumb, timings
+
+
+def generate_thumbnail_from_jpeg_bytes_nvjpeg_timed(
+    jpeg_bytes: bytes,
+    output_path: Path,
+) -> tuple[object, dict[str, float]]:
+    """Generate a thumbnail from JPEG bytes using experimental nvJPEG decode.
+
+    This intentionally does not apply EXIF orientation yet. It is a measurement
+    path for testing GPU JPEG decode before the binding exposes orientation
+    handling.
+    """
+
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise ImportError(
+            "Pillow is required for thumbnail generation. Install it with: pip install Pillow>=10.0"
+        ) from exc
+
+    timings = _empty_timings()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    start = perf_counter()
+    decoder, decoder_initialized = _get_nvjpeg_decoder()
+    decoder_seconds = perf_counter() - start
+    timings["decoder"] += decoder_seconds
+    if decoder_initialized:
+        timings["decoder_init"] += decoder_seconds
+
+    start = perf_counter()
+    arr = decoder.decode(jpeg_bytes, "rgb")
+    img = Image.fromarray(arr, "RGB")
+    thumb = img.copy()
+    timings["decode"] += perf_counter() - start
+
+    start = perf_counter()
+    thumb.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX))
+    timings["resize"] += perf_counter() - start
+
+    start = perf_counter()
+    thumb.save(
+        output_path,
+        format=THUMB_FORMAT,
+        quality=THUMB_QUALITY,
+        optimize=THUMB_OPTIMIZE,
+    )
     timings["write"] += perf_counter() - start
     return thumb, timings
 
@@ -165,7 +281,12 @@ def generate_thumbnail(image_path: Path, output_path: Path) -> None:
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
         img.thumbnail((THUMB_MAX_PX, THUMB_MAX_PX))
-        img.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+        img.save(
+            output_path,
+            format=THUMB_FORMAT,
+            quality=THUMB_QUALITY,
+            optimize=THUMB_OPTIMIZE,
+        )
 
 
 def generate_thumbnail_timed(image_path: Path, output_path: Path) -> dict[str, float]:
@@ -201,7 +322,12 @@ def generate_thumbnail_from_path_timed(
         timings["resize"] += perf_counter() - start
 
         start = perf_counter()
-        img.save(output_path, format=THUMB_FORMAT, quality=THUMB_QUALITY, optimize=True)
+        img.save(
+            output_path,
+            format=THUMB_FORMAT,
+            quality=THUMB_QUALITY,
+            optimize=THUMB_OPTIMIZE,
+        )
         timings["write"] += perf_counter() - start
         thumb = img.copy()
 
