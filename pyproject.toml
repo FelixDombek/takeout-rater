@@ -68,4 +68,4 @@ quote-style = "double"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--ignore=tests/slow --basetemp=.pytest-tmp"
+addopts = "--ignore=tests/slow --basetemp=.pytest-tmp/default"
