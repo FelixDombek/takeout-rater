@@ -14,6 +14,11 @@ _TEST_TOTAL_DURATIONS: defaultdict[str, float] = defaultdict(float)
 _TEST_RUNTIME_REPORT_THRESHOLD_SECONDS = 1.0
 _PYTEST_CONFIG: pytest.Config | None = None
 
+# Pytest's --basetemp creates the final directory but not missing parents.
+# Keep the shared parent present so the configured .pytest-tmp/default works
+# on fresh CI checkouts while concurrent runs can still use .pytest-tmp/<name>.
+Path(".pytest-tmp").mkdir(exist_ok=True)
+
 
 @pytest.fixture(autouse=True)
 def _reset_clip_backbone_singleton():
