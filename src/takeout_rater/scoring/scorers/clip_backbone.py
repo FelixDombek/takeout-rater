@@ -32,6 +32,29 @@ CLIP_IMAGE_SIZE = 224
 CLIP_IMAGE_MEAN = (0.48145466, 0.4578275, 0.40821073)
 CLIP_IMAGE_STD = (0.26862954, 0.26130258, 0.27577711)
 
+
+def _ort_log_severity_from_env() -> int | None:
+    """Return ONNX Runtime's logger severity from the local debug env var.
+
+    ONNX Runtime uses 0=verbose, 1=info, 2=warning, 3=error, 4=fatal.
+    """
+
+    value = os.environ.get("TAKEOUT_RATER_ORT_VERBOSE", "1").strip().lower()
+    if value in {"0", "false", "off", "none", "quiet"}:
+        return None
+    if value in {"1", "info"}:
+        return 1
+    if value in {"2", "warn", "warning"}:
+        return 2
+    if value in {"3", "error"}:
+        return 3
+    if value in {"4", "fatal"}:
+        return 4
+    if value in {"debug", "verbose", "trace"}:
+        return 0
+    return 1
+
+
 # ---------------------------------------------------------------------------
 # Module-level lazy singleton
 # ---------------------------------------------------------------------------
@@ -216,9 +239,10 @@ def get_clip_onnx_session(
     except ImportError:
         log.info("ONNX Runtime is not installed; using Torch CLIP")
         return None
-    if os.environ.get("TAKEOUT_RATER_ORT_VERBOSE", "1") != "0":
+    ort_log_severity = _ort_log_severity_from_env()
+    if ort_log_severity is not None:
         try:
-            ort.set_default_logger_severity(0)
+            ort.set_default_logger_severity(ort_log_severity)
         except Exception:  # noqa: BLE001
             log.debug("Could not set ONNX Runtime default logger severity", exc_info=True)
 
@@ -241,11 +265,12 @@ def get_clip_onnx_session(
                     "trt_engine_cache_enable": True,
                     "trt_engine_cache_path": str(trt_cache_dir),
                     "trt_fp16_enable": True,
-                    "trt_detailed_build_log": True,
-                    "trt_dump_subgraphs": True,
                 },
             )
         )
+        if os.environ.get("TAKEOUT_RATER_TRT_DETAILED_LOGS", "0") != "0":
+            providers[-1][1]["trt_detailed_build_log"] = True
+            providers[-1][1]["trt_dump_subgraphs"] = True
     elif accelerator == "tensorrt":
         log.warning(
             "TensorRT accelerator was requested, but TensorrtExecutionProvider is unavailable; "
@@ -258,14 +283,13 @@ def get_clip_onnx_session(
     log.info("Creating CLIP ONNX Runtime session with providers: %s", providers)
 
     session_options = ort.SessionOptions()
-    if os.environ.get("TAKEOUT_RATER_ORT_VERBOSE", "1") != "0":
-        session_options.log_severity_level = 0
-        session_options.log_verbosity_level = int(
-            os.environ.get("TAKEOUT_RATER_ORT_VERBOSITY", "1")
-        )
+    if ort_log_severity is not None:
+        session_options.log_severity_level = ort_log_severity
+        session_options.log_verbosity_level = 0
         log.info(
-            "Verbose ONNX Runtime/TensorRT logging is enabled for CLIP "
-            "(set TAKEOUT_RATER_ORT_VERBOSE=0 to silence it)"
+            "ONNX Runtime logging for CLIP is enabled at severity %d "
+            "(set TAKEOUT_RATER_ORT_VERBOSE=0 to silence ORT logs)",
+            ort_log_severity,
         )
 
     try:

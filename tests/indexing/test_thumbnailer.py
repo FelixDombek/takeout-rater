@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from takeout_rater.indexing import thumbnailer
 from takeout_rater.indexing.thumbnailer import (
     THUMB_MAX_PX,
     generate_thumbnail,
+    generate_thumbnail_from_jpeg_bytes_nvjpeg_timed,
     thumb_path_for_id,
 )
 
@@ -121,6 +125,49 @@ def test_generate_thumbnail_small_image_not_upscaled(tmp_path: Path) -> None:
 def test_generate_thumbnail_missing_source_raises(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         generate_thumbnail(tmp_path / "nonexistent.jpg", tmp_path / "out.jpg")
+
+
+# ── nvJPEG decoder cache ──────────────────────────────────────────────────────
+
+
+def test_nvjpeg_decoder_is_cached_per_thread(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The experimental nvJPEG path should not construct a decoder per image."""
+
+    import numpy as np
+
+    constructed = 0
+
+    class FakeNvJpeg:
+        def __init__(self) -> None:
+            nonlocal constructed
+            constructed += 1
+
+        def decode(self, _jpeg_bytes: bytes, _mode: str) -> object:
+            return np.zeros((16, 16, 3), dtype=np.uint8)
+
+    if hasattr(thumbnailer._nvjpeg_tls, "decoder"):
+        delattr(thumbnailer._nvjpeg_tls, "decoder")
+    monkeypatch.setitem(sys.modules, "nvjpeg", SimpleNamespace(NvJpeg=FakeNvJpeg))
+
+    first_out = tmp_path / "first.jpg"
+    second_out = tmp_path / "second.jpg"
+
+    _first_thumb, first_timings = generate_thumbnail_from_jpeg_bytes_nvjpeg_timed(
+        b"fake-jpeg",
+        first_out,
+    )
+    _second_thumb, second_timings = generate_thumbnail_from_jpeg_bytes_nvjpeg_timed(
+        b"fake-jpeg",
+        second_out,
+    )
+
+    assert constructed == 1
+    assert first_out.exists()
+    assert second_out.exists()
+    assert first_timings["decoder_init"] > 0.0
+    assert second_timings["decoder_init"] == 0.0
 
 
 # ── EXIF orientation ──────────────────────────────────────────────────────────
