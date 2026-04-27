@@ -293,3 +293,34 @@ def test_run_scorer_error_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFix
         run_scorer(conn, scorer, thumbs_dir)
 
     assert any("blur" in r.message and r.levelno == logging.ERROR for r in caplog.records)
+
+
+# ── end-to-end: index then score ──────────────────────────────────────────────
+
+
+def test_index_then_score_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from takeout_rater.cli import main
+    from takeout_rater.db.connection import open_library_db
+
+    monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.is_available", lambda: False)
+
+    photos_root = tmp_path / "photos"
+    photos_root.symlink_to(FIXTURE_TAKEOUT.resolve(), target_is_directory=True)
+
+    rc = main(["index", str(photos_root), "--db-root", str(tmp_path)])
+    assert rc == 0
+
+    conn = open_library_db(tmp_path)
+    thumbs_dir = tmp_path / "takeout-rater" / "thumbs"
+
+    scorer = SimpleScorer.create(variant_id="blur")
+    run_scorer(conn, scorer, thumbs_dir)
+
+    thumbs = list(thumbs_dir.rglob("*.jpg"))
+    assert len(thumbs) >= 1, "Indexer should have generated at least one thumbnail"
+
+    scored = conn.execute("SELECT COUNT(*) FROM asset_scores").fetchone()[0]
+    conn.close()
+    assert scored == len(thumbs), (
+        f"Expected {len(thumbs)} score rows (one per thumbnail), got {scored}"
+    )

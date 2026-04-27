@@ -893,6 +893,49 @@ def test_asset_detail_shows_exif_data_partial(tmp_path: Path) -> None:
     assert "No EXIF data available" not in resp.text
 
 
+def test_full_pipeline_sidecar_and_exif_shown_in_detail_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from takeout_rater.db.connection import open_library_db
+    from takeout_rater.db.queries import list_assets
+    from takeout_rater.indexing.run import run_index
+
+    monkeypatch.setattr("takeout_rater.scoring.scorers.clip_backbone.is_available", lambda: False)
+
+    photos_root = tmp_path / "photos"
+    db_root = tmp_path / "state"
+    album = photos_root / "Photos from 2026"
+    album.mkdir(parents=True)
+
+    img_path = album / "photo.jpg"
+    _make_jpeg_with_exif(img_path, make="PipelineCamera", model="FullStack 5000")
+
+    (album / "photo.jpg.supplemental-metadata.json").write_text(
+        '{"title":"photo.jpg","description":"pipeline test","url":"",'
+        '"creationTime":{"timestamp":"1771361057"},'
+        '"photoTakenTime":{"timestamp":"1771354888"},'
+        '"imageViews":"42"}',
+        encoding="utf-8",
+    )
+
+    conn = open_library_db(db_root)
+    run_index(photos_root, conn, db_root=db_root)
+
+    app = create_app(photos_root, conn, db_root=db_root)
+    client = TestClient(app, follow_redirects=True)
+
+    rows = list_assets(conn, limit=10)
+    assert len(rows) == 1, f"Expected 1 indexed asset, got {len(rows)}"
+    asset_id = rows[0].id
+
+    resp = client.get(f"/assets/{asset_id}")
+    assert resp.status_code == 200
+    assert "pipeline test" in resp.text
+    assert "imageViews" in resp.text
+    assert "PipelineCamera" in resp.text
+    assert "FullStack 5000" in resp.text
+
+
 def test_asset_detail_no_exif_when_image_missing(tmp_path: Path) -> None:
     """Detail page should show 'No EXIF data available' when the image file does not exist."""
     conn = _make_db()

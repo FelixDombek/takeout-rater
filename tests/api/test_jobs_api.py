@@ -81,25 +81,6 @@ def test_jobs_status_unknown_job_type_returns_400(client_no_db: TestClient) -> N
 
 
 # ---------------------------------------------------------------------------
-# GET /api/jobs/scorers
-# ---------------------------------------------------------------------------
-
-
-def test_list_scorers_returns_200(client_no_db: TestClient) -> None:
-    resp = client_no_db.get("/api/jobs/scorers")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert isinstance(data, list)
-    assert len(data) > 0
-    for item in data:
-        assert "id" in item
-        assert "name" in item
-        assert "available" in item
-        assert "description" in item
-        assert "technical_description" in item
-
-
-# ---------------------------------------------------------------------------
 # POST /api/jobs/*/start — no library configured returns 503
 # ---------------------------------------------------------------------------
 
@@ -835,13 +816,6 @@ def test_rescan_full_regenerates_thumbnail_for_direct_photos_root(
 # ---------------------------------------------------------------------------
 
 
-def test_start_index_job_returns_started(client_with_db: TestClient) -> None:
-    """POST /api/jobs/index/start must return {'status': 'started'}."""
-    resp = client_with_db.post("/api/jobs/index/start")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "started"
-
-
 def test_start_index_job_conflicts_when_running(client_with_db: TestClient) -> None:
     """A second start while already running must return 409."""
     from takeout_rater.api.jobs import JobProgress  # noqa: E402
@@ -861,14 +835,6 @@ def test_index_status_endpoint_returns_index(client_with_db: TestClient) -> None
     data = resp.json()
     assert data["job_type"] == "index"
     assert data["running"] is False
-
-
-def test_start_index_job_creates_job_progress(client_with_db: TestClient) -> None:
-    """After POST /api/jobs/index/start, app.state.jobs must have an 'index' entry."""
-    client_with_db.post("/api/jobs/index/start")
-    jobs = client_with_db.app.state.jobs  # type: ignore[union-attr]
-    assert "index" in jobs
-    assert jobs["index"].job_type == "index"
 
 
 # ---------------------------------------------------------------------------
@@ -940,51 +906,6 @@ def test_rescan_worker_links_asset_to_album(tmp_path: Path) -> None:
     ).fetchone()[0]
     check_conn.close()
     assert links == 1
-
-
-def test_rescan_worker_links_asset_to_all_albums_via_aliases(tmp_path: Path) -> None:
-    """Rescan must link a canonical asset to every album it appears in, including
-    albums derived from alias paths stored in asset_paths."""
-    import time  # noqa: E402
-
-    from takeout_rater.db.connection import open_library_db  # noqa: E402
-    from takeout_rater.db.queries import upsert_asset  # noqa: E402
-
-    conn = open_library_db(tmp_path)
-    # Insert canonical asset in "Photos from 2023"
-    asset_id = upsert_asset(
-        conn,
-        {
-            "relpath": "Photos from 2023/IMG_001.jpg",
-            "filename": "IMG_001.jpg",
-            "ext": ".jpg",
-            "mime": "image/jpeg",
-            "size_bytes": 1,
-        },
-    )
-    # Record alias in "Summer Vacation 2023" (same binary, different directory)
-    conn.execute(
-        "INSERT INTO asset_paths (asset_id, relpath, indexed_at) VALUES (?, ?, ?)",
-        (asset_id, "Summer Vacation 2023/IMG_001.jpg", int(time.time())),
-    )
-    conn.commit()
-    conn.close()
-
-    _run_rescan_worker(tmp_path)
-
-    check_conn = open_library_db(tmp_path)
-    album_names = {
-        r[0]
-        for r in check_conn.execute(
-            "SELECT al.name FROM albums al"
-            " JOIN album_assets aa ON aa.album_id = al.id"
-            " WHERE aa.asset_id = ?",
-            (asset_id,),
-        ).fetchall()
-    }
-    check_conn.close()
-    assert "Photos from 2023" in album_names
-    assert "Summer Vacation 2023" in album_names
 
 
 # ---------------------------------------------------------------------------

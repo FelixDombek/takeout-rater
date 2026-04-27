@@ -11,6 +11,7 @@ import pytest
 from takeout_rater.scoring.scorers import clip_backbone
 
 _TEST_TOTAL_DURATIONS: defaultdict[str, float] = defaultdict(float)
+_TEST_RUNTIME_REPORT_THRESHOLD_SECONDS = 1.0
 _PYTEST_CONFIG: pytest.Config | None = None
 
 
@@ -56,9 +57,13 @@ if os.name == "nt":
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    """Print total runtime for each test case as soon as it finishes."""
+    """Print total runtime for test cases that exceed the reporting threshold."""
     _TEST_TOTAL_DURATIONS[report.nodeid] += report.duration
     if report.when != "teardown":
+        return
+
+    total_duration = _TEST_TOTAL_DURATIONS.pop(report.nodeid)
+    if total_duration <= _TEST_RUNTIME_REPORT_THRESHOLD_SECONDS:
         return
 
     if _PYTEST_CONFIG is None:
@@ -66,7 +71,7 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     terminal_reporter = _PYTEST_CONFIG.pluginmanager.get_plugin("terminalreporter")
     if terminal_reporter is not None:
         terminal_reporter.write_line(
-            f"runtime {report.nodeid}: {_TEST_TOTAL_DURATIONS.pop(report.nodeid):.4f}s",
+            f"runtime {report.nodeid}: {total_duration:.4f}s",
         )
 
 
