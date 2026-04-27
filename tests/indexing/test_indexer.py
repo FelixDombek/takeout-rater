@@ -459,5 +459,10 @@ def test_run_index_batches_clip_embeddings(tmp_path: Path, monkeypatch) -> None:
     assert progress.diagnostics["clip_embeddings_computed"] == 8
     assert progress.diagnostics["clip_batches"] >= 1
     assert progress.diagnostics["clip_preprocess_workers"] >= 1
+    assert progress.diagnostics["clip_batch_last_size"] >= 1
+    assert progress.diagnostics["clip_batch_inference_last_seconds"] >= 0
+    assert progress.diagnostics["clip_batch_inference_max_seconds"] >= 0
+    assert progress.diagnostics["clip_image_queue_max"] == 128
+    assert progress.diagnostics["clip_tensor_queue_max"] >= 1
     assert "clip_inference_seconds" in progress.diagnostics
     conn.close()
