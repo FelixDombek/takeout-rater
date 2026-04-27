@@ -188,13 +188,20 @@ def run_index(
         "clip_batches": 0,
         "clip_batch_items": 0,
         "clip_batch_size": 0,
+        "clip_batch_last_size": 0,
         "clip_batch_max_size": 0,
         "clip_batch_fill_wait_seconds": 0.0,
+        "clip_batch_inference_last_seconds": 0.0,
+        "clip_batch_inference_max_seconds": 0.0,
         "clip_accelerator": "",
         "clip_status": "",
         "clip_providers": "",
         "clip_preprocess_workers": 0,
+        "clip_image_queue_size": 0,
+        "clip_image_queue_max": 0,
         "clip_queue_wait_seconds": 0.0,
+        "clip_tensor_queue_size": 0,
+        "clip_tensor_queue_max": 0,
         "clip_inference_active_seconds": 0.0,
         "clip_first_inference_seconds": 0.0,
         "scan_seconds": 0.0,
@@ -229,6 +236,7 @@ def run_index(
         "clip_tensor_queue_wait_seconds": 0.0,
         "clip_onnx_input_seconds": 0.0,
         "clip_onnx_run_seconds": 0.0,
+        "clip_onnx_slow_fallbacks": 0,
         "clip_inference_seconds": 0.0,
         "clip_write_seconds": 0.0,
     }
@@ -298,9 +306,11 @@ def run_index(
             _diagnostics[key] = int(_diagnostics.get(key, 0)) + amount
             progress.diagnostics = dict(_diagnostics)
 
-    def _diag_max(key: str, value: int) -> None:
+    def _diag_max(key: str, value: int | float) -> None:
         with _diagnostics_lock:
-            _diagnostics[key] = max(int(_diagnostics.get(key, 0)), value)
+            current = _diagnostics.get(key, 0)
+            if not isinstance(current, (int, float)) or value > current:
+                _diagnostics[key] = value
             progress.diagnostics = dict(_diagnostics)
 
     progress.diagnostics = _diag_snapshot()
@@ -421,7 +431,7 @@ def run_index(
         0.02,
         float(os.environ.get("TAKEOUT_RATER_CLIP_BATCH_FILL_WAIT_SECONDS", "0.35")),
     )
-    _clip_image_queue_max = max(256, _clip_batch_size * 4)
+    _clip_image_queue_max = max(_clip_batch_size, _clip_preprocess_workers * 8)
     _clip_tensor_queue_max = max(_clip_batch_size * 2, _clip_preprocess_workers * 8)
     _clip_image_queue: queue.Queue[object] = queue.Queue(maxsize=_clip_image_queue_max)
     _clip_tensor_queue: queue.Queue[object] = queue.Queue(maxsize=_clip_tensor_queue_max)
@@ -429,6 +439,12 @@ def run_index(
     _clip_tensor_sentinel = object()
     _diag_set("clip_batch_size", _clip_batch_size)
     _diag_set("clip_preprocess_workers", _clip_preprocess_workers)
+    _diag_set("clip_image_queue_max", _clip_image_queue_max)
+    _diag_set("clip_tensor_queue_max", _clip_tensor_queue_max)
+
+    def _diag_clip_queue_sizes() -> None:
+        _diag_set("clip_image_queue_size", _clip_image_queue.qsize())
+        _diag_set("clip_tensor_queue_size", _clip_tensor_queue.qsize())
 
     def _clip_batch_worker() -> None:
         import struct
@@ -503,9 +519,20 @@ def run_index(
                     _onnx_input_start = time.perf_counter()
                     batch_tensor = torch.stack(tensors).contiguous()
                     embeddings_np = None
+                    onnx_providers = onnx_session.get_providers()
+                    is_tensorrt_session = "TensorrtExecutionProvider" in onnx_providers
+                    slow_onnx_cuda_batch_seconds = max(
+                        1.0,
+                        float(
+                            os.environ.get(
+                                "TAKEOUT_RATER_ONNX_CUDA_SLOW_BATCH_SECONDS",
+                                "10",
+                            )
+                        ),
+                    )
                     use_cuda_binding = (
                         torch.cuda.is_available()
-                        and "CPUExecutionProvider" not in onnx_session.get_providers()[:1]
+                        and "CPUExecutionProvider" not in onnx_providers[:1]
                     )
                     if use_cuda_binding:
                         try:
@@ -579,8 +606,23 @@ def run_index(
                         _diag_set("clip_status", "ONNX/TensorRT inference ready")
                     norms = np.linalg.norm(embeddings_np, axis=-1, keepdims=True)
                     embeddings_np = embeddings_np / np.maximum(norms, 1e-12)
-                    _diag_add("clip_inference_seconds", time.perf_counter() - _clip_infer_start)
+                    _onnx_infer_seconds = time.perf_counter() - _clip_infer_start
+                    _diag_add("clip_inference_seconds", _onnx_infer_seconds)
                     _diag_inc("clip_batches")
+                    if (
+                        not is_tensorrt_session
+                        and _onnx_infer_seconds >= slow_onnx_cuda_batch_seconds
+                    ):
+                        _log.warning(
+                            "CLIP ONNX CUDA batch took %.1fs for %d image(s); "
+                            "disabling ONNX CUDA for the rest of this indexing run "
+                            "and falling back to Torch",
+                            _onnx_infer_seconds,
+                            len(tensors),
+                        )
+                        _diag_inc("clip_onnx_slow_fallbacks")
+                        _diag_set("clip_status", "ONNX CUDA slow; falling back to Torch")
+                        onnx_session = None
                     return embeddings_np.astype("float32", copy=False)
                 except Exception:  # noqa: BLE001
                     _log.warning(
@@ -640,9 +682,11 @@ def run_index(
         def _clip_preprocess_worker() -> None:
             while True:
                 item = _clip_image_queue.get()
+                _diag_clip_queue_sizes()
                 if item is _clip_image_sentinel:
                     _clip_image_queue.task_done()
                     _clip_tensor_queue.put(_clip_tensor_sentinel)
+                    _diag_clip_queue_sizes()
                     break
                 asset_id, relpath, img = item  # type: ignore[misc]
                 try:
@@ -654,6 +698,7 @@ def run_index(
                     )
                     _tensor_queue_wait_start = time.perf_counter()
                     _clip_tensor_queue.put((asset_id, relpath, tensor))
+                    _diag_clip_queue_sizes()
                     _diag_add(
                         "clip_tensor_queue_wait_seconds",
                         time.perf_counter() - _tensor_queue_wait_start,
@@ -679,6 +724,7 @@ def run_index(
             preprocess_sentinels_seen = 0
             while True:
                 item = _clip_tensor_queue.get()
+                _diag_clip_queue_sizes()
                 if item is _clip_tensor_sentinel:
                     _clip_tensor_queue.task_done()
                     preprocess_sentinels_seen += 1
@@ -697,6 +743,7 @@ def run_index(
                         break
                     try:
                         next_item = _clip_tensor_queue.get(timeout=min(0.05, remaining))
+                        _diag_clip_queue_sizes()
                     except queue.Empty:
                         continue
                     if next_item is _clip_tensor_sentinel:
@@ -719,7 +766,11 @@ def run_index(
                         "clip_batch_fill_wait_seconds",
                         time.perf_counter() - _batch_fill_start,
                     )
+                    _batch_infer_start = time.perf_counter()
                     embeddings_np = _encode_tensors(tensors)
+                    _batch_infer_seconds = time.perf_counter() - _batch_infer_start
+                    _diag_set("clip_batch_inference_last_seconds", _batch_infer_seconds)
+                    _diag_max("clip_batch_inference_max_seconds", _batch_infer_seconds)
                     rows = [
                         (asset_id, struct.pack(f"{emb.shape[0]}f", *emb), now)
                         for asset_id, emb in zip(asset_ids, embeddings_np, strict=True)
@@ -734,6 +785,7 @@ def run_index(
                     _diag_add("clip_write_seconds", time.perf_counter() - _clip_write_start)
                     _diag_inc("clip_embeddings_computed", len(rows))
                     _diag_inc("clip_batch_items", len(rows))
+                    _diag_set("clip_batch_last_size", len(rows))
                     _diag_max("clip_batch_max_size", len(rows))
                     for relpath in relpaths:
                         _log.debug("CLIP inference done for %r", relpath)
@@ -772,9 +824,11 @@ def run_index(
                 return
             try:
                 _clip_image_queue.put((asset_id, relpath, img_rgb), timeout=0.25)
+                _diag_clip_queue_sizes()
                 _diag_add("clip_queue_wait_seconds", time.perf_counter() - _queue_wait_start)
                 return
             except queue.Full:
+                _diag_clip_queue_sizes()
                 continue
 
     # SQLite writes are serialized through one writer thread. Asset claims are

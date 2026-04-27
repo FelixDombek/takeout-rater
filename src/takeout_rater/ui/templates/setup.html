@@ -114,12 +114,12 @@
     <label class="sidebar-radio">
       <input type="radio" name="clip_accelerator" value="auto"
              {% if performance.clip_accelerator == "auto" %}checked{% endif %}>
-      <span>Auto<small>Use ONNX Runtime CUDA when available, otherwise Torch.</small></span>
+      <span>Auto<small>Use ONNX Runtime CUDA when available, with slow-batch Torch fallback.</small></span>
     </label>
     <label class="sidebar-radio">
       <input type="radio" name="clip_accelerator" value="onnx"
              {% if performance.clip_accelerator == "onnx" %}checked{% endif %}>
-      <span>ONNX CUDA<small>Force ONNX Runtime CUDA with Torch fallback.</small></span>
+      <span>ONNX CUDA<small>Use ONNX Runtime CUDA with slow-batch Torch fallback.</small></span>
     </label>
     <label class="sidebar-radio">
       <input type="radio" name="clip_accelerator" value="tensorrt"
