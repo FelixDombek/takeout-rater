@@ -41,9 +41,7 @@ def _ort_log_severity_from_env() -> int | None:
 
     value = os.environ.get("TAKEOUT_RATER_ORT_VERBOSE", "1").strip().lower()
     if value in {"0", "false", "off", "none", "quiet"}:
-        if value != "0":
-            return None
-        return 0
+        return None
     if value in {"1", "info"}:
         return 1
     if value in {"2", "warn", "warning"}:
