@@ -877,7 +877,11 @@ def run_index(
         n_phash = 0
         writer_start = time.perf_counter()
         try:
-            wconn.execute("BEGIN")
+            # IMMEDIATE takes the write lock up front.  A deferred BEGIN would
+            # read under a snapshot that a concurrent commit (e.g. the CLIP
+            # worker's connection) can invalidate before our first write, which
+            # fails with SQLITE_BUSY_SNAPSHOT instead of waiting on busy_timeout.
+            wconn.execute("BEGIN IMMEDIATE")
             for item in batch:
                 kind = item["kind"]  # type: ignore[index]
                 if kind == "claim":
