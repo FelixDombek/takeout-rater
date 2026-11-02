@@ -33,6 +33,7 @@ from takeout_rater.scoring.scorers.base import (
     ScorerSpec,
     VariantSpec,
     _run_pipelined_batches,
+    group_indices_by_shape,
 )
 
 # ---------------------------------------------------------------------------
@@ -339,28 +340,27 @@ class NIMAScorer(BaseScorer):
         def _infer(
             tensors: list[Any], failed: set[int], chunk: list[Path]
         ) -> list[dict[str, float]]:
-            valid_tensors = [t for t in tensors if t is not None]
-            valid_indices = [i for i, t in enumerate(tensors) if t is not None]
             sub_scores = [_MIN_SCORE] * len(chunk)
 
-            if valid_tensors:
+            # Batch images of equal size together (thumbnails differ in
+            # aspect ratio, so one stack over the whole chunk would fail).
+            for group in group_indices_by_shape(tensors):
                 try:
-                    batch = torch.stack(valid_tensors)
+                    batch = torch.stack([tensors[i] for i in group])
                     raw_out = self._model(batch)
                     # pyiqa metrics return (N,) or (N, 1); fall back if scalar.
                     if raw_out.dim() == 0:
                         raise RuntimeError("scalar output — fall back to per-image")
-                    score_values: list[float] = raw_out.view(-1).tolist()
-                    for j, idx in enumerate(valid_indices):
-                        sub_scores[idx] = _rescale(float(score_values[j]))
+                    values: list[float] = raw_out.reshape(-1).tolist()
+                    if len(values) != len(group):
+                        raise RuntimeError("unexpected output shape — fall back to per-image")
+                    for j, idx in enumerate(group):
+                        sub_scores[idx] = _rescale(float(values[j]))
                 except RuntimeError:
-                    # Fallback: score each valid image individually (e.g. scalar output)
-                    for _j, idx in enumerate(valid_indices):
-                        path = chunk[idx]
+                    # Fallback: score each image of the group individually.
+                    for idx in group:
                         try:
-                            img = Image.open(path).convert("RGB")
-                            tensor = to_tensor(img).unsqueeze(0)
-                            raw = float(self._model(tensor).item())
+                            raw = float(self._model(tensors[idx].unsqueeze(0)).item())
                             sub_scores[idx] = _rescale(raw)
                         except (OSError, ValueError, RuntimeError):
                             pass

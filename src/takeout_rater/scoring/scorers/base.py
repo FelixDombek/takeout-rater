@@ -109,6 +109,23 @@ class ScorerSpec:
         return tuple(metrics)
 
 
+def group_indices_by_shape(tensors: list[Any]) -> list[list[int]]:
+    """Group positions of non-``None`` tensors that share the same ``shape``.
+
+    Thumbnails keep their aspect ratio, so a chunk typically mixes e.g.
+    512x384 and 384x512 images.  ``torch.stack`` cannot batch those together;
+    scorers that feed native-size images to a model batch each shape group
+    separately instead of falling back to one image at a time.  Groups are
+    returned in order of first appearance; positions keep their input order.
+    """
+    groups: dict[tuple[int, ...], list[int]] = {}
+    for i, t in enumerate(tensors):
+        if t is None:
+            continue
+        groups.setdefault(tuple(t.shape), []).append(i)
+    return list(groups.values())
+
+
 def _run_pipelined_batches(
     chunks: list[list[Path]],
     preprocess_fn: Callable[[list[Path]], tuple[Any, set[int]]],

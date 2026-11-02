@@ -141,9 +141,9 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser.add_argument(
         "--batch-size",
         type=int,
-        default=32,
+        default=256,
         metavar="N",
-        help="Number of images per scoring batch (default: 32).",
+        help="Number of images per scoring call and progress/commit step (default: 256).",
     )
 
     # cluster
@@ -316,7 +316,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
 
     # -- pHash computation ---------------------------------------------------
     if args.phash:
-        from src.takeout_rater.clustering.phash import compute_phash_all
+        from takeout_rater.clustering.phash import compute_phash_all
 
         print("Computing perceptual hashes (dhash) …")
 

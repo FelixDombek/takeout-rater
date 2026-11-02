@@ -32,7 +32,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 
-from src.takeout_rater.clustering.phash import DHASH_ALGO
+from takeout_rater.clustering.phash import DHASH_ALGO
 from takeout_rater.db.queries import (
     bulk_insert_cluster_members,
     insert_cluster,

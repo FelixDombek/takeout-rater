@@ -31,7 +31,7 @@ def test_score_subcommand_is_registered() -> None:
 def test_score_subcommand_default_batch_size() -> None:
     parser = build_parser()
     args = parser.parse_args(["score", "--db-root", "/tmp/state", "/tmp/fake"])
-    assert args.batch_size == 32
+    assert args.batch_size == 256
 
 
 def test_export_subcommand_is_registered() -> None:

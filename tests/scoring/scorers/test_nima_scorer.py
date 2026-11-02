@@ -302,3 +302,23 @@ def test_score_batch_technical_spaq_value_in_range(tmp_path: Path) -> None:
     scorer = _make_mock_scorer(fixed_score=7.0, variant_id="technical-spaq")
     results = scorer.score_batch([img_path])
     assert 1.0 <= results[0]["nima_score"] <= 10.0
+
+
+def test_score_batch_mixed_sizes_batches_by_shape(tmp_path: Path) -> None:
+    """Thumbnails of different aspect ratios are batched per shape, not one by one."""
+    from PIL import Image
+
+    paths = []
+    for i, size in enumerate([(64, 48), (48, 64), (64, 48), (48, 64), (64, 48)]):
+        p = tmp_path / f"img{i}.jpg"
+        Image.new("RGB", size).save(p, "JPEG")
+        paths.append(p)
+
+    scorer = _make_mock_scorer(fixed_score=7.0)
+    results = scorer.score_batch(paths)
+
+    assert len(results) == 5
+    batch_sizes = sorted(call.args[0].shape[0] for call in scorer._model.call_args_list)
+    assert batch_sizes == [2, 3]
+    expected = scorer.score_batch([paths[0]])[0]["nima_score"]
+    assert all(r["nima_score"] == pytest.approx(expected) for r in results)

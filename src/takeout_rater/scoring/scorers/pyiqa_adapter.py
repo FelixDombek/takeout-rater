@@ -37,6 +37,7 @@ from takeout_rater.scoring.scorers.base import (
     ScorerSpec,
     VariantSpec,
     _run_pipelined_batches,
+    group_indices_by_shape,
 )
 
 # ---------------------------------------------------------------------------
@@ -295,28 +296,27 @@ class PyIQAScorer(BaseScorer):
         def _infer(
             tensors: list[Any], failed: set[int], chunk: list[Path]
         ) -> list[dict[str, float]]:
-            valid_tensors = [t for t in tensors if t is not None]
-            valid_indices = [i for i, t in enumerate(tensors) if t is not None]
             sub_scores = [0.0] * len(chunk)
 
-            if valid_tensors:
+            # Batch images of equal size together (thumbnails differ in
+            # aspect ratio, so one stack over the whole chunk would fail).
+            for group in group_indices_by_shape(tensors):
                 try:
-                    batch = torch.stack(valid_tensors)  # (N, C, H, W) — on CPU for pyiqa
+                    batch = torch.stack([tensors[i] for i in group])
                     raw_out = self._metric(batch)
-                    # pyiqa metrics return (N, 1) or (N,); fall back if scalar.
+                    # pyiqa metrics return (N,) or (N, 1); fall back if scalar.
                     if raw_out.dim() == 0:
                         raise RuntimeError("scalar output — fall back to per-image")
-                    raw_values: list[float] = raw_out.squeeze(-1).tolist()
-                    for j, idx in enumerate(valid_indices):
-                        sub_scores[idx] = _to_higher_is_better(self.variant_id, raw_values[j])
+                    values: list[float] = raw_out.reshape(-1).tolist()
+                    if len(values) != len(group):
+                        raise RuntimeError("unexpected output shape — fall back to per-image")
+                    for j, idx in enumerate(group):
+                        sub_scores[idx] = _to_higher_is_better(self.variant_id, float(values[j]))
                 except (RuntimeError, IndexError):
-                    # Fallback: score each image individually
-                    for _j, idx in enumerate(valid_indices):
-                        path = chunk[idx]
+                    # Fallback: score each image of the group individually.
+                    for idx in group:
                         try:
-                            img = Image.open(path).convert("RGB")
-                            tensor = to_tensor(img).unsqueeze(0)
-                            raw = float(self._metric(tensor).item())
+                            raw = float(self._metric(tensors[idx].unsqueeze(0)).item())
                             sub_scores[idx] = _to_higher_is_better(self.variant_id, raw)
                         except (OSError, ValueError, RuntimeError):
                             pass
