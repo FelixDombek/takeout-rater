@@ -22,6 +22,7 @@ from takeout_rater.api.faces import router as faces_router
 from takeout_rater.api.jobs import router as jobs_router
 from takeout_rater.api.presets import router as presets_router
 from takeout_rater.api.search import router as search_router
+from takeout_rater.api.trips import router as trips_router
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -131,6 +132,7 @@ def create_app(
     app.include_router(search_router)
     app.include_router(clip_router)
     app.include_router(faces_router)
+    app.include_router(trips_router)
 
     @app.get("/")
     def redirect_to_browse(request: Request) -> RedirectResponse:

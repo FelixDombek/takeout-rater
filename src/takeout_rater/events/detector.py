@@ -1,0 +1,396 @@
+"""Pure trip/event detection on ``(timestamp, lat, lon)`` points.
+
+Two kinds of groups are detected:
+
+* **Trips**: runs of local calendar days on which most geotagged photos were
+  taken far away (``trip_min_distance_km``) from *home*.  Home is estimated
+  per calendar year as the coarse grid cell on which photos were taken on the
+  most distinct days, so a move to another city is picked up automatically.
+  Days without any geotagged photo do not interrupt a trip (up to
+  ``trip_max_gap_days`` of them); a day with geotagged photos at home ends it.
+  A trip spans from its first to its last *away* photo, and every photo taken
+  in that time range belongs to it, with or without GPS.
+
+* **Events**: bursts of photos separated from their neighbours by more than
+  ``event_gap_hours`` (the classic "time gap" rule used by photo apps).  Events
+  that fall inside a trip become children of that trip; the others are
+  stand-alone events (birthdays, concerts, a day at the lake...).
+
+Everything here is deterministic, dependency-free and O(n log n), so it runs in
+a few seconds on a 200k-photo library.
+"""
+
+from __future__ import annotations
+
+import bisect
+import math
+import statistics
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+_EARTH_RADIUS_KM = 6371.0088
+_DAY = 86400
+
+
+@dataclass(frozen=True)
+class PhotoPoint:
+    """One photo: asset id, Unix timestamp (UTC) and optional coordinates."""
+
+    asset_id: int
+    ts: int
+    lat: float | None = None
+    lon: float | None = None
+
+    @property
+    def has_geo(self) -> bool:
+        return self.lat is not None and self.lon is not None
+
+
+@dataclass(frozen=True)
+class DetectionParams:
+    """Tunable thresholds for :func:`detect`."""
+
+    home_cell_deg: float = 0.05  # ~5 km grid cells for the home estimate
+    min_home_days: int = 20  # a year needs this many geotagged days for its own home
+    trip_min_distance_km: float = 50.0
+    trip_max_gap_days: int = 2  # days without geotagged photos tolerated inside a trip
+    trip_min_photos: int = 10
+    event_gap_hours: float = 4.0
+    event_min_photos: int = 15
+
+
+DEFAULT_PARAMS = DetectionParams()
+
+
+@dataclass
+class DetectedGroup:
+    """A detected trip or event."""
+
+    kind: str  # "trip" | "event"
+    start_ts: int
+    end_ts: int
+    asset_ids: list[int]
+    center_lat: float | None = None
+    center_lon: float | None = None
+    max_distance_km: float | None = None  # furthest geotagged photo from home
+    n_days: int = 1
+    children: list[DetectedGroup] = field(default_factory=list)
+
+
+@dataclass
+class DetectionResult:
+    trips: list[DetectedGroup]
+    events: list[DetectedGroup]  # stand-alone events (not inside any trip)
+    homes: dict[int, tuple[float, float]]  # year -> (lat, lon)
+    default_home: tuple[float, float] | None
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two WGS84 points in kilometres."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * _EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(a)))
+
+
+def _year(ts: int) -> int:
+    return datetime.fromtimestamp(ts, tz=UTC).year
+
+
+def _utc_offset_s(lon: float | None) -> int:
+    """Rough local-time offset from longitude (solar time, whole hours)."""
+    if lon is None:
+        return 0
+    return int(round(lon / 15.0)) * 3600
+
+
+def estimate_homes(
+    points: list[PhotoPoint], params: DetectionParams = DEFAULT_PARAMS
+) -> tuple[dict[int, tuple[float, float]], tuple[float, float] | None]:
+    """Estimate the home location for each calendar year.
+
+    The home of a year is the grid cell on which geotagged photos were taken on
+    the most distinct days (weighting by days, not photos, keeps one big
+    photo session from outweighing everyday life).  Years with fewer than
+    ``min_home_days`` geotagged days use the all-time home instead.
+
+    Returns:
+        ``(homes_by_year, default_home)``; ``default_home`` is ``None`` when no
+        photo has coordinates.
+    """
+    cell = params.home_cell_deg
+    days_per_cell: dict[int, dict[tuple[int, int], set[int]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
+    all_days: dict[tuple[int, int], set[int]] = defaultdict(set)
+    coords_per_cell: dict[tuple[int, int], list[tuple[float, float]]] = defaultdict(list)
+    geo_days_per_year: dict[int, set[int]] = defaultdict(set)
+
+    for p in points:
+        if not p.has_geo:
+            continue
+        key = (int(math.floor(p.lat / cell)), int(math.floor(p.lon / cell)))  # type: ignore[operator]
+        day = (p.ts + _utc_offset_s(p.lon)) // _DAY
+        year = _year(p.ts)
+        days_per_cell[year][key].add(day)
+        all_days[key].add(day)
+        geo_days_per_year[year].add(day)
+        coords_per_cell[key].append((p.lat, p.lon))  # type: ignore[arg-type]
+
+    if not all_days:
+        return {}, None
+
+    centers: dict[tuple[int, int], tuple[float, float]] = {}
+
+    def _cell_center(key: tuple[int, int]) -> tuple[float, float]:
+        if key not in centers:
+            pts = coords_per_cell[key]
+            centers[key] = (
+                statistics.median(lat for lat, _ in pts),
+                statistics.median(lon for _, lon in pts),
+            )
+        return centers[key]
+
+    def _best(cells: dict[tuple[int, int], set[int]]) -> tuple[int, int]:
+        # Most distinct days; ties broken deterministically by cell key.
+        return max(cells, key=lambda k: (len(cells[k]), k))
+
+    default_home = _cell_center(_best(all_days))
+    homes: dict[int, tuple[float, float]] = {}
+    for year, cells in days_per_cell.items():
+        if len(geo_days_per_year[year]) >= params.min_home_days:
+            homes[year] = _cell_center(_best(cells))
+        else:
+            homes[year] = default_home
+    return homes, default_home
+
+
+def _home_for(
+    ts: int, homes: dict[int, tuple[float, float]], default: tuple[float, float] | None
+) -> tuple[float, float] | None:
+    return homes.get(_year(ts), default)
+
+
+def _center(points: list[PhotoPoint]) -> tuple[float | None, float | None]:
+    geo = [p for p in points if p.has_geo]
+    if not geo:
+        return None, None
+    return (
+        statistics.median(p.lat for p in geo),  # type: ignore[misc]
+        statistics.median(p.lon for p in geo),  # type: ignore[misc]
+    )
+
+
+def detect_trips(
+    points: list[PhotoPoint],
+    homes: dict[int, tuple[float, float]],
+    default_home: tuple[float, float] | None,
+    params: DetectionParams = DEFAULT_PARAMS,
+) -> list[DetectedGroup]:
+    """Detect multi-day (or day-long) trips away from home.
+
+    *points* must be sorted by timestamp.
+    """
+    if default_home is None:
+        return []
+
+    # Classify each local day: "away" when >= half its geotagged photos are far
+    # from home, "home" otherwise.  Days with no geotagged photos stay unknown.
+    by_day: dict[int, list[tuple[PhotoPoint, float]]] = defaultdict(list)
+    for p in points:
+        if not p.has_geo:
+            continue
+        home = _home_for(p.ts, homes, default_home)
+        assert home is not None
+        dist = haversine_km(home[0], home[1], p.lat, p.lon)  # type: ignore[arg-type]
+        by_day[(p.ts + _utc_offset_s(p.lon)) // _DAY].append((p, dist))
+
+    runs: list[list[int]] = []
+    current: list[int] = []
+    for day in sorted(by_day):
+        entries = by_day[day]
+        n_away = sum(1 for _, d in entries if d >= params.trip_min_distance_km)
+        away = n_away * 2 >= len(entries)
+        if away:
+            if current and day - current[-1] - 1 <= params.trip_max_gap_days:
+                current.append(day)
+            else:
+                if current:
+                    runs.append(current)
+                current = [day]
+        elif current:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+
+    timestamps = [p.ts for p in points]
+    trips: list[DetectedGroup] = []
+    for run in runs:
+        away_pts = [
+            (p, d) for day in run for p, d in by_day[day] if d >= params.trip_min_distance_km
+        ]
+        start_ts = min(p.ts for p, _ in away_pts)
+        end_ts = max(p.ts for p, _ in away_pts)
+        lo = bisect.bisect_left(timestamps, start_ts)
+        hi = bisect.bisect_right(timestamps, end_ts)
+        members = points[lo:hi]
+        if len(members) < params.trip_min_photos:
+            continue
+        clat, clon = _center([p for p, _ in away_pts])
+        trips.append(
+            DetectedGroup(
+                kind="trip",
+                start_ts=start_ts,
+                end_ts=end_ts,
+                asset_ids=[p.asset_id for p in members],
+                center_lat=clat,
+                center_lon=clon,
+                max_distance_km=round(max(d for _, d in away_pts), 1),
+                n_days=run[-1] - run[0] + 1,
+            )
+        )
+    return trips
+
+
+def detect_events(
+    points: list[PhotoPoint],
+    homes: dict[int, tuple[float, float]],
+    default_home: tuple[float, float] | None,
+    params: DetectionParams = DEFAULT_PARAMS,
+) -> list[DetectedGroup]:
+    """Split the timeline at gaps longer than ``event_gap_hours``.
+
+    *points* must be sorted by timestamp.  Segments with fewer than
+    ``event_min_photos`` photos are dropped.
+    """
+    if not points:
+        return []
+    gap = params.event_gap_hours * 3600
+    segments: list[list[PhotoPoint]] = [[points[0]]]
+    for prev, cur in zip(points, points[1:], strict=False):
+        if cur.ts - prev.ts > gap:
+            segments.append([cur])
+        else:
+            segments[-1].append(cur)
+
+    events: list[DetectedGroup] = []
+    for seg in segments:
+        if len(seg) < params.event_min_photos:
+            continue
+        clat, clon = _center(seg)
+        max_dist = None
+        if default_home is not None:
+            dists = []
+            for p in seg:
+                if p.has_geo:
+                    home = _home_for(p.ts, homes, default_home)
+                    assert home is not None
+                    dists.append(haversine_km(home[0], home[1], p.lat, p.lon))  # type: ignore[arg-type]
+            if dists:
+                max_dist = round(max(dists), 1)
+        off = _utc_offset_s(clon)
+        events.append(
+            DetectedGroup(
+                kind="event",
+                start_ts=seg[0].ts,
+                end_ts=seg[-1].ts,
+                asset_ids=[p.asset_id for p in seg],
+                center_lat=clat,
+                center_lon=clon,
+                max_distance_km=max_dist,
+                n_days=(seg[-1].ts + off) // _DAY - (seg[0].ts + off) // _DAY + 1,
+            )
+        )
+    return events
+
+
+def detect(points: list[PhotoPoint], params: DetectionParams = DEFAULT_PARAMS) -> DetectionResult:
+    """Detect trips and events; events inside a trip are nested under it."""
+    pts = sorted(points, key=lambda p: (p.ts, p.asset_id))
+    homes, default_home = estimate_homes(pts, params)
+    trips = detect_trips(pts, homes, default_home, params)
+    events = detect_events(pts, homes, default_home, params)
+
+    standalone: list[DetectedGroup] = []
+    for ev in events:
+        mid = (ev.start_ts + ev.end_ts) // 2
+        parent = next((t for t in trips if t.start_ts <= mid <= t.end_ts), None)
+        if parent is not None:
+            parent.children.append(ev)
+        else:
+            standalone.append(ev)
+    return DetectionResult(trips=trips, events=standalone, homes=homes, default_home=default_home)
+
+
+# ── Naming ────────────────────────────────────────────────────────────────────
+
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def format_date_range(start_ts: int, end_ts: int, lon: float | None = None) -> str:
+    """Compact human date range in (approximate) local time.
+
+    Examples: ``"12 Mar 2024"``, ``"3–9 Jun 2023"``, ``"28 Jun – 2 Jul 2023"``,
+    ``"30 Dec 2023 – 2 Jan 2024"``.
+    """
+    off = _utc_offset_s(lon)
+    a = datetime.fromtimestamp(start_ts + off, tz=UTC)
+    b = datetime.fromtimestamp(end_ts + off, tz=UTC)
+    if a.date() == b.date():
+        return f"{a.day} {_MONTHS[a.month - 1]} {a.year}"
+    if a.year != b.year:
+        return f"{a.day} {_MONTHS[a.month - 1]} {a.year} – {b.day} {_MONTHS[b.month - 1]} {b.year}"
+    if a.month != b.month:
+        return f"{a.day} {_MONTHS[a.month - 1]} – {b.day} {_MONTHS[b.month - 1]} {b.year}"
+    return f"{a.day}–{b.day} {_MONTHS[a.month - 1]} {a.year}"
+
+
+def place_label(places: list[tuple[str | None, str | None, str | None]]) -> str | None:
+    """Summarise a list of ``(city, admin1, country)`` tuples into a short label.
+
+    * One dominant city: ``"Lisbon, Portugal"``
+    * Two notable cities in one country: ``"Lisbon & Porto, Portugal"``
+    * Several countries: ``"Portugal & Spain"`` (up to three)
+
+    A place is "notable" when it accounts for at least 20 % of the photos.
+    """
+    places = [p for p in places if any(p)]
+    if not places:
+        return None
+    n = len(places)
+    countries = Counter(p[2] for p in places if p[2])
+    notable_countries = [c for c, k in countries.most_common() if k / n >= 0.2]
+    if len(notable_countries) > 1:
+        return " & ".join(notable_countries[:3])
+    country = notable_countries[0] if notable_countries else None
+
+    cities = Counter(p[0] for p in places if p[0])
+    notable_cities = [c for c, k in cities.most_common() if k / n >= 0.2][:2]
+    if not notable_cities:
+        regions = Counter(p[1] for p in places if p[1])
+        notable_cities = [r for r, _ in regions.most_common(1)]
+    parts = " & ".join(notable_cities)
+    if parts and country:
+        return f"{parts}, {country}"
+    return parts or country
+
+
+def auto_name(group: DetectedGroup, place: str | None) -> str:
+    """Default display name for a group.
+
+    Trips are named after where they went (``"Lisbon & Porto, Portugal"``);
+    events carry their date too, since many happen in the same home town
+    (``"Berlin · 24 Dec 2024"``).  Without place names, the date alone is used
+    (``"Trip · Jun 2023"`` / ``"Event · 24 Dec 2024"``).
+    """
+    off = _utc_offset_s(group.center_lon)
+    a = datetime.fromtimestamp(group.start_ts + off, tz=UTC)
+    if group.kind == "trip":
+        return place or f"Trip · {_MONTHS[a.month - 1]} {a.year}"
+    day = f"{a.day} {_MONTHS[a.month - 1]} {a.year}"
+    if place:
+        return f"{place.split(',')[0]} · {day}"
+    return f"Event · {day}"
