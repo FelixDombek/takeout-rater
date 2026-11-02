@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from takeout_rater.db.queries import list_geotagged_points, upsert_asset
+from takeout_rater.db.queries import (
+    asset_location,
+    get_asset_by_id,
+    list_geotagged_points,
+    upsert_asset,
+)
 from takeout_rater.db.schema import migrate
 from takeout_rater.ui.app import create_app
 
@@ -92,7 +97,8 @@ def test_map_points_endpoint(geo_conn: sqlite3.Connection, tmp_path: Path) -> No
     assert resp.status_code == 200
     data = resp.json()
     assert data["count"] == 3
-    assert data["total_assets"] == 5
+    assert data["total_assets"] == 5  # trashed excluded
+    assert client.get("/api/map/points?favorited=1").json()["total_assets"] == 1
     assert len(data["ids"]) == len(data["lat"]) == len(data["lon"]) == len(data["t"]) == 3
     fav = client.get("/api/map/points?favorited=1").json()
     assert fav["count"] == 1
@@ -116,3 +122,31 @@ def test_map_static_assets_are_served(tmp_path: Path) -> None:
         "/static/vendor/world/countries-110m.geojson",
     ):
         assert client.get(path).status_code == 200, path
+
+
+def test_map_points_gzip(tmp_path: Path) -> None:
+    conn = _make_db()
+    for i in range(200):
+        _add(conn, f"p{i}", geo_lat=10 + i / 100, geo_lon=20, taken_at=1000 + i)
+    client = TestClient(create_app(tmp_path, conn, db_root=tmp_path))
+    resp = client.get("/api/map/points", headers={"Accept-Encoding": "gzip"})
+    assert resp.headers.get("content-encoding") == "gzip"
+    assert resp.json()["count"] == 200  # transparently decoded by the client
+
+
+def test_asset_location_prefers_geodata_then_exif(geo_conn: sqlite3.Connection) -> None:
+    rows = {r["filename"]: r["id"] for r in geo_conn.execute("SELECT id, filename FROM assets")}
+    assert asset_location(get_asset_by_id(geo_conn, rows["paris.jpg"])) == (48.8566, 2.3522)
+    assert asset_location(get_asset_by_id(geo_conn, rows["exif.jpg"])) == (-33.86, 151.2)
+    assert asset_location(get_asset_by_id(geo_conn, rows["nowhere.jpg"])) is None
+
+
+def test_detail_page_shows_map_link_for_exif_only_location(
+    geo_conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    exif_id = geo_conn.execute("SELECT id FROM assets WHERE filename = 'exif.jpg'").fetchone()[0]
+    client = TestClient(create_app(tmp_path, geo_conn, db_root=tmp_path))
+    resp = client.get(f"/assets/{exif_id}")
+    assert resp.status_code == 200
+    assert f'href="/map?asset={exif_id}"' in resp.text
+    assert "-33.86000" in resp.text

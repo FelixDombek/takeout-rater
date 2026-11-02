@@ -21,7 +21,11 @@
       return v === null ? fallback : JSON.parse(v);
     } catch (e) { return fallback; }
   }
+  // Settings that came from the URL (?from=&to=) are not persisted until the
+  // user changes the time controls themselves.
+  var ephemeralTime = false;
   function saveSetting(key, value) {
+    if (ephemeralTime && (key === 'mode' || key === 'windowDays')) return;
     try { window.localStorage.setItem('map.' + key, JSON.stringify(value)); } catch (e) { /* ignore */ }
   }
 
@@ -55,6 +59,20 @@
     drawerZoom: document.getElementById('drawer-zoom'),
     drawerClose: document.getElementById('drawer-close'),
   };
+
+  // The header can wrap onto two lines on narrow windows; size the page to it.
+  var headerEl = document.querySelector('header');
+  function syncHeaderHeight() {
+    if (!headerEl) return;
+    document.documentElement.style.setProperty('--header-h', headerEl.offsetHeight + 'px');
+  }
+  syncHeaderHeight();
+  if (headerEl && window.ResizeObserver) {
+    new ResizeObserver(function () {
+      syncHeaderHeight();
+      if (typeof map !== 'undefined') map.invalidateSize();
+    }).observe(headerEl);
+  }
 
   // ── Map setup ─────────────────────────────────────────────────────────────
   var map = L.map('map', {
@@ -141,7 +159,8 @@
           if (t > tMax) tMax = t;
         }
         if (!isFinite(tMin)) { tMin = 0; tMax = 0; }
-        if (!currentT || currentT < tMin || currentT > tMax) currentT = tMax;
+        if (!hasRange && (!currentT || currentT < tMin || currentT > tMax)) currentT = tMax;
+        histCache = null;
 
         var pct = d.total_assets ? Math.round(100 * n / d.total_assets) : 0;
         els.stats.textContent = n.toLocaleString() + ' of ' + d.total_assets.toLocaleString() +
@@ -179,6 +198,13 @@
     return Math.exp(-0.5 * dt * dt);
   }
 
+  /** Closeness to the chosen date in (0, 1]; used to pick a cell's representative. */
+  function proximity(t) {
+    if (t === null) return 0;
+    var dt = (t - currentT) / (settings.windowDays * DAY);
+    return Math.exp(-0.5 * dt * dt);
+  }
+
   function syncTimeControls() {
     els.time.value = timeToSlider(currentT);
     els.timebar.classList.toggle('is-off', settings.mode === 'off');
@@ -197,6 +223,8 @@
   }
 
   // ── Histogram of photos over time (with the active window shaded) ─────────
+  var histCache = null; // { bins, counts, max }
+
   function drawHistogram() {
     var canvas = els.hist;
     var dpr = window.devicePixelRatio || 1;
@@ -211,14 +239,19 @@
     if (!data || tMax <= tMin) return;
 
     var bins = Math.max(10, Math.min(400, Math.floor(w / 3)));
-    var counts = new Array(bins).fill(0);
     var span = tMax - tMin;
-    for (var i = 0; i < data.n; i++) {
-      var t = data.t[i];
-      if (t === null) continue;
-      counts[Math.min(bins - 1, Math.floor((t - tMin) / span * bins))]++;
+    // Binning touches every point, so only redo it when the data or width changes.
+    if (!histCache || histCache.bins !== bins) {
+      var cnt = new Array(bins).fill(0);
+      for (var i = 0; i < data.n; i++) {
+        var t = data.t[i];
+        if (t === null) continue;
+        cnt[Math.min(bins - 1, Math.floor((t - tMin) / span * bins))]++;
+      }
+      histCache = { bins: bins, counts: cnt, max: Math.max.apply(null, cnt) || 1 };
     }
-    var maxC = Math.max.apply(null, counts) || 1;
+    var counts = histCache.counts;
+    var maxC = histCache.max;
 
     if (settings.mode !== 'off') {
       var ww = settings.windowDays * DAY;
@@ -259,6 +292,7 @@
     markers.forEach(function (m) { map.removeLayer(m.marker); });
     markers.clear();
     lastCells.clear();
+    selectedKey = null; // cell keys change with zoom / thumbnail size
   }
 
   function cellSize() { return settings.size + 10; }
@@ -293,7 +327,7 @@
       if (wgt > c.maxW) c.maxW = wgt;
       // Representative: closest in time when a date is chosen, otherwise newest;
       // favorites win ties.  Points are sorted by time, so ">=" keeps the newest.
-      var score = (settings.mode === 'off' ? 0 : wgt * 10) + data.fav[i] * 0.5 +
+      var score = (settings.mode === 'off' ? 0 : proximity(data.t[i]) * 10) + data.fav[i] * 0.5 +
         (data.ids[i] === targetId ? 100 : 0);
       if (score >= c.bestScore) { c.bestScore = score; c.best = i; }
     }
@@ -453,7 +487,17 @@
 
   document.querySelectorAll('input[name=time-mode]').forEach(function (r) {
     r.checked = r.value === settings.mode;
-    r.addEventListener('change', function () { if (r.checked) setMode(r.value); });
+    r.addEventListener('change', function () {
+      if (!r.checked) return;
+      if (ephemeralTime && els.windowSel.selectedIndex >= 5) {
+        // Leaving a deep-link window: fall back to a regular window option.
+        settings.windowDays = 91;
+        els.windowSel.value = '91';
+      }
+      ephemeralTime = false;
+      saveSetting('windowDays', settings.windowDays);
+      setMode(r.value);
+    });
   });
 
   els.time.addEventListener('input', function () {
@@ -464,9 +508,15 @@
   });
 
   els.windowSel.value = String(settings.windowDays);
-  if (els.windowSel.value !== String(settings.windowDays)) els.windowSel.value = '91';
+  if (els.windowSel.value !== String(settings.windowDays)) {
+    // Stored value is not one of the options (e.g. an old deep-link window).
+    settings.windowDays = 91;
+    els.windowSel.value = '91';
+  }
   els.windowSel.addEventListener('change', function () {
     settings.windowDays = Number(els.windowSel.value);
+    ephemeralTime = false;
+    saveSetting('mode', settings.mode);
     saveSetting('windowDays', settings.windowDays);
     syncTimeControls();
     scheduleRender();
@@ -536,6 +586,7 @@
   var rangeTo = Number(params.get('to'));
   var hasRange = rangeFrom > 0 && rangeTo >= rangeFrom;
   if (hasRange) {
+    ephemeralTime = true;
     settings.mode = 'filter';
     // Keep the exact interval: the window is a (possibly fractional) half-span in days.
     settings.windowDays = Math.max(1, rangeTo - rangeFrom) / 2 / DAY;
@@ -553,6 +604,14 @@
 
   applyTiles();
   loadPoints().then(function () {
+    // A duplicate that isn't its group's representative is hidden by dedupe;
+    // show duplicates for this visit (not saved) so the linked photo appears.
+    if (data && targetId !== null && settings.dedupe && data.ids.indexOf(targetId) < 0) {
+      settings.dedupe = false;
+      els.dedupe.checked = false;
+      return loadPoints();
+    }
+  }).then(function () {
     if (!data || data.n === 0) return;
     if (targetId !== null) {
       var idx = data.ids.indexOf(targetId);

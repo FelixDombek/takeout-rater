@@ -369,6 +369,22 @@ def update_asset_sha256(conn: sqlite3.Connection, asset_id: int, sha256: str) ->
     conn.commit()
 
 
+def _deduped_assets_sql(where: str) -> str:
+    """Return a subquery selecting one row per SHA-256 group from ``assets``.
+
+    *where* (a full ``WHERE …`` clause or ``""``) is applied **before** ranking,
+    so each group's representative is its lowest-``id`` row that passes the
+    filters.  Assets without a SHA-256 are each their own group.
+    """
+    return (
+        f"(SELECT * FROM ("
+        f"  SELECT *, ROW_NUMBER() OVER ("
+        f"    PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id"
+        f"  ) AS _rn FROM assets {where}"
+        f") WHERE _rn = 1)"
+    )
+
+
 def list_assets_deduped(
     conn: sqlite3.Connection,
     *,
@@ -419,15 +435,7 @@ def list_assets_deduped(
     # are partitioned individually via COALESCE with a unique per-row key.
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     sql = (  # noqa: S608
-        f"SELECT * FROM ("
-        f"  SELECT *, ROW_NUMBER() OVER ("
-        f"    PARTITION BY COALESCE(sha256, CAST(id AS TEXT))"
-        f"    ORDER BY id"
-        f"  ) AS _rn"
-        f"  FROM assets {where}"
-        f") WHERE _rn = 1"
-        f" ORDER BY {order_by}"
-        f" LIMIT ? OFFSET ?"
+        f"SELECT * FROM {_deduped_assets_sql(where)} ORDER BY {order_by} LIMIT ? OFFSET ?"
     )
     params.extend([limit, offset])
     rows = conn.execute(sql, params).fetchall()
@@ -605,6 +613,58 @@ def count_assets_newer_than(
 # ---------------------------------------------------------------------------
 
 
+_HAS_GEO = "(geo_lat IS NOT NULL AND geo_lon IS NOT NULL AND (geo_lat != 0 OR geo_lon != 0))"
+_HAS_EXIF_GEO = (
+    "(geo_exif_lat IS NOT NULL AND geo_exif_lon IS NOT NULL"
+    " AND (geo_exif_lat != 0 OR geo_exif_lon != 0))"
+)
+
+
+def _map_filter_sql(favorited: bool | None, *, with_location: bool) -> tuple[str, list[Any]]:
+    """Return the ``WHERE`` clause and params shared by the map queries."""
+    conditions: list[str] = ["COALESCE(trashed, 0) = 0"]
+    params: list[Any] = []
+    if favorited is not None:
+        conditions.append("COALESCE(favorited, 0) = ?")
+        params.append(1 if favorited else 0)
+    if with_location:
+        conditions.append(f"({_HAS_GEO} OR {_HAS_EXIF_GEO})")
+    return "WHERE " + " AND ".join(conditions), params
+
+
+def count_map_candidates(
+    conn: sqlite3.Connection,
+    *,
+    favorited: bool | None = None,
+    deduped: bool = True,
+) -> int:
+    """Count the assets the map could show under these filters, with or without a location.
+
+    Used for the "N of M photos have a location" figure, so M reflects the same
+    favorite / duplicate filters as :func:`list_geotagged_points`.
+    """
+    where, params = _map_filter_sql(favorited, with_location=False)
+    source = _deduped_assets_sql(where) if deduped else f"(SELECT * FROM assets {where})"
+    return conn.execute(f"SELECT COUNT(*) FROM {source}", params).fetchone()[0]  # noqa: S608
+
+
+def _valid_coords(lat: float | None, lon: float | None) -> bool:
+    return lat is not None and lon is not None and (lat != 0 or lon != 0)
+
+
+def asset_location(asset: Any) -> tuple[float, float] | None:
+    """Return the ``(lat, lon)`` the map uses for *asset*, or ``None``.
+
+    Same rule as :func:`list_geotagged_points`: ``geoData`` first, then
+    ``geoDataExif``; ``0.0/0.0`` means "no location".
+    """
+    if _valid_coords(asset.geo_lat, asset.geo_lon):
+        return asset.geo_lat, asset.geo_lon
+    if _valid_coords(asset.geo_exif_lat, asset.geo_exif_lon):
+        return asset.geo_exif_lat, asset.geo_exif_lon
+    return None
+
+
 def list_geotagged_points(
     conn: sqlite3.Connection,
     *,
@@ -629,33 +689,14 @@ def list_geotagged_points(
         List of ``(id, lat, lon, taken_at, favorited)`` tuples, where
         ``favorited`` is ``0`` or ``1``.
     """
-    conditions: list[str] = ["COALESCE(trashed, 0) = 0"]
-    params: list[Any] = []
-    if favorited is not None:
-        conditions.append("COALESCE(favorited, 0) = ?")
-        params.append(1 if favorited else 0)
-    has_geo = "(geo_lat IS NOT NULL AND geo_lon IS NOT NULL AND (geo_lat != 0 OR geo_lon != 0))"
-    has_exif = (
-        "(geo_exif_lat IS NOT NULL AND geo_exif_lon IS NOT NULL"
-        " AND (geo_exif_lat != 0 OR geo_exif_lon != 0))"
-    )
-    conditions.append(f"({has_geo} OR {has_exif})")
-    # Filters are applied *before* picking a duplicate group's representative,
-    # so a group keeps an eligible copy even if its lowest-id copy is filtered out.
-    where = " AND ".join(conditions)
-    source = f"(SELECT * FROM assets WHERE {where})"
-    if deduped:
-        source = (
-            f"(SELECT * FROM ("
-            f"  SELECT *, ROW_NUMBER() OVER ("
-            f"    PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id"
-            f"  ) AS _rn FROM assets WHERE {where}"
-            f") WHERE _rn = 1)"
-        )
+    where, params = _map_filter_sql(favorited, with_location=True)
+    # Filters run before picking a duplicate group's representative, so a group
+    # keeps an eligible copy even if its lowest-id copy is filtered out.
+    source = _deduped_assets_sql(where) if deduped else f"(SELECT * FROM assets {where})"
     sql = (  # noqa: S608
         f"SELECT id,"
-        f" CASE WHEN {has_geo} THEN geo_lat ELSE geo_exif_lat END AS lat,"
-        f" CASE WHEN {has_geo} THEN geo_lon ELSE geo_exif_lon END AS lon,"
+        f" CASE WHEN {_HAS_GEO} THEN geo_lat ELSE geo_exif_lat END AS lat,"
+        f" CASE WHEN {_HAS_GEO} THEN geo_lon ELSE geo_exif_lon END AS lon,"
         f" taken_at, COALESCE(favorited, 0) AS fav"
         f" FROM {source}"
         f" ORDER BY taken_at, id"

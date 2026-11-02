@@ -1,6 +1,8 @@
 /* Map view (templates/map.html) */
 
-.sidebar-main.map-main { padding: 0; height: calc(100vh - 52px); }
+.sidebar-main.map-main { padding: 0; height: calc(100vh - var(--header-h, 52px)); overflow: hidden; }
+.sidebar-layout:has(.map-main) { min-height: 0; }
+.app-sidebar.map-sidebar { top: var(--header-h, 52px); height: calc(100vh - var(--header-h, 52px)); }
 .map-shell { display: flex; flex-direction: column; height: 100%; }
 
 .map-check { display: flex; gap: 0.4rem; align-items: flex-start; font-size: 0.85rem; margin-bottom: 0.35rem; cursor: pointer; }
