@@ -87,8 +87,10 @@ def _decode_workers() -> int:
 def preprocess_image(path: Path) -> Any:
     """Decode *path* and return a ``(384, 384, 3)`` ``uint8`` array.
 
-    Matches ``SiglipImageProcessor``'s resize step for this model (direct
-    resize to 384×384 with bicubic resampling, no crop).  Rescaling and
+    Matches the PIL-based ``SiglipImageProcessor`` the head was trained with
+    (direct resize to 384×384 with PIL bicubic resampling, no crop).  Note that
+    transformers 5 defaults to a torchvision backend whose resize differs
+    slightly; this function deliberately keeps the PIL behaviour.  Rescaling and
     normalisation (``x / 255``, mean 0.5, std 0.5) are applied later on the
     device by :func:`normalize_pixels`.
 

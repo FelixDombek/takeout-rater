@@ -162,8 +162,14 @@ def test_preprocessing_matches_siglip_image_processor(tmp_path: Path) -> None:
     path = tmp_path / "noise.png"
     Image.fromarray(rng.integers(0, 256, (300, 512, 3), dtype=np.uint8)).save(path)
 
+    # The head was trained with the PIL-based processor (transformers 4.x).
+    # transformers 5 defaults to a torchvision backend whose bicubic resize
+    # differs slightly, so compare against the PIL backend explicitly.
+    processor_cls = getattr(transformers, "SiglipImageProcessorPil", None)
+    if processor_cls is None:
+        processor_cls = transformers.SiglipImageProcessor
     # Same settings as google/siglip-so400m-patch14-384's preprocessor_config.json.
-    processor = transformers.SiglipImageProcessor(
+    processor = processor_cls(
         do_resize=True,
         size={"height": 384, "width": 384},
         resample=3,
