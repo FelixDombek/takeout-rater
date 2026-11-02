@@ -127,6 +127,16 @@ def _job_status_dict(p: JobProgress) -> dict:
     }
 
 
+def _invalidate_clip_caches(app_state: object) -> None:
+    """Drop the cached CLIP L/14 search matrix and 3-D embedding map."""
+    from takeout_rater.api.search import invalidate_search_indexes
+    from takeout_rater.db.queries import CLIP_L14_MODEL_KEY
+
+    invalidate_search_indexes(app_state, CLIP_L14_MODEL_KEY)
+    if hasattr(app_state, "clip_embedding_map"):
+        app_state.clip_embedding_map = None  # type: ignore[attr-defined]
+
+
 def _require_db(request: Request) -> None:
     if request.app.state.db_conn is None:
         raise HTTPException(status_code=503, detail="Library not configured.")
@@ -343,6 +353,9 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
             progress.done = True
         finally:
             worker_conn.close()
+            # CLIP L/14 embeddings may have been written (even on error or
+            # cancel); drop the cached search matrix so the next search reloads.
+            _invalidate_clip_caches(app.state)
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-indexer")
     thread.start()
@@ -398,6 +411,26 @@ def cancel_index_job(request: Request) -> JSONResponse:
     return JSONResponse({"status": "cancelling"})
 
 
+# ---------------------------------------------------------------------------
+# POST /api/jobs/embed/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/embed/cancel")
+def cancel_embed_job(request: Request) -> JSONResponse:
+    """Request cancellation of the running embed job (``404`` if none is running).
+
+    Embeddings already written are kept; restarting the job resumes from there.
+    """
+    jobs = _get_jobs(request.app)
+    p = jobs.get("embed")
+    if p is None or not p.running:
+        raise HTTPException(status_code=404, detail="No embed job is currently running.")
+    p.cancel_event.set()
+    return JSONResponse({"status": "cancelling"})
+
+
+# ---------------------------------------------------------------------------
 # GET /api/jobs/scorers
 # ---------------------------------------------------------------------------
 
@@ -1286,6 +1319,9 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             progress.done = True
         finally:
             worker_conn.close()
+            # CLIP L/14 embeddings may have been written (even on error or
+            # cancel); drop the cached search matrix so the next search reloads.
+            _invalidate_clip_caches(request.app.state)
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-rescan")
     thread.start()
@@ -1298,16 +1334,30 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+class _EmbedStartBody(BaseModel):
+    model: str = "clip-vit-l-14"  # a key from takeout_rater.embeddings.search_backbones
+
+
 @router.post("/api/jobs/embed/start")
-def start_embed_job(request: Request) -> JSONResponse:
-    """Start a background CLIP embedding computation job.
+def start_embed_job(request: Request, body: _EmbedStartBody | None = None) -> JSONResponse:
+    """Start a background image-embedding job for one search backbone.
 
-    Computes CLIP ViT-L/14 image embeddings for all assets that don't yet
-    have one stored in ``clip_embeddings``.  Embeddings are used by the
-    semantic search feature.
+    Computes embeddings from thumbnails for every asset that has none stored
+    for ``body.model``.  The default, ``clip-vit-l-14``, fills
+    ``clip_embeddings`` (normally done during indexing); other backbones such
+    as ``siglip2-so400m-16-256`` fill the model-keyed ``image_embeddings``
+    table used by semantic search.
 
-    Returns ``409`` if an embed job is already running.
+    Returns ``400`` for an unknown model and ``409`` if an embed job is
+    already running.
     """
+    from takeout_rater.db.queries import CLIP_L14_MODEL_KEY
+    from takeout_rater.embeddings import search_backbones
+
+    model_key = body.model if body is not None else CLIP_L14_MODEL_KEY
+    if model_key not in search_backbones.BACKBONES:
+        raise HTTPException(status_code=400, detail=f"Unknown embedding model: {model_key}")
+
     _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
@@ -1315,15 +1365,19 @@ def start_embed_job(request: Request) -> JSONResponse:
     if existing is not None and existing.running:
         raise HTTPException(status_code=409, detail="An embed job is already running.")
 
+    backbone = search_backbones.get_backbone(model_key)
     progress = JobProgress(job_type="embed", running=True, message="Starting…")
+    progress.diagnostics = {"model": model_key}
     jobs["embed"] = progress
 
     def _worker() -> None:
-        import struct
+        from PIL import Image
 
+        from takeout_rater.api.search import invalidate_search_indexes
         from takeout_rater.db.queries import (
             bulk_upsert_clip_embeddings,
-            list_asset_ids_without_embedding,
+            bulk_upsert_image_embeddings,
+            list_asset_ids_without_image_embedding,
         )
         from takeout_rater.indexing.thumbnailer import (
             thumb_path_for_id,
@@ -1331,28 +1385,19 @@ def start_embed_job(request: Request) -> JSONResponse:
 
         worker_conn = _open_worker_conn(request.app)
         thumbs_dir = _configured_thumbs_dir(request.app)
-        batch_size = 64
+        batch_size = 64 if model_key == CLIP_L14_MODEL_KEY else 32
         try:
-            asset_ids = list_asset_ids_without_embedding(worker_conn)
+            asset_ids = list_asset_ids_without_image_embedding(worker_conn, model_key)
             total = len(asset_ids)
             progress.total = total
             if total == 0:
-                progress.message = "All assets already have CLIP embeddings."
+                progress.message = f"All assets already have {backbone.label} embeddings."
                 progress.running = False
                 progress.done = True
-                worker_conn.close()
                 return
-            progress.message = f"Computing embeddings for {total} asset(s)…"
-
-            # Lazy-load CLIP model
-            import torch
-            from PIL import Image
-
-            from takeout_rater.scoring.scorers.clip_backbone import (
-                get_clip_model,
-            )
-
-            clip_model, preprocess, _tokenizer, device = get_clip_model()
+            progress.message = f"Loading {backbone.label}…"
+            backbone.loader()  # load (and download) the model before the first batch
+            progress.message = f"Computing {backbone.label} embeddings for {total} asset(s)…"
 
             embedded = 0
             for batch_start in range(0, total, batch_size):
@@ -1361,63 +1406,33 @@ def start_embed_job(request: Request) -> JSONResponse:
 
                 batch_ids = asset_ids[batch_start : batch_start + batch_size]
 
-                # Load and preprocess thumbnails
-                valid_pairs: list[tuple[int, Path]] = []
+                ids_in_batch: list[int] = []
+                images = []
                 for aid in batch_ids:
                     thumb = thumb_path_for_id(thumbs_dir, aid)
-                    if thumb.exists():
-                        valid_pairs.append((aid, thumb))
-
-                if not valid_pairs:
-                    embedded += len(batch_ids)
-                    progress.processed = embedded
-                    continue
-
-                # Preprocess images
-                tensors = []
-                failed: set[int] = set()
-                for i, (_aid, path) in enumerate(valid_pairs):
+                    if not thumb.exists():
+                        continue
                     try:
-                        img = Image.open(path).convert("RGB")
-                        tensors.append(preprocess(img))
+                        with Image.open(thumb) as img:
+                            images.append(img.convert("RGB"))
+                        ids_in_batch.append(aid)
                     except (OSError, ValueError):
-                        failed.add(i)
-                        tensors.append(None)
+                        continue
 
-                # Filter to valid tensors only
-                valid_items = [
-                    (valid_pairs[i][0], tensors[i])
-                    for i in range(len(valid_pairs))
-                    if i not in failed and tensors[i] is not None
-                ]
-
-                if valid_items:
-                    ids_in_batch = [item[0] for item in valid_items]
-                    batch_tensor = torch.stack([item[1] for item in valid_items]).to(device)
-
-                    with torch.no_grad():
-                        embeddings = clip_model.encode_image(batch_tensor)
-                        embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
-                        embeddings = embeddings.cpu().float().numpy()
-
-                    # Convert to blob rows
-                    db_rows: list[tuple[int, bytes]] = []
-                    for j, aid in enumerate(ids_in_batch):
-                        blob = struct.pack(f"{embeddings.shape[1]}f", *embeddings[j])
-                        db_rows.append((aid, blob))
-
-                    bulk_upsert_clip_embeddings(worker_conn, db_rows)
+                if images:
+                    embeddings = search_backbones.encode_images(model_key, images)
+                    db_rows = [
+                        (aid, embeddings[j].astype("<f4").tobytes())
+                        for j, aid in enumerate(ids_in_batch)
+                    ]
+                    if model_key == CLIP_L14_MODEL_KEY:
+                        bulk_upsert_clip_embeddings(worker_conn, db_rows)
+                    else:
+                        bulk_upsert_image_embeddings(worker_conn, model_key, db_rows)
 
                 embedded += len(batch_ids)
                 progress.processed = embedded
                 progress.message = f"Computing embeddings… {embedded}\u202f/\u202f{total}"
-
-            # Invalidate the in-memory search index so the next search rebuilds it.
-            if hasattr(request.app.state, "clip_index"):
-                request.app.state.clip_index = None
-            # Invalidate the 3-D embedding map cache so the next visit recomputes.
-            if hasattr(request.app.state, "clip_embedding_map"):
-                request.app.state.clip_embedding_map = None
 
             progress.current_item = ""
             if progress.cancel_event.is_set():
@@ -1434,6 +1449,11 @@ def start_embed_job(request: Request) -> JSONResponse:
             progress.done = True
         finally:
             worker_conn.close()
+            # Drop cached matrices even after an error or cancel: some rows were written.
+            if model_key == CLIP_L14_MODEL_KEY:
+                _invalidate_clip_caches(request.app.state)
+            else:
+                invalidate_search_indexes(request.app.state, model_key)
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-embed")
     thread.start()

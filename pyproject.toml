@@ -21,7 +21,7 @@ dependencies = [
     # Aesthetic scorer (LAION Aesthetic Predictor v2)
     "torch>=2.2",
     "torchvision>=0.17",
-    "open-clip-torch>=2.24",
+    "open-clip-torch>=2.31",  # SigLIP 2 models need >= 2.31
     "onnx>=1.16",
     "onnxscript>=0.1.0",
     "huggingface-hub>=0.20",
