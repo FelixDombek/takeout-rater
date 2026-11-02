@@ -448,6 +448,7 @@ def test_run_index_batches_clip_embeddings(tmp_path: Path, monkeypatch) -> None:
         "takeout_rater.scoring.scorers.clip_backbone.get_clip_model", _fake_get_clip_model
     )
     monkeypatch.setenv("TAKEOUT_RATER_CLIP_ACCELERATOR", "torch")
+    monkeypatch.delenv("TAKEOUT_RATER_CLIP_BATCH_SIZE", raising=False)
 
     progress = run_index(photos_root, conn, db_root=db_root)
 
@@ -462,7 +463,66 @@ def test_run_index_batches_clip_embeddings(tmp_path: Path, monkeypatch) -> None:
     assert progress.diagnostics["clip_batch_last_size"] >= 1
     assert progress.diagnostics["clip_batch_inference_last_seconds"] >= 0
     assert progress.diagnostics["clip_batch_inference_max_seconds"] >= 0
-    assert progress.diagnostics["clip_image_queue_max"] == 128
+    assert progress.diagnostics["clip_image_queue_max"] == max(
+        128, progress.diagnostics["clip_preprocess_workers"] * 8
+    )
     assert progress.diagnostics["clip_tensor_queue_max"] >= 1
     assert "clip_inference_seconds" in progress.diagnostics
     conn.close()
+
+
+def test_slow_onnx_guard_ignores_warmup_batch() -> None:
+    from takeout_rater.indexing.run import _SlowOnnxBatchGuard
+
+    guard = _SlowOnnxBatchGuard(seconds_per_batch=10, strikes=1, reference_batch_size=128)
+    # A very slow first batch is warm-up and must never trigger the fallback.
+    assert guard.observe(60.0, 128) is False
+    assert guard.observe(11.0, 128) is True
+
+
+def test_slow_onnx_guard_needs_consecutive_strikes() -> None:
+    from takeout_rater.indexing.run import _SlowOnnxBatchGuard
+
+    guard = _SlowOnnxBatchGuard(seconds_per_batch=10, strikes=3, reference_batch_size=128)
+    assert guard.observe(1.0, 128) is False  # warm-up
+    assert guard.observe(12.0, 128) is False
+    assert guard.observe(12.0, 128) is False
+    assert guard.observe(2.0, 128) is False  # a fast batch resets the streak
+    assert guard.streak == 0
+    assert guard.observe(12.0, 128) is False
+    assert guard.observe(12.0, 128) is False
+    assert guard.observe(12.0, 128) is True
+
+
+def test_slow_onnx_guard_scales_limit_with_batch_size() -> None:
+    from takeout_rater.indexing.run import _SlowOnnxBatchGuard
+
+    guard = _SlowOnnxBatchGuard(seconds_per_batch=10, strikes=1, reference_batch_size=128)
+    assert guard.limit_for(16) == 10.0  # small batches keep the base limit
+    assert guard.limit_for(512) == 40.0
+    guard.observe(1.0, 512)  # warm-up
+    assert guard.observe(30.0, 512) is False
+    assert guard.observe(41.0, 512) is True
+
+
+def test_slow_onnx_guard_clamps_settings() -> None:
+    from takeout_rater.indexing.run import _SlowOnnxBatchGuard
+
+    guard = _SlowOnnxBatchGuard(seconds_per_batch=0, strikes=0, reference_batch_size=0)
+    assert guard.seconds_per_batch == 1.0
+    assert guard.strikes == 1
+    assert guard.reference_batch_size == 1
+
+
+def test_env_number_helpers_fall_back_on_bad_values(monkeypatch) -> None:
+    from takeout_rater.indexing.run import _env_float, _env_int
+
+    monkeypatch.setenv("TAKEOUT_RATER_TEST_NUM", "10s")
+    assert _env_float("TAKEOUT_RATER_TEST_NUM", 10.0) == 10.0
+    assert _env_int("TAKEOUT_RATER_TEST_NUM", 3) == 3
+    monkeypatch.setenv("TAKEOUT_RATER_TEST_NUM", "2.5")
+    assert _env_float("TAKEOUT_RATER_TEST_NUM", 10.0) == 2.5
+    monkeypatch.setenv("TAKEOUT_RATER_TEST_NUM", "4")
+    assert _env_int("TAKEOUT_RATER_TEST_NUM", 3) == 4
+    monkeypatch.delenv("TAKEOUT_RATER_TEST_NUM")
+    assert _env_int("TAKEOUT_RATER_TEST_NUM", 3) == 3
