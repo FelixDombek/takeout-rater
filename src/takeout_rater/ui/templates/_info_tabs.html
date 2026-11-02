@@ -1,5 +1,5 @@
 {#
-  Shared macro for the Scores / JSON / EXIF / pHash / CLIP tab panel.
+  Shared macro for the Scores / Text / JSON / EXIF / pHash / CLIP tab panel.
 
   Rendered with lb-* class names so lightbox.js can handle tab switching and
   content rendering (pHash canvas, CLIP embedding canvas, CLIP words) in both
@@ -13,12 +13,15 @@
   phash_hex    : str | None  – hex-encoded dhash (omits pHash tab when falsy)
   asset_id     : int          – asset database ID
   clip_job_url : str          – URL for the "run CLIP embed" link (default /clip)
+  ocr          : dict | None  – stored OCR row (text, n_lines, mean_score, …) or None
 #}
-{% macro info_tabs(scores, sidecar_json, exif_data, phash_hex, asset_id, clip_job_url='/clip') %}
+{% macro info_tabs(scores, sidecar_json, exif_data, phash_hex, asset_id, clip_job_url='/clip', ocr=None) %}
 <div class="lb-info-tabs">
   <div class="lb-tab-bar" role="tablist">
     <button class="lb-tab-btn active" role="tab" aria-selected="true"
             data-tab="scores">Scores</button>
+    <button class="lb-tab-btn" role="tab" aria-selected="false"
+            data-tab="ocr">Text</button>
     <button class="lb-tab-btn" role="tab" aria-selected="false"
             data-tab="json">JSON</button>
     <button class="lb-tab-btn" role="tab" aria-selected="false"
@@ -47,6 +50,22 @@
     </table>
     {% else %}
     <p class="lb-empty-note">No scores recorded yet.</p>
+    {% endif %}
+  </div>
+
+  {# Text (OCR) tab #}
+  <div class="lb-tab-panel" data-panel="ocr">
+    {% if ocr and ocr.text %}
+    <pre class="lb-sidecar-pre lb-ocr-text">{{ ocr.text }}</pre>
+    <p class="lb-empty-note">
+      {{ ocr.n_lines }} line{{ 's' if ocr.n_lines != 1 else '' }} read from the {{ ocr.source }}
+      {%- if ocr.mean_score is not none %} · mean confidence {{ "%.2f"|format(ocr.mean_score) }}{% endif %}
+      · <a href="/search?mode=text">Search text</a>
+    </p>
+    {% elif ocr %}
+    <p class="lb-empty-note">No text was found in this photo.</p>
+    {% else %}
+    <p class="lb-empty-note">Not read yet. Run OCR on the <a href="/search?mode=text">Search page</a> to find text in photos.</p>
     {% endif %}
   </div>
 
