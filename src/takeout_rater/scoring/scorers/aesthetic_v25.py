@@ -247,17 +247,25 @@ class AestheticV25Scorer(BaseScorer):
         import torch
 
         try:
-            with torch.inference_mode():
-                batch = pixels_uint8.to(self._device, non_blocking=True)
-                pixel_values = normalize_pixels(batch, self._dtype)
-                logits = self._model(pixel_values=pixel_values, return_dict=True).logits
-                return logits.float().reshape(-1).cpu().tolist()
+            return self._forward_once(pixels_uint8)
         except torch.cuda.OutOfMemoryError:
             if pixels_uint8.shape[0] <= 1:
                 raise
-            torch.cuda.empty_cache()
-            half = pixels_uint8.shape[0] // 2
-            return self._forward(pixels_uint8[:half]) + self._forward(pixels_uint8[half:])
+        # Retry outside the ``except`` block: the handled exception's traceback
+        # (and the failed attempt's device tensors in its frames) is released
+        # once the handler exits, so empty_cache() can actually free them.
+        torch.cuda.empty_cache()
+        half = pixels_uint8.shape[0] // 2
+        return self._forward(pixels_uint8[:half]) + self._forward(pixels_uint8[half:])
+
+    def _forward_once(self, pixels_uint8: Any) -> list[float]:
+        import torch
+
+        with torch.inference_mode():
+            batch = pixels_uint8.to(self._device, non_blocking=True)
+            pixel_values = normalize_pixels(batch, self._dtype)
+            logits = self._model(pixel_values=pixel_values, return_dict=True).logits
+            return logits.float().reshape(-1).cpu().tolist()
 
     def score_batch(
         self,
