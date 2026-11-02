@@ -53,6 +53,7 @@ _JOB_TYPES = (
     "embed",
     "detect_faces",
     "cluster_faces",
+    "geocode",
 )
 
 
@@ -343,6 +344,9 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
                 progress.message = f"Indexing cancelled — {result.indexed} photo(s) processed."
             else:
                 progress.message = f"Indexed {result.indexed} photo(s)."
+                named = _geocode_after_index(worker_conn, progress, jobs)
+                if named:
+                    progress.message += f" Added place names for {named} photo(s)."
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001
@@ -359,6 +363,34 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-indexer")
     thread.start()
+
+
+def _geocode_after_index(
+    conn: sqlite3.Connection, progress: JobProgress, jobs: dict[str, JobProgress]
+) -> int:
+    """Look up place names for new or moved photos after an index or rescan run.
+
+    Returns the number of photos that got a place name.  Skipped when a manual
+    place-name job is already running; honours the calling job's cancel
+    button; never fails the calling job.  The caller's ``message`` is restored
+    afterwards so its final status line is kept.
+    """
+    manual = jobs.get("geocode")
+    if manual is not None and manual.running:
+        return 0
+    saved_message = progress.message
+    try:
+        from takeout_rater.geo.library import geocode_library
+
+        progress.message = "Looking up place names\u2026"
+        return geocode_library(
+            conn, missing_only=True, cancel_check=progress.cancel_event.is_set
+        ).named
+    except Exception:  # noqa: BLE001
+        _log.exception("Place-name lookup after indexing failed")
+        return 0
+    finally:
+        progress.message = saved_message
 
 
 # ---------------------------------------------------------------------------
@@ -1314,6 +1346,11 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 extras.append(f"{phash_ok} pHash(es) computed")
             if clip_ok:
                 extras.append(f"{clip_ok} CLIP embedding(s) computed")
+            if not progress.cancel_event.is_set():
+                # Rescan re-reads sidecars, so coordinates may have changed.
+                named = _geocode_after_index(worker_conn, progress, jobs)
+                if named:
+                    extras.append(f"{named} place name(s) updated")
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
                 f" ({', '.join(extras)})" if extras else ""
             )
@@ -1873,4 +1910,80 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-cluster-faces")
     thread.start()
 
+    return JSONResponse({"status": "started"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/geocode/start
+# ---------------------------------------------------------------------------
+
+
+class _GeocodeStartBody(BaseModel):
+    mode: str = "missing_only"  # "missing_only" | "full"
+
+
+@router.post("/api/jobs/geocode/start")
+def start_geocode_job(request: Request, body: _GeocodeStartBody | None = None) -> JSONResponse:
+    """Start a background job that adds place names from GPS coordinates.
+
+    Uses an offline GeoNames gazetteer (no network access) to turn each
+    asset's ``geo_lat`` / ``geo_lon`` (or EXIF fallback) into country, region
+    and city, stored in ``asset_places``.  ``mode="missing_only"`` (default)
+    only processes assets without a stored place or whose coordinates changed;
+    ``mode="full"`` recomputes everything.
+
+    Returns ``409`` if a geocode job is already running.
+    """
+    _require_db(request)
+    mode = body.mode if body is not None else "missing_only"
+    if mode not in ("missing_only", "full"):
+        raise HTTPException(status_code=400, detail=f"Unknown mode: {mode!r}")
+    jobs = _get_jobs(request.app)
+    existing = jobs.get("geocode")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="A place-name job is already running.")
+
+    progress = JobProgress(job_type="geocode", running=True, message="Loading place data\u2026")
+    jobs["geocode"] = progress
+    app = request.app
+
+    def _worker() -> None:
+        from takeout_rater.geo.library import geocode_library
+
+        worker_conn = _open_worker_conn(app)
+        try:
+
+            def _cb(done: int, total: int) -> None:
+                progress.processed = done
+                progress.total = total
+                progress.message = f"Looking up place names\u2026 {done}\u202f/\u202f{total}"
+
+            result = geocode_library(
+                worker_conn,
+                missing_only=(mode == "missing_only"),
+                on_progress=_cb,
+                cancel_check=progress.cancel_event.is_set,
+            )
+            if result.cancelled:
+                progress.message = f"Cancelled — {result.processed} photo(s) processed."
+            elif result.processed == 0:
+                progress.message = (
+                    f"All {result.candidates} geotagged photo(s) already have place names."
+                )
+            else:
+                progress.message = (
+                    f"Done — {result.named} of {result.processed} photo(s) got a place name "
+                    f"({result.candidates} geotagged in total)."
+                )
+            progress.running = False
+            progress.done = True
+        except Exception as exc:  # noqa: BLE001
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+            progress.running = False
+            progress.done = True
+        finally:
+            worker_conn.close()
+
+    threading.Thread(target=_worker, daemon=True, name="takeout-rater-geocode").start()
     return JSONResponse({"status": "started"})
