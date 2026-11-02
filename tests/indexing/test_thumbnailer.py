@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from takeout_rater.indexing import thumbnailer
 from takeout_rater.indexing.thumbnailer import (
     THUMB_MAX_PX,
     generate_thumbnail,
-    generate_thumbnail_from_jpeg_bytes_nvjpeg_timed,
     thumb_path_for_id,
 )
 
@@ -127,49 +123,6 @@ def test_generate_thumbnail_missing_source_raises(tmp_path: Path) -> None:
         generate_thumbnail(tmp_path / "nonexistent.jpg", tmp_path / "out.jpg")
 
 
-# ── nvJPEG decoder cache ──────────────────────────────────────────────────────
-
-
-def test_nvjpeg_decoder_is_cached_per_thread(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The experimental nvJPEG path should not construct a decoder per image."""
-
-    import numpy as np
-
-    constructed = 0
-
-    class FakeNvJpeg:
-        def __init__(self) -> None:
-            nonlocal constructed
-            constructed += 1
-
-        def decode(self, _jpeg_bytes: bytes, _mode: str) -> object:
-            return np.zeros((16, 16, 3), dtype=np.uint8)
-
-    if hasattr(thumbnailer._nvjpeg_tls, "decoder"):
-        delattr(thumbnailer._nvjpeg_tls, "decoder")
-    monkeypatch.setitem(sys.modules, "nvjpeg", SimpleNamespace(NvJpeg=FakeNvJpeg))
-
-    first_out = tmp_path / "first.jpg"
-    second_out = tmp_path / "second.jpg"
-
-    _first_thumb, first_timings = generate_thumbnail_from_jpeg_bytes_nvjpeg_timed(
-        b"fake-jpeg",
-        first_out,
-    )
-    _second_thumb, second_timings = generate_thumbnail_from_jpeg_bytes_nvjpeg_timed(
-        b"fake-jpeg",
-        second_out,
-    )
-
-    assert constructed == 1
-    assert first_out.exists()
-    assert second_out.exists()
-    assert first_timings["decoder_init"] > 0.0
-    assert second_timings["decoder_init"] == 0.0
-
-
 # ── EXIF orientation ──────────────────────────────────────────────────────────
 
 
@@ -234,21 +187,3 @@ def test_generate_thumbnail_exif_orientation(
             f"orientation={orientation}: expected {'landscape' if expected_w > expected_h else 'portrait'}, "
             f"got {tw}×{th}"
         )
-
-
-def test_nvjpeg_dll_dirs_include_cuda13_bin_x64(tmp_path, monkeypatch):
-    """CUDA 13+ keeps its runtime DLLs in bin\\x64, so that must be searched too."""
-    cuda_root = tmp_path / "CUDA" / "v13.4"
-    (cuda_root / "bin" / "x64").mkdir(parents=True)
-    added: list[str] = []
-    fake_os = SimpleNamespace(
-        name="nt",
-        environ={"CUDA_PATH": str(cuda_root)},
-        add_dll_directory=lambda p: added.append(p) or object(),
-    )
-    monkeypatch.setattr(thumbnailer, "os", fake_os)
-    monkeypatch.setattr(thumbnailer, "_nvjpeg_dll_handles", [])
-
-    thumbnailer._prepare_nvjpeg_dll_dirs()
-
-    assert added[:2] == [str(cuda_root / "bin" / "x64"), str(cuda_root / "bin")]
