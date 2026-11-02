@@ -2568,8 +2568,18 @@ def fold_for_search(text: str) -> str:
         if ch.isascii():
             out.append(ch)
             continue
-        base = unicodedata.normalize("NFD", ch)[0]
-        out.append(base if not unicodedata.combining(base) else ch)
+        decomposed = unicodedata.normalize("NFD", ch)
+        base, marks = decomposed[0], decomposed[1:]
+        # Only strip when the rest is purely combining marks (é → e + ́).  Other
+        # decompositions (e.g. Hangul syllables → jamo) carry meaning: keep them.
+        if (
+            marks
+            and not unicodedata.combining(base)
+            and all(unicodedata.combining(m) for m in marks)
+        ):
+            out.append(base)
+        else:
+            out.append(ch)
     return "".join(out)
 
 

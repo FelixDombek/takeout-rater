@@ -230,7 +230,7 @@
   var isLoadingMore = false;
   var hasMore = false;
   var searchMode = {{ (mode or 'clip')|tojson }};
-  var requestSeq = 0;
+  var searchGeneration = 0;
 
   var MODES = {
     clip: {
@@ -290,7 +290,13 @@
       return;
     }
 
-    var seq = ++requestSeq;
+    // Page 1 starts a new search generation; later pages belong to the current one.
+    if (page === 1) {
+      searchGeneration++;
+      hasMore = false;
+      isLoadingMore = false;
+    }
+    var generation = searchGeneration;
     if (page === 1) {
       statusEl.textContent = 'Searching…';
       statusEl.className = 'search-status loading';
@@ -305,8 +311,8 @@
         return r.text();
       })
       .then(function(html) {
-        if (page === 1 && (seq !== requestSeq || query !== currentQuery || modeAtRequest !== searchMode)) {
-          // Query or mode changed while we were fetching — discard stale results
+        if (generation !== searchGeneration || query !== currentQuery || modeAtRequest !== searchMode) {
+          // A newer search started while we were fetching — discard stale results
           return;
         }
         if (page === 1) {
@@ -354,6 +360,7 @@
         }
       })
       .catch(function(err) {
+        if (generation !== searchGeneration) return;
         statusEl.textContent = '✗ ' + err.message;
         statusEl.className = 'search-status';
         isLoadingMore = false;

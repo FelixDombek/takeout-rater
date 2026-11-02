@@ -150,6 +150,11 @@ class TestOcrQueries:
         # Diacritics are folded both ways: "cafe" finds "Café", "café" finds it too.
         assert [r["asset_id"] for r in search_ocr_text(conn, "cafe")[0]] == [c]
         assert [r["asset_id"] for r in search_ocr_text(conn, "CAFÉ")[0]] == [c]
+        # Non-diacritic decompositions are kept: Hangul syllables don't collapse.
+        from takeout_rater.db.queries import fold_for_search
+
+        assert fold_for_search("가나다") == "가나다"
+        assert fold_for_search("Ångström") == "Angstrom"
         snippet = search_ocr_text(conn, "grosse gro")[0]
         assert snippet == []  # ß is not folded to "ss"
         hit = search_ocr_text(conn, "große")[0][0]
