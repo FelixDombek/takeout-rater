@@ -15,8 +15,9 @@ MLP head (~4 MB) from the project's GitHub repository into the torch hub cache.
 
 License note: the ``aesthetic-predictor-v2-5`` package and its head weights are
 AGPL-3.0.  takeout-rater is GPL-3.0; GPL-3.0 §13 explicitly permits combining
-the two, with the AGPL part keeping its own terms.  Because of the licence the
-package is an optional extra: ``pip install -e .[aesthetic-v25]``.
+the two, with the AGPL part keeping its own terms.  The package is installed
+from PyPI and the weights are downloaded from upstream; nothing AGPL is
+vendored in this repository.
 
 Performance notes (see the 2026-11 performance audit):
 
@@ -68,9 +69,6 @@ _PREFETCH_BATCHES = 2
 #: Clamp range of the ``aesthetic`` metric (matches the declared MetricSpec).
 _MIN_SCORE = 1.0
 _MAX_SCORE = 10.0
-
-#: pip extra that installs this scorer's AGPL-3.0 dependency.
-_EXTRA = "aesthetic-v25"
 
 
 def _infer_batch_size() -> int:
@@ -185,8 +183,7 @@ class AestheticV25Scorer(BaseScorer):
                 "like the LAION aesthetic score but with a newer, stronger model that "
                 "handles everyday photos better. Around 5.5 and up is generally good. "
                 "Slower than LAION; requires a ~1.7 GB model download. "
-                "Model license: AGPL-3.0, so it is an optional install: "
-                "pip install -e .[aesthetic-v25]"
+                "Model license: AGPL-3.0."
             ),
             technical_description=(
                 "Aesthetic Predictor V2.5 (discus0434): MLP head on L2-normalised "
@@ -219,7 +216,7 @@ class AestheticV25Scorer(BaseScorer):
                 ),
             ),
             default_variant_id="siglip_so400m",
-            requires_extras=(_EXTRA,),
+            requires_extras=(),
         )
 
     @classmethod

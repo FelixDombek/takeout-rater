@@ -28,7 +28,7 @@ def test_spec_basics() -> None:
     assert spec.scorer_id == "aesthetic_v25"
     assert spec.default_variant_id == "siglip_so400m"
     assert [v.variant_id for v in spec.variants] == ["siglip_so400m"]
-    assert spec.requires_extras == ("aesthetic-v25",)
+    assert spec.requires_extras == ()
 
 
 def test_metric_is_aesthetic_higher_is_better() -> None:
