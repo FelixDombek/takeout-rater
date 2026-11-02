@@ -188,13 +188,16 @@ def create_app(
         return templates.TemplateResponse("scoring.html", {"request": request})
 
     @app.get("/search", response_class=HTMLResponse)
-    def search_page(request: Request) -> HTMLResponse:
+    def search_page(request: Request, q: str = "", mode: str = "visual") -> HTMLResponse:
         if request.app.state.db_conn is None:
             from fastapi.responses import RedirectResponse as _RR
 
             return _RR(url="/setup")  # type: ignore[return-value]
         templates = request.app.state.templates
-        return templates.TemplateResponse("search.html", {"request": request})
+        return templates.TemplateResponse(
+            "search.html",
+            {"request": request, "query": q, "mode": "text" if mode == "text" else "visual"},
+        )
 
     @app.get("/clip", response_class=HTMLResponse)
     def clip_page(request: Request) -> HTMLResponse:

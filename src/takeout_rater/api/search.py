@@ -10,10 +10,14 @@ Each backbone's embeddings are loaded once into a numpy matrix (via
 ``app.state.search_indexes``, keyed by model.  The cache is dropped by
 :func:`invalidate_search_indexes` when embeddings change.
 
+Text-in-photo search (``mode=text``) uses the SQLite FTS5 index over text
+recognised by the OCR job instead.
+
 Endpoints
 ---------
 GET /api/search            – search by text query, returns ranked asset IDs + scores
 GET /api/search/backbones  – available backbones and how many images each has embedded
+GET /api/ocr/status        – OCR coverage counts for the search page
 """
 
 from __future__ import annotations
@@ -26,11 +30,16 @@ from dataclasses import dataclass
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from markupsafe import Markup, escape
 
 from takeout_rater.db.queries import (
     CLIP_L14_MODEL_KEY,
+    OCR_SNIPPET_END,
+    OCR_SNIPPET_START,
     count_image_embeddings,
+    get_ocr_stats,
     load_embedding_matrix,
+    search_ocr_text,
 )
 from takeout_rater.embeddings import search_backbones
 
@@ -208,12 +217,16 @@ def search_assets(
     page: int = 1,
     partial: str = "0",
     model: str = "auto",
+    mode: str = "visual",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> JSONResponse | HTMLResponse:
     """Search images by text description using embedding cosine similarity.
 
     Query parameters:
     - ``q``: Text query describing the desired images.
+    - ``mode``: ``"visual"`` (default, embedding search; ``"clip"`` is an
+      accepted alias) or ``"text"`` (full-text search over words recognised
+      in the photos by OCR; ``model`` is ignored).
     - ``limit``: Maximum number of results per page (default 50).
     - ``page``: 1-based page number for pagination.
     - ``partial``: ``"1"`` to return an HTML partial of result cards.
@@ -224,6 +237,11 @@ def search_assets(
     ``total`` (number of embedded assets) and ``model`` (the backbone used),
     or an HTML partial when ``partial=1``.
     """
+    if mode not in ("visual", "clip", "text"):
+        raise HTTPException(status_code=400, detail="mode must be 'visual' or 'text'.")
+    if mode == "text":
+        return _search_ocr(request, conn, q, limit=limit, page=page, partial=partial == "1")
+
     templates = request.app.state.templates
     if not q.strip():
         if partial == "1":
@@ -321,3 +339,85 @@ def search_assets(
             "model": model_key,
         }
     )
+
+
+def _snippet_html(snippet: str) -> Markup:
+    """HTML-escape an FTS5 snippet and turn its match sentinels into ``<mark>``."""
+    escaped = str(escape(snippet.replace("\n", " · ")))
+    return Markup(escaped.replace(OCR_SNIPPET_START, "<mark>").replace(OCR_SNIPPET_END, "</mark>"))
+
+
+def _search_ocr(
+    request: Request,
+    conn: sqlite3.Connection,
+    q: str,
+    *,
+    limit: int,
+    page: int,
+    partial: bool,
+) -> JSONResponse | HTMLResponse:
+    """Full-text search over OCR text (``mode=text``)."""
+    stats = get_ocr_stats(conn)
+    limit = max(1, min(limit, 200))
+    page = max(1, page)
+    results, total = ([], 0)
+    if q.strip() and stats["processed"] > 0:
+        results, total = search_ocr_text(conn, q, limit=limit, offset=(page - 1) * limit)
+
+    if partial:
+        from takeout_rater.db.queries import get_asset_by_id
+
+        items = []
+        for r in results:
+            asset = get_asset_by_id(conn, r["asset_id"])
+            if asset is not None:
+                items.append({"asset": asset, "snippet_html": _snippet_html(r["snippet"])})
+        templates = request.app.state.templates
+        return templates.TemplateResponse(
+            "search_results_partial.html",
+            {
+                "request": request,
+                "mode": "text",
+                "results": items,
+                "query": q,
+                "total_embedded": stats["processed"],
+                "total_results": total,
+                "no_ocr": stats["processed"] == 0,
+                "page": page,
+            },
+        )
+
+    return JSONResponse(
+        {
+            "mode": "text",
+            "results": [
+                {
+                    "asset_id": r["asset_id"],
+                    "rank": round(r["rank"], 4),
+                    "snippet": r["snippet"]
+                    .replace(OCR_SNIPPET_START, "")
+                    .replace(OCR_SNIPPET_END, ""),
+                }
+                for r in results
+            ],
+            "total": total,
+            "processed": stats["processed"],
+            "query": q,
+            "page": page,
+        }
+    )
+
+
+@router.get("/api/ocr/status")
+def ocr_status(
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return OCR coverage: ``total_assets``, ``processed``, ``with_text``,
+    plus whether RapidOCR is installed and CUDA is available."""
+    from takeout_rater.ocr.engine import cuda_available, rapidocr_available
+
+    stats = get_ocr_stats(conn)
+    stats_out: dict[str, object] = dict(stats)
+    stats_out["rapidocr_installed"] = rapidocr_available()
+    stats_out["cuda_available"] = cuda_available()
+    return JSONResponse(stats_out)

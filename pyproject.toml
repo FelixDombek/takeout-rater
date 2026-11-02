@@ -39,6 +39,8 @@ dependencies = [
     # Facial detection & recognition (InsightFace + GPU-capable ONNX Runtime)
     "insightface>=0.7",
     "onnxruntime-gpu>=1.17",
+    # OCR for text-in-photo search (PaddleOCR models on the same ONNX Runtime)
+    "rapidocr>=3.0",
     # Clustering (DBSCAN for face embeddings)
     "scikit-learn>=1.4",
     # UMAP dimensionality reduction (embedding visualization)
