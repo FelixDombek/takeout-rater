@@ -334,7 +334,7 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
                 progress.message = f"Indexing cancelled — {result.indexed} photo(s) processed."
             else:
                 progress.message = f"Indexed {result.indexed} photo(s)."
-                named = _geocode_after_index(worker_conn, progress)
+                named = _geocode_after_index(worker_conn, progress, jobs)
                 if named:
                     progress.message += f" Added place names for {named} photo(s)."
             progress.running = False
@@ -352,16 +352,32 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
     thread.start()
 
 
-def _geocode_after_index(conn: sqlite3.Connection, progress: JobProgress) -> int:
-    """Look up place names for newly indexed photos; never fails the index job."""
+def _geocode_after_index(
+    conn: sqlite3.Connection, progress: JobProgress, jobs: dict[str, JobProgress]
+) -> int:
+    """Look up place names for new or moved photos after an index or rescan run.
+
+    Returns the number of photos that got a place name.  Skipped when a manual
+    place-name job is already running; honours the calling job's cancel
+    button; never fails the calling job.  The caller's ``message`` is restored
+    afterwards so its final status line is kept.
+    """
+    manual = jobs.get("geocode")
+    if manual is not None and manual.running:
+        return 0
+    saved_message = progress.message
     try:
         from takeout_rater.geo.library import geocode_library
 
         progress.message = "Looking up place names\u2026"
-        return geocode_library(conn, missing_only=True).processed
+        return geocode_library(
+            conn, missing_only=True, cancel_check=progress.cancel_event.is_set
+        ).named
     except Exception:  # noqa: BLE001
         _log.exception("Place-name lookup after indexing failed")
         return 0
+    finally:
+        progress.message = saved_message
 
 
 # ---------------------------------------------------------------------------
@@ -1289,6 +1305,11 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
                 extras.append(f"{phash_ok} pHash(es) computed")
             if clip_ok:
                 extras.append(f"{clip_ok} CLIP embedding(s) computed")
+            if not progress.cancel_event.is_set():
+                # Rescan re-reads sidecars, so coordinates may have changed.
+                named = _geocode_after_index(worker_conn, progress, jobs)
+                if named:
+                    extras.append(f"{named} place name(s) updated")
             progress.message = f"Rescan complete — {processed} asset(s) processed." + (
                 f" ({', '.join(extras)})" if extras else ""
             )

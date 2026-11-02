@@ -281,3 +281,28 @@ def test_geocode_job_endpoint(fake_gazetteer: object, tmp_path: Path) -> None:
         time.sleep(0.05)
     assert status["done"] and status["error"] is None
     assert count_asset_places(conn) == 1
+
+
+def test_post_index_geocode_keeps_message_and_counts_named(geo_db: sqlite3.Connection) -> None:
+    from takeout_rater.api.jobs import JobProgress, _geocode_after_index
+
+    progress = JobProgress(job_type="index", message="Indexed 5 photo(s).")
+    assert _geocode_after_index(geo_db, progress, {"index": progress}) == 4
+    assert progress.message == "Indexed 5 photo(s)."
+
+
+def test_post_index_geocode_skips_when_manual_job_running(geo_db: sqlite3.Connection) -> None:
+    from takeout_rater.api.jobs import JobProgress, _geocode_after_index
+
+    progress = JobProgress(job_type="index")
+    manual = JobProgress(job_type="geocode", running=True)
+    assert _geocode_after_index(geo_db, progress, {"geocode": manual}) == 0
+    assert count_asset_places(geo_db) == 0
+
+
+def test_post_index_geocode_honours_cancel(geo_db: sqlite3.Connection) -> None:
+    from takeout_rater.api.jobs import JobProgress, _geocode_after_index
+
+    progress = JobProgress(job_type="index")
+    progress.cancel_event.set()
+    assert _geocode_after_index(geo_db, progress, {}) == 0
