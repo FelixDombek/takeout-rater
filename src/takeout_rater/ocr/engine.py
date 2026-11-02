@@ -12,6 +12,7 @@ The wrapper is deliberately small: it turns one BGR ``numpy`` image into an
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 from dataclasses import dataclass, field
@@ -75,6 +76,26 @@ def cuda_available() -> bool:
     return "CUDAExecutionProvider" in ort.get_available_providers()
 
 
+def _load_cuda_dlls() -> None:
+    """Make cuDNN/cuBLAS loadable for ONNX Runtime's CUDA provider.
+
+    Without them a GPU session crashes the process ("Cannot load symbol
+    cudnnCreate") instead of falling back.  Importing torch first loads the
+    CUDA libraries it bundles, which also measured fastest for OCR;
+    ``onnxruntime.preload_dlls`` covers installs where torch is missing.
+    """
+    with contextlib.suppress(Exception):
+        import torch  # noqa: F401
+    try:
+        import onnxruntime as ort
+
+        preload_dlls = getattr(ort, "preload_dlls", None)
+        if preload_dlls is not None:
+            preload_dlls()
+    except Exception:  # noqa: BLE001
+        _log.debug("Could not preload ONNX Runtime CUDA DLLs", exc_info=True)
+
+
 class OcrEngine:
     """Run RapidOCR on images.
 
@@ -118,10 +139,14 @@ class OcrEngine:
             model_dir.mkdir(parents=True, exist_ok=True)
             params["Global.model_root_dir"] = str(model_dir)
         if self.active_accelerator == "gpu":
+            _load_cuda_dlls()
             params["EngineConfig.onnxruntime.use_cuda"] = True
-            # Every photo has a different detector input shape; exhaustive cuDNN
-            # algorithm search would re-run for each new shape.
-            params["EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_algo_search"] = "HEURISTIC"
+            # Every photo has a different detector input shape, so EXHAUSTIVE
+            # search would re-run per shape.  HEURISTIC is no option either: on
+            # Turing (RTX 20xx) cuDNN's heuristic query fails for the
+            # recogniser's asymmetric-padding conv and ORT silently moves that
+            # model to the CPU.  DEFAULT keeps all three models on CUDA.
+            params["EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_algo_search"] = "DEFAULT"
         self._engine = RapidOCR(params=params)
         self.engine_id = self._describe()
 

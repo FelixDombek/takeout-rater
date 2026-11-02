@@ -239,6 +239,31 @@ class TestOcrEngine:
         assert result.text == "STOP\nMain St"
         assert result.mean_score == pytest.approx(0.89)
 
+    def test_gpu_uses_default_conv_search_and_preloads_dlls(self, monkeypatch) -> None:
+        import sys
+        import types
+
+        captured: dict[str, object] = {}
+        preloaded: list[bool] = []
+
+        class _FakeRapidOCR:
+            def __init__(self, params: dict) -> None:
+                captured.update(params)
+
+        monkeypatch.setitem(sys.modules, "rapidocr", types.SimpleNamespace(RapidOCR=_FakeRapidOCR))
+        monkeypatch.setattr("takeout_rater.ocr.engine.cuda_available", lambda: True)
+        monkeypatch.setattr(
+            "takeout_rater.ocr.engine._load_cuda_dlls", lambda: preloaded.append(True)
+        )
+        from takeout_rater.ocr.engine import OcrEngine
+
+        engine = OcrEngine(accelerator="gpu")
+        assert engine.active_accelerator == "gpu"
+        assert preloaded == [True]
+        assert captured["EngineConfig.onnxruntime.use_cuda"] is True
+        # HEURISTIC/EXHAUSTIVE push the recogniser to CPU on Turing GPUs.
+        assert captured["EngineConfig.onnxruntime.cuda_ep_cfg.cudnn_conv_algo_search"] == "DEFAULT"
+
     def test_empty_output(self, monkeypatch) -> None:
         import sys
         import types

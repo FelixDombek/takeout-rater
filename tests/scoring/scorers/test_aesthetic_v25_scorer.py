@@ -298,3 +298,57 @@ def test_real_model_class_with_tiny_config(
     tol = 1e-5 if tower_dtype == "float32" else 5e-2
     assert all(1.0 <= e <= 10.0 for e in expected)
     assert [r["aesthetic"] for r in results] == pytest.approx(expected, abs=tol)
+
+
+def test_load_model_passes_vision_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The full SigLIP checkpoint must be loaded with its *vision* config.
+
+    transformers 5 fails with "'SiglipConfig' object has no attribute
+    'hidden_size'" when the predictor is built from the full SiglipConfig.
+    """
+    import sys
+    import types
+
+    vision_config = object()
+    calls: dict[str, Any] = {}
+
+    class _FakeVisionConfig:
+        @staticmethod
+        def from_pretrained(name: str) -> object:
+            calls["config_name"] = name
+            return vision_config
+
+    class _FakeModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layers = torch.nn.Linear(2, 1)
+
+        @classmethod
+        def from_pretrained(cls, name: str, **kwargs: Any) -> _FakeModel:
+            calls["model_name"] = name
+            calls["kwargs"] = kwargs
+            return cls()
+
+    fake_transformers = types.ModuleType("transformers")
+    fake_transformers.SiglipVisionConfig = _FakeVisionConfig  # type: ignore[attr-defined]
+    fake_apv = types.ModuleType("aesthetic_predictor_v2_5")
+    fake_apv.AestheticPredictorV2_5Model = _FakeModel  # type: ignore[attr-defined]
+    fake_apv_sub = types.ModuleType("aesthetic_predictor_v2_5.siglip_v2_5")
+    fake_apv_sub.URL = "https://example.invalid/head.pth"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5", fake_apv)
+    monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5.siglip_v2_5", fake_apv_sub)
+    monkeypatch.setattr(
+        torch.hub,
+        "load_state_dict_from_url",
+        lambda *_a, **_k: torch.nn.Linear(2, 1).state_dict(),
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    model, device, dtype = aesthetic_v25._load_model()
+
+    assert calls["config_name"] == aesthetic_v25._ENCODER_MODEL
+    assert calls["model_name"] == aesthetic_v25._ENCODER_MODEL
+    assert calls["kwargs"]["config"] is vision_config
+    assert device == torch.device("cpu") and dtype == torch.float32
+    assert isinstance(model, _FakeModel)
