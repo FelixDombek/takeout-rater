@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Map – takeout-rater{% endblock %}
+{% block page_main_class %}sidebar-main map-main{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/lightbox.css">
+<link rel="stylesheet" href="/static/map-view.css">
+{% endblock %}
+
+{% block page_sidebar %}
+<aside class="app-sidebar map-sidebar">
+  <div class="sidebar-section-title">Photos on the map</div>
+  <p class="sidebar-note" id="map-stats">Loading locations…</p>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Filter</div>
+  <label class="map-check"><input type="checkbox" id="opt-fav"> ⭐ Favorites only</label>
+  <label class="map-check"><input type="checkbox" id="opt-dedupe" checked> Hide exact duplicates</label>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Time</div>
+  <div class="map-radio-group" role="radiogroup" aria-label="Time mode">
+    <label class="map-check"><input type="radio" name="time-mode" value="off" checked> All time</label>
+    <label class="map-check"><input type="radio" name="time-mode" value="focus"> Focus: shrink photos far from the date</label>
+    <label class="map-check"><input type="radio" name="time-mode" value="filter"> Window: only photos near the date</label>
+  </div>
+  <label class="map-field">Time window
+    <select id="opt-window">
+      <option value="7">± 1 week</option>
+      <option value="30">± 1 month</option>
+      <option value="91" selected>± 3 months</option>
+      <option value="365">± 1 year</option>
+      <option value="1826">± 5 years</option>
+    </select>
+  </label>
+  <p class="sidebar-note">Drag the timeline above the map to pick a date. ▶ plays through time.</p>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Display</div>
+  <label class="map-field">Thumbnail size
+    <input type="range" id="opt-size" min="32" max="128" step="8" value="64">
+  </label>
+  <label class="map-check"><input type="checkbox" id="opt-tiles" checked> Online map tiles (OpenStreetMap)</label>
+  <p class="sidebar-note">Tiles are downloaded from openstreetmap.org, which can see which areas you view.
+    Turn this off to use the built-in offline world outline instead.</p>
+</aside>
+{% endblock %}
+
+{% block content %}
+<div class="map-shell">
+  <div class="map-timebar" id="map-timebar">
+    <button type="button" class="btn map-play" id="map-play" title="Play through time" aria-label="Play through time">▶</button>
+    <div class="map-timeline" id="map-timeline">
+      <canvas id="map-hist" aria-hidden="true"></canvas>
+      <input type="range" id="map-time" min="0" max="1000" value="1000" aria-label="Date">
+    </div>
+    <div class="map-time-label" id="map-time-label">—</div>
+  </div>
+
+  <div class="map-area">
+    <div id="map" aria-label="Map of photos by location"></div>
+    <div class="map-empty" id="map-empty" hidden>
+      <h2>No photos with a location yet</h2>
+      <p>Locations come from the Takeout sidecar JSON (<code>geoData</code> / <code>geoDataExif</code>).
+        Index your library from <a href="/setup">Setup</a>, then come back here.</p>
+    </div>
+    <div class="map-notice" id="map-notice" hidden></div>
+
+    <aside class="map-drawer" id="map-drawer" hidden>
+      <div class="map-drawer-head">
+        <div>
+          <strong id="drawer-title">Photos</strong>
+          <div class="muted" id="drawer-sub"></div>
+        </div>
+        <div class="map-drawer-actions">
+          <button type="button" class="btn" id="drawer-zoom">Zoom here</button>
+          <button type="button" class="btn" id="drawer-close" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div class="map-drawer-grid" id="drawer-grid"></div>
+    </aside>
+  </div>
+</div>
+
+{# ── Lightbox overlay ────────────────────────────────────────────────────── #}
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" aria-hidden="true">
+  <div class="lb-container">
+    <div class="lb-img-col">
+      <button id="lb-close" class="lb-close" aria-label="Close viewer">✕</button>
+      <button id="lb-prev" class="lb-prev" aria-label="Previous image">‹</button>
+      <button id="lb-next" class="lb-next" aria-label="Next image">›</button>
+      <img id="lb-img" src="" alt="" tabindex="0">
+      <div class="lb-footer">
+        <span id="lb-title"></span>
+        <span id="lb-counter"></span>
+        <a id="lb-link" href="" class="btn lb-detail-btn">Open page →</a>
+      </div>
+    </div>
+    <div class="lb-details-col" id="lb-details">
+      <div class="lb-details-loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/lightbox.js"></script>
+<script src="/static/map-view.js"></script>
+{% endblock %}

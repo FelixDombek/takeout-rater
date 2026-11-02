@@ -600,6 +600,68 @@ def count_assets_newer_than(
     return conn.execute(sql, params).fetchone()[0]
 
 
+# ---------------------------------------------------------------------------
+# Geolocation (map view)
+# ---------------------------------------------------------------------------
+
+
+def list_geotagged_points(
+    conn: sqlite3.Connection,
+    *,
+    favorited: bool | None = None,
+    deduped: bool = True,
+) -> list[tuple[int, float, float, int | None, int]]:
+    """Return a compact ``(id, lat, lon, taken_at, favorited)`` tuple per geotagged asset.
+
+    The location comes from the sidecar ``geoData`` block and falls back to
+    ``geoDataExif`` when ``geoData`` is missing or ``0.0/0.0`` (Google Takeout's
+    encoding for "no location").  Assets without any usable location, and
+    trashed assets, are omitted.  Rows are ordered by ``taken_at`` (NULLs first)
+    so clients can binary-search by time.
+
+    Args:
+        conn: Open database connection.
+        favorited: Optional favorited filter.
+        deduped: If ``True`` (default), keep only the lowest-``id`` asset per
+            SHA-256 group, matching :func:`list_assets_deduped`.
+
+    Returns:
+        List of ``(id, lat, lon, taken_at, favorited)`` tuples, where
+        ``favorited`` is ``0`` or ``1``.
+    """
+    conditions: list[str] = ["COALESCE(trashed, 0) = 0"]
+    params: list[Any] = []
+    if favorited is not None:
+        conditions.append("COALESCE(favorited, 0) = ?")
+        params.append(1 if favorited else 0)
+    where = " AND ".join(conditions)
+
+    has_geo = "(geo_lat IS NOT NULL AND geo_lon IS NOT NULL AND (geo_lat != 0 OR geo_lon != 0))"
+    has_exif = (
+        "(geo_exif_lat IS NOT NULL AND geo_exif_lon IS NOT NULL"
+        " AND (geo_exif_lat != 0 OR geo_exif_lon != 0))"
+    )
+    source = "assets"
+    if deduped:
+        source = (
+            "(SELECT * FROM ("
+            "  SELECT *, ROW_NUMBER() OVER ("
+            "    PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id"
+            "  ) AS _rn FROM assets"
+            ") WHERE _rn = 1)"
+        )
+    sql = (  # noqa: S608
+        f"SELECT id,"
+        f" CASE WHEN {has_geo} THEN geo_lat ELSE geo_exif_lat END AS lat,"
+        f" CASE WHEN {has_geo} THEN geo_lon ELSE geo_exif_lon END AS lon,"
+        f" taken_at, COALESCE(favorited, 0) AS fav"
+        f" FROM {source}"
+        f" WHERE {where} AND ({has_geo} OR {has_exif})"
+        f" ORDER BY taken_at, id"
+    )
+    return [(r[0], r[1], r[2], r[3], r[4]) for r in conn.execute(sql, params)]
+
+
 def upsert_asset_scores(
     conn: sqlite3.Connection,
     scorer_id: str,

@@ -1,0 +1,80 @@
+/* Map view (templates/map.html) */
+
+.sidebar-main.map-main { padding: 0; height: calc(100vh - 52px); }
+.map-shell { display: flex; flex-direction: column; height: 100%; }
+
+.map-check { display: flex; gap: 0.4rem; align-items: flex-start; font-size: 0.85rem; margin-bottom: 0.35rem; cursor: pointer; }
+.map-check input { margin-top: 0.25rem; }
+.map-field { display: block; font-size: 0.85rem; margin: 0.4rem 0; }
+.map-field select, .map-field input[type=range] { display: block; width: 100%; margin-top: 0.2rem; }
+.map-sidebar .sidebar-note { font-size: 0.78rem; color: #666; line-height: 1.35; }
+
+/* ── Timeline bar ────────────────────────────────────────────────────────── */
+.map-timebar {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.5rem 1rem; background: #fff; border-bottom: 1px solid #dedede;
+}
+.map-play { width: 2.2rem; flex-shrink: 0; }
+.map-timeline { position: relative; flex: 1; height: 44px; min-width: 0; }
+.map-timeline canvas { position: absolute; inset: 0 0 14px 0; width: 100%; height: 30px; }
+.map-timeline input[type=range] {
+  position: absolute; left: 0; right: 0; bottom: 0; width: 100%; margin: 0;
+}
+.map-timebar.is-off .map-timeline canvas { opacity: 0.55; }
+.map-time-label { min-width: 13rem; font-size: 0.85rem; font-variant-numeric: tabular-nums; color: #333; text-align: right; }
+
+/* ── Map area ────────────────────────────────────────────────────────────── */
+.map-area { position: relative; flex: 1; min-height: 0; }
+#map { position: absolute; inset: 0; background: #c9dceb; }
+.leaflet-pane.leaflet-outline-pane path { cursor: grab; }
+
+.map-empty, .map-notice {
+  position: absolute; z-index: 500; left: 50%; transform: translateX(-50%);
+  background: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.2);
+}
+.map-empty { top: 30%; padding: 1.5rem 2rem; max-width: 30rem; text-align: center; }
+.map-empty h2 { font-size: 1.15rem; margin-bottom: 0.5rem; }
+.map-notice { bottom: 1.6rem; left: 0.75rem; transform: none; padding: 0.4rem 0.9rem; font-size: 0.82rem; }
+
+/* Photo cells drawn on the map */
+.map-cell { background: none; border: none; }
+.mc {
+  position: absolute; transform: translate(-50%, -50%);
+  border: 2px solid #fff; border-radius: 6px; overflow: visible;
+  box-shadow: 0 1px 4px rgba(0,0,0,.45); background: #ddd; cursor: pointer;
+  transition: width 0.12s, height 0.12s, opacity 0.12s;
+}
+.mc img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 4px; }
+.mc:hover { border-color: #1a5cdb; }
+.mc-count {
+  position: absolute; top: -8px; right: -8px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; background: #1a5cdb; color: #fff; font-size: 11px; line-height: 18px;
+  text-align: center; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.3);
+}
+.mc.is-selected { border-color: #f59e0b; }
+.mc.is-target { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.6), 0 1px 4px rgba(0,0,0,.45); }
+
+/* ── Drawer with the photos of the clicked cell ──────────────────────────── */
+.map-drawer {
+  position: absolute; z-index: 600; top: 0.75rem; right: 0.75rem; bottom: 0.75rem;
+  width: min(380px, 45%); background: #fff; border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.25); display: flex; flex-direction: column;
+}
+.map-drawer[hidden] { display: none; }
+.map-drawer-head {
+  display: flex; justify-content: space-between; gap: 0.5rem; align-items: flex-start;
+  padding: 0.7rem 0.8rem; border-bottom: 1px solid #eee;
+}
+.map-drawer-actions { display: flex; gap: 0.3rem; flex-shrink: 0; }
+.map-drawer-grid {
+  flex: 1; overflow-y: auto; padding: 0.6rem;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 0.4rem;
+  align-content: start; grid-auto-rows: max-content;
+}
+.map-drawer-grid .card { position: relative; aspect-ratio: 1; cursor: pointer; border-radius: 4px; overflow: hidden; background: #e0e0e0; }
+.map-drawer-grid .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.map-drawer-grid .card span {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 4px; font-size: 10px;
+  color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.65));
+}
+.map-drawer-more { grid-column: 1 / -1; font-size: 0.8rem; color: #666; text-align: center; padding: 0.4rem; }
