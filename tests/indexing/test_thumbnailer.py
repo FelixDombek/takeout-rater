@@ -234,3 +234,21 @@ def test_generate_thumbnail_exif_orientation(
             f"orientation={orientation}: expected {'landscape' if expected_w > expected_h else 'portrait'}, "
             f"got {tw}×{th}"
         )
+
+
+def test_nvjpeg_dll_dirs_include_cuda13_bin_x64(tmp_path, monkeypatch):
+    """CUDA 13+ keeps its runtime DLLs in bin\\x64, so that must be searched too."""
+    cuda_root = tmp_path / "CUDA" / "v13.4"
+    (cuda_root / "bin" / "x64").mkdir(parents=True)
+    added: list[str] = []
+    fake_os = SimpleNamespace(
+        name="nt",
+        environ={"CUDA_PATH": str(cuda_root)},
+        add_dll_directory=lambda p: added.append(p) or object(),
+    )
+    monkeypatch.setattr(thumbnailer, "os", fake_os)
+    monkeypatch.setattr(thumbnailer, "_nvjpeg_dll_handles", [])
+
+    thumbnailer._prepare_nvjpeg_dll_dirs()
+
+    assert added[:2] == [str(cuda_root / "bin" / "x64"), str(cuda_root / "bin")]

@@ -61,9 +61,11 @@ def _prepare_nvjpeg_dll_dirs() -> None:
             return
         cuda_path = os.environ.get("CUDA_PATH")
         if cuda_path:
-            cuda_bin = Path(cuda_path) / "bin"
-            if cuda_bin.exists():
-                _nvjpeg_dll_handles.append(os.add_dll_directory(str(cuda_bin)))
+            # CUDA 13+ on Windows ships its runtime DLLs in bin\x64; bin only
+            # holds them for CUDA 12 and older.
+            for cuda_bin in (Path(cuda_path) / "bin" / "x64", Path(cuda_path) / "bin"):
+                if cuda_bin.is_dir():
+                    _nvjpeg_dll_handles.append(os.add_dll_directory(str(cuda_bin)))
         base = Path(sys.base_prefix)
         python_dll = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
         if (base / python_dll).exists():
