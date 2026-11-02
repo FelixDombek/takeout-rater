@@ -28,7 +28,7 @@ def test_spec_basics() -> None:
     assert spec.scorer_id == "aesthetic_v25"
     assert spec.default_variant_id == "siglip_so400m"
     assert [v.variant_id for v in spec.variants] == ["siglip_so400m"]
-    assert spec.requires_extras == ()
+    assert spec.requires_extras == ("aesthetic-v25",)
 
 
 def test_metric_is_aesthetic_higher_is_better() -> None:
@@ -55,30 +55,44 @@ def test_score_batch_empty_does_not_load_model() -> None:
 # ── fake model helpers ───────────────────────────────────────────────────────
 
 
-class _FakeOutput:
-    def __init__(self, logits: Any) -> None:
-        self.logits = logits
+class _FakeVisionOutput:
+    def __init__(self, pooler_output: Any) -> None:
+        self.pooler_output = pooler_output
 
 
 class _FakeModel:
-    """Returns the mean normalised pixel value of each image + 5 as its score."""
+    """Fake predictor: score = mean normalised pixel value + *offset*.
 
-    def __init__(self, max_batch: int | None = None) -> None:
+    The pooled embedding is ``[mean, 1]``; after the scorer's L2-normalisation
+    the head recovers ``mean`` as the ratio of the two components.
+    """
+
+    def __init__(self, max_batch: int | None = None, offset: float = 5.0) -> None:
         self.max_batch = max_batch
+        self.offset = offset
         self.batch_sizes: list[int] = []
+        self.head_dtypes: list[Any] = []
 
-    def __call__(self, pixel_values: Any, return_dict: bool = True) -> _FakeOutput:
+    def vision_model(self, pixel_values: Any) -> _FakeVisionOutput:
         n = pixel_values.shape[0]
         if self.max_batch is not None and n > self.max_batch:
             raise torch.cuda.OutOfMemoryError("fake OOM")
         self.batch_sizes.append(n)
         assert pixel_values.shape[1:] == (3, aesthetic_v25.INPUT_SIZE, aesthetic_v25.INPUT_SIZE)
-        return _FakeOutput(pixel_values.mean(dim=(1, 2, 3)).unsqueeze(1) + 5.0)
+        mean = pixel_values.mean(dim=(1, 2, 3))
+        return _FakeVisionOutput(torch.stack([mean, torch.ones_like(mean)], dim=1))
+
+    def layers(self, embeds: Any) -> Any:
+        self.head_dtypes.append(embeds.dtype)
+        return (embeds[:, 0] / embeds[:, 1] + self.offset).unsqueeze(1)
 
 
 def _install_fake(monkeypatch: pytest.MonkeyPatch, model: _FakeModel) -> None:
     monkeypatch.setattr(
         aesthetic_v25, "_load_model", lambda: (model, torch.device("cpu"), torch.float32)
+    )
+    monkeypatch.setattr(
+        aesthetic_v25, "pooled_embeddings", lambda m, px: m.vision_model(px).pooler_output
     )
 
 
@@ -111,12 +125,14 @@ def test_scores_in_order_with_failures(tmp_path: Path, monkeypatch: pytest.Monke
         scorer.close()
 
     assert len(results) == 5
-    assert all(set(r) == {"aesthetic"} for r in results)
     assert results[0]["aesthetic"] == pytest.approx(4.0)  # black → -1 normalised
-    assert results[1]["aesthetic"] == 0.0
+    # Undecodable images get no score at all, so they stay unscored and are
+    # retried later instead of being stored below the 1–10 range.
+    assert results[1] == {}
     assert results[2]["aesthetic"] == pytest.approx(6.0)  # white → +1 normalised
-    assert results[3]["aesthetic"] == 0.0
+    assert results[3] == {}
     assert results[4]["aesthetic"] == pytest.approx(4.0)
+    assert all(d == torch.float32 for d in model.head_dtypes)
     # Chunks of 2 paths; failed decodes are not sent to the model.
     assert model.batch_sizes == [1, 1, 1]
 
@@ -127,8 +143,53 @@ def test_all_failed_chunk_skips_model(tmp_path: Path, monkeypatch: pytest.Monkey
     scorer = AestheticV25Scorer()
     results = scorer.score_batch([tmp_path / "a.jpg", tmp_path / "b.jpg"])
     scorer.close()
-    assert results == [{"aesthetic": 0.0}, {"aesthetic": 0.0}]
+    assert results == [{}, {}]
     assert model.batch_sizes == []
+
+
+@pytest.mark.parametrize(("offset", "expected"), [(20.0, 10.0), (-20.0, 1.0)])
+def test_scores_are_clamped_to_metric_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, offset: float, expected: float
+) -> None:
+    _install_fake(monkeypatch, _FakeModel(offset=offset))
+    scorer = AestheticV25Scorer()
+    results = scorer.score_batch([_solid(tmp_path, "a.jpg", 128)])
+    scorer.close()
+    assert results == [{"aesthetic": expected}]
+
+
+def test_decode_errors_outside_oserror_are_contained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E.g. PIL's DecompressionBombError must not fail the whole batch."""
+    from PIL import Image
+
+    _install_fake(monkeypatch, _FakeModel())
+    good = _solid(tmp_path, "good.jpg", 0)
+    bomb = _solid(tmp_path, "bomb.jpg", 0)
+    real_preprocess = aesthetic_v25.preprocess_image
+
+    def _preprocess(path: Path) -> Any:
+        if path == bomb:
+            raise Image.DecompressionBombError("too big")
+        return real_preprocess(path)
+
+    monkeypatch.setattr(aesthetic_v25, "preprocess_image", _preprocess)
+    scorer = AestheticV25Scorer()
+    results = scorer.score_batch([good, bomb])
+    scorer.close()
+    assert results[0]["aesthetic"] == pytest.approx(4.0)
+    assert results[1] == {}
+
+
+def test_close_releases_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake(monkeypatch, _FakeModel())
+    scorer = AestheticV25Scorer()
+    scorer.score_batch([_solid(tmp_path, "a.jpg", 0)])
+    assert scorer._model is not None
+    scorer.close()
+    assert scorer._model is None
+    assert scorer._pool is None
 
 
 def test_oom_halves_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -193,11 +254,18 @@ def test_preprocessing_matches_siglip_image_processor(tmp_path: Path) -> None:
 # ── integration with the real (tiny, randomly initialised) predictor model ───
 
 
-def test_real_model_class_with_tiny_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Our forward call matches the upstream model's API (no weights downloaded)."""
+@pytest.mark.parametrize("tower_dtype", ["float32", "bfloat16"])
+def test_real_model_class_with_tiny_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tower_dtype: str
+) -> None:
+    """Our forward matches the upstream model's own forward (no weights downloaded).
+
+    With a bf16 tower the head still runs in fp32, as _load_model sets it up.
+    """
     apv = pytest.importorskip("aesthetic_predictor_v2_5")
     transformers = pytest.importorskip("transformers")
 
+    torch.manual_seed(0)
     config = transformers.SiglipVisionConfig(
         hidden_size=32,
         intermediate_size=64,
@@ -206,10 +274,17 @@ def test_real_model_class_with_tiny_config(tmp_path: Path, monkeypatch: pytest.M
         image_size=aesthetic_v25.INPUT_SIZE,
         patch_size=48,
     )
+    reference = apv.AestheticPredictorV2_5Model(config).eval()
+    # Move the random head's output into the 1–10 range so clamping is a no-op.
+    with torch.no_grad():
+        reference.layers.scoring_head[-1].bias.fill_(5.0)
+
+    dtype = getattr(torch, tower_dtype)
     model = apv.AestheticPredictorV2_5Model(config).eval()
-    monkeypatch.setattr(
-        aesthetic_v25, "_load_model", lambda: (model, torch.device("cpu"), torch.float32)
-    )
+    model.load_state_dict(reference.state_dict())
+    model.to(dtype=dtype)
+    model.layers.to(dtype=torch.float32)
+    monkeypatch.setattr(aesthetic_v25, "_load_model", lambda: (model, torch.device("cpu"), dtype))
     paths = [_solid(tmp_path, f"{i}.jpg", 40 * i) for i in range(3)]
 
     scorer = AestheticV25Scorer()
@@ -218,5 +293,8 @@ def test_real_model_class_with_tiny_config(tmp_path: Path, monkeypatch: pytest.M
 
     with torch.inference_mode():
         batch = torch.from_numpy(np.stack([aesthetic_v25.preprocess_image(p) for p in paths]))
-        expected = model(aesthetic_v25.normalize_pixels(batch, torch.float32)).logits.reshape(-1)
-    assert [r["aesthetic"] for r in results] == pytest.approx(expected.tolist(), abs=1e-5)
+        pixels = aesthetic_v25.normalize_pixels(batch, torch.float32)
+        expected = reference(pixel_values=pixels).logits.reshape(-1).tolist()
+    tol = 1e-5 if tower_dtype == "float32" else 5e-2
+    assert all(1.0 <= e <= 10.0 for e in expected)
+    assert [r["aesthetic"] for r in results] == pytest.approx(expected, abs=tol)

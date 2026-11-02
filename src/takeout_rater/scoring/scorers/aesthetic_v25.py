@@ -15,7 +15,8 @@ MLP head (~4 MB) from the project's GitHub repository into the torch hub cache.
 
 License note: the ``aesthetic-predictor-v2-5`` package and its head weights are
 AGPL-3.0.  takeout-rater is GPL-3.0; GPL-3.0 §13 explicitly permits combining
-the two, with the AGPL part keeping its own terms.
+the two, with the AGPL part keeping its own terms.  Because of the licence the
+package is an optional extra: ``pip install -e .[aesthetic-v25]``.
 
 Performance notes (see the 2026-11 performance audit):
 
@@ -25,17 +26,19 @@ Performance notes (see the 2026-11 performance audit):
   resize/rescale/normalise steps, with the normalisation done on the device.
 - Images are sent to the device as ``uint8`` (4× less transfer than float32).
 - CPU decoding of sub-batch N+1 overlaps device inference of sub-batch N.
-- On CUDA the model runs in bfloat16 (as recommended upstream) when the GPU
-  supports it; a CUDA out-of-memory error halves the sub-batch instead of
-  dropping to one image at a time.
-- The loaded model is cached per process, so starting a new scoring job does
-  not reload 1.7 GB of weights.
+- A CUDA out-of-memory error halves the sub-batch instead of dropping to one
+  image at a time.
+- The vision tower runs in bfloat16 on CUDA, but the normalisation and MLP
+  head stay in float32, so scores are not quantised and match the CPU path.
+- The model is released (and the CUDA cache emptied) when the scorer is
+  closed at the end of a scoring run, so it does not keep ~1.7 GB of VRAM.
 """
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
 import os
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -62,12 +65,12 @@ _DEFAULT_INFER_BATCH_SIZE = 16
 #: Number of decoded sub-batches buffered ahead of inference.
 _PREFETCH_BATCHES = 2
 
-#: Value written for images that cannot be decoded.
-_FAILED_SCORE = 0.0
+#: Clamp range of the ``aesthetic`` metric (matches the declared MetricSpec).
+_MIN_SCORE = 1.0
+_MAX_SCORE = 10.0
 
-# Process-wide model cache: (model, device, dtype).
-_model_lock = threading.Lock()
-_cached_model: tuple[Any, Any, Any] | None = None
+#: pip extra that installs this scorer's AGPL-3.0 dependency.
+_EXTRA = "aesthetic-v25"
 
 
 def _infer_batch_size() -> int:
@@ -116,29 +119,46 @@ def normalize_pixels(batch_uint8: Any, dtype: Any) -> Any:
     return (x / 127.5 - 1.0).to(dtype)
 
 
+def pooled_embeddings(model: Any, pixel_values: Any) -> Any:
+    """Return the SigLIP tower's pooled output for *pixel_values*.
+
+    Calls ``SiglipVisionModel.forward`` directly, skipping the predictor's own
+    forward (which would run the head in the tower's dtype).  This works with
+    both transformers 4 (tower under ``.vision_model``) and 5 (flattened).
+    """
+    from transformers import SiglipVisionModel
+
+    return SiglipVisionModel.forward(model, pixel_values=pixel_values).pooler_output
+
+
 def _load_model() -> tuple[Any, Any, Any]:
-    """Load (or return the cached) predictor model, device and dtype."""
-    global _cached_model  # noqa: PLW0603
-    with _model_lock:
-        if _cached_model is not None:
-            return _cached_model
+    """Load the predictor and return ``(model, device, tower_dtype)``.
 
-        import torch
-        from aesthetic_predictor_v2_5 import convert_v2_5_from_siglip
+    The SigLIP vision tower runs in bfloat16 on CUDA when supported (as
+    recommended upstream); the L2-normalisation and the MLP head always run in
+    float32 so scores are not quantised to bf16 steps and match across devices.
+    The model is owned by the scorer instance and freed by
+    :meth:`AestheticV25Scorer.close`, so it does not hold ~1.7 GB of VRAM for
+    the rest of the process.
+    """
+    import torch
+    from aesthetic_predictor_v2_5 import AestheticPredictorV2_5Model
+    from aesthetic_predictor_v2_5.siglip_v2_5 import URL as HEAD_URL
 
-        model, _processor = convert_v2_5_from_siglip(
-            encoder_model_name=_ENCODER_MODEL,
-            low_cpu_mem_usage=True,
-        )
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
-        else:
-            device = torch.device("cpu")
-            dtype = torch.float32
-        model = model.to(device=device, dtype=dtype).eval()
-        _cached_model = (model, device, dtype)
-        return _cached_model
+    model = AestheticPredictorV2_5Model.from_pretrained(_ENCODER_MODEL, low_cpu_mem_usage=True)
+    head_state = torch.hub.load_state_dict_from_url(HEAD_URL, map_location="cpu")
+    model.layers.load_state_dict(head_state)
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        tower_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    else:
+        device = torch.device("cpu")
+        tower_dtype = torch.float32
+    model = model.to(device=device, dtype=tower_dtype)
+    model.layers.to(dtype=torch.float32)
+    model.eval()
+    return model, device, tower_dtype
 
 
 class AestheticV25Scorer(BaseScorer):
@@ -165,13 +185,15 @@ class AestheticV25Scorer(BaseScorer):
                 "like the LAION aesthetic score but with a newer, stronger model that "
                 "handles everyday photos better. Around 5.5 and up is generally good. "
                 "Slower than LAION; requires a ~1.7 GB model download. "
-                "Model license: AGPL-3.0."
+                "Model license: AGPL-3.0, so it is an optional install: "
+                "pip install -e .[aesthetic-v25]"
             ),
             technical_description=(
                 "Aesthetic Predictor V2.5 (discus0434): MLP head on L2-normalised "
                 "pooled embeddings of google/siglip-so400m-patch14-384 (384 px input, "
                 "bicubic resize, no crop). Successor to LAION Aesthetic Predictor v2. "
-                "bfloat16 on CUDA when supported, float32 otherwise."
+                "Vision tower in bfloat16 on CUDA when supported; head always float32; "
+                "clamped to 1–10."
             ),
             version="1",
             variants=(
@@ -197,21 +219,16 @@ class AestheticV25Scorer(BaseScorer):
                 ),
             ),
             default_variant_id="siglip_so400m",
-            requires_extras=(),
+            requires_extras=(_EXTRA,),
         )
 
     @classmethod
     def is_available(cls) -> bool:
-        """Return ``True`` when torch, transformers and the predictor package import."""
+        """Return ``True`` when the runtime dependencies are installed (no imports)."""
+        modules = ("aesthetic_predictor_v2_5", "numpy", "PIL", "torch", "transformers")
         try:
-            import aesthetic_predictor_v2_5  # noqa: F401
-            import numpy  # noqa: F401
-            import PIL  # noqa: F401
-            import torch  # noqa: F401
-            import transformers  # noqa: F401
-
-            return True
-        except ImportError:
+            return all(importlib.util.find_spec(m) is not None for m in modules)
+        except (ImportError, ValueError):
             return False
 
     # ------------------------------------------------------------------
@@ -227,15 +244,21 @@ class AestheticV25Scorer(BaseScorer):
             )
 
     def close(self) -> None:
-        """Shut down the decode thread pool (the model stays cached)."""
+        """Shut down the decode pool and release the model (and its VRAM)."""
         if self._pool is not None:
             self._pool.shutdown(wait=False)
             self._pool = None
+        if self._model is not None:
+            on_cuda = self._device is not None and self._device.type == "cuda"
+            self._model = None
+            if on_cuda:
+                import torch
+
+                torch.cuda.empty_cache()
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
-        pool = getattr(self, "_pool", None)
-        if pool is not None:
-            pool.shutdown(wait=False)
+        with contextlib.suppress(Exception):
+            self.close()
 
     # ------------------------------------------------------------------
     # Scoring
@@ -266,8 +289,12 @@ class AestheticV25Scorer(BaseScorer):
         with torch.inference_mode():
             batch = pixels_uint8.to(self._device, non_blocking=True)
             pixel_values = normalize_pixels(batch, self._dtype)
-            logits = self._model(pixel_values=pixel_values, return_dict=True).logits
-            return logits.float().reshape(-1).cpu().tolist()
+            # Same computation as AestheticPredictorV2_5Model.forward, but the
+            # normalisation and head run in float32 (see _load_model).
+            pooled = pooled_embeddings(self._model, pixel_values).float()
+            embeds = pooled / pooled.norm(dim=-1, keepdim=True)
+            scores = self._model.layers(embeds).reshape(-1)
+            return scores.clamp(_MIN_SCORE, _MAX_SCORE).cpu().tolist()
 
     def score_batch(
         self,
@@ -282,8 +309,10 @@ class AestheticV25Scorer(BaseScorer):
             variant_id: Ignored; only one variant exists.
 
         Returns:
-            A list (same length as *image_paths*) of ``{"aesthetic": float}``.
-            Images that cannot be decoded get ``0.0``.
+            A list (same length as *image_paths*) of ``{"aesthetic": float}``
+            in ``[1, 10]``.  Images that cannot be decoded get an **empty**
+            dict: no score row is written, so they stay unscored (and are
+            retried on the next run) instead of sorting as the worst photos.
         """
         if not image_paths:
             return []
@@ -302,7 +331,7 @@ class AestheticV25Scorer(BaseScorer):
         def _decode_one(path: Path) -> Any:
             try:
                 return preprocess_image(path)
-            except (OSError, ValueError, RuntimeError, SyntaxError):
+            except Exception:  # noqa: BLE001 - e.g. DecompressionBombError, MemoryError
                 return None
 
         def _preprocess(chunk: list[Path]) -> tuple[Any, set[int]]:
@@ -317,12 +346,12 @@ class AestheticV25Scorer(BaseScorer):
             return tensor, failed
 
         def _infer(tensor: Any, failed: set[int], chunk: list[Path]) -> list[dict[str, float]]:
-            scores = [_FAILED_SCORE] * len(chunk)
+            results: list[dict[str, float]] = [{} for _ in chunk]
             if tensor is not None:
                 valid_scores = self._forward(tensor)
                 valid_idx = [i for i in range(len(chunk)) if i not in failed]
                 for idx, value in zip(valid_idx, valid_scores, strict=True):
-                    scores[idx] = float(value)
-            return [{"aesthetic": s} for s in scores]
+                    results[idx] = {"aesthetic": float(value)}
+            return results
 
         return _run_pipelined_batches(chunks, _preprocess, _infer, prefetch=_PREFETCH_BATCHES)
