@@ -27,13 +27,18 @@ import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from takeout_rater.db.queries import count_image_embeddings, load_embedding_matrix
+from takeout_rater.db.queries import (
+    CLIP_L14_MODEL_KEY,
+    count_image_embeddings,
+    load_embedding_matrix,
+)
 from takeout_rater.embeddings import search_backbones
 
 router = APIRouter()
 
 _DEFAULT_LIMIT = 50
-_index_lock = threading.Lock()
+_index_lock = threading.Lock()  # guards app.state.search_indexes creation and _model_locks
+_model_locks: dict[str, threading.Lock] = {}
 
 
 @dataclass
@@ -64,16 +69,33 @@ def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
     yield conn
 
 
+def _index_lock_for(model_key: str) -> threading.Lock:
+    with _index_lock:
+        lock = _model_locks.get(model_key)
+        if lock is None:
+            lock = _model_locks[model_key] = threading.Lock()
+        return lock
+
+
+def _indexes(app_state: object) -> dict[str, _SearchIndex]:
+    """Return ``app_state.search_indexes``, creating it once under the lock."""
+    indexes: dict[str, _SearchIndex] | None = getattr(app_state, "search_indexes", None)
+    if indexes is None:
+        with _index_lock:
+            indexes = getattr(app_state, "search_indexes", None)
+            if indexes is None:
+                indexes = {}
+                app_state.search_indexes = indexes  # type: ignore[attr-defined]
+    return indexes
+
+
 def invalidate_search_indexes(app_state: object, model_key: str | None = None) -> None:
     """Drop cached search matrices (all of them, or only *model_key*'s)."""
-    indexes: dict[str, _SearchIndex] | None = getattr(app_state, "search_indexes", None)
-    if not indexes:
-        return
-    with _index_lock:
-        if model_key is None:
-            indexes.clear()
-        else:
-            indexes.pop(model_key, None)
+    indexes = _indexes(app_state)
+    keys = list(indexes) if model_key is None else [model_key]
+    for key in keys:
+        with _index_lock_for(key):
+            indexes.pop(key, None)
 
 
 def _build_search_index(conn: sqlite3.Connection, model_key: str) -> _SearchIndex | None:
@@ -87,37 +109,57 @@ def _build_search_index(conn: sqlite3.Connection, model_key: str) -> _SearchInde
 def _get_search_index(
     request: Request, conn: sqlite3.Connection, model_key: str
 ) -> _SearchIndex | None:
-    """Return the cached index for *model_key*, building it if necessary."""
-    state = request.app.state
-    indexes: dict[str, _SearchIndex] | None = getattr(state, "search_indexes", None)
-    if indexes is None:
-        indexes = {}
-        state.search_indexes = indexes
+    """Return the cached index for *model_key*, building it if necessary.
+
+    For backbones stored in ``image_embeddings`` the cached matrix is checked
+    against the (indexed, cheap) row count, so an index cached while an embed
+    job was still writing, or after it was cancelled, is rebuilt instead of
+    serving a partial result forever.  CLIP L/14 relies on explicit
+    invalidation because counting ``clip_embeddings`` scans the table.
+    """
+    indexes = _indexes(request.app.state)
+    expected = None
+    if model_key != CLIP_L14_MODEL_KEY:
+        expected = count_image_embeddings(conn, model_key)
     index = indexes.get(model_key)
-    if index is not None:
+    if index is not None and (expected is None or len(index.asset_ids) == expected):
         return index
-    with _index_lock:
+    with _index_lock_for(model_key):
         index = indexes.get(model_key)
-        if index is None:
+        if index is None or (expected is not None and len(index.asset_ids) != expected):
             index = _build_search_index(conn, model_key)
             if index is not None:
                 indexes[model_key] = index
+            else:
+                indexes.pop(model_key, None)
     return index
+
+
+def _availability() -> dict[str, bool]:
+    return {key: b.available() for key, b in search_backbones.BACKBONES.items()}
 
 
 def _resolve_model(request: Request, conn: sqlite3.Connection, model: str) -> str:
     """Resolve the ``model`` query parameter to a concrete backbone key."""
     if model in search_backbones.BACKBONES:
         return model
-    cached: dict[str, _SearchIndex] = getattr(request.app.state, "search_indexes", None) or {}
     counts: dict[str, int] = {}
+    available: dict[str, bool] = {CLIP_L14_MODEL_KEY: True}
     for key in search_backbones.AUTO_ORDER:
-        counts[key] = (
-            len(cached[key].asset_ids) if key in cached else count_image_embeddings(conn, key)
+        if key == CLIP_L14_MODEL_KEY:
+            continue
+        counts[key] = count_image_embeddings(conn, key)
+        # Only import-check backbones that could actually be chosen.
+        available[key] = counts[key] > 0 and search_backbones.get_backbone(key).available()
+    if any(n > 0 and available[k] for k, n in counts.items()):
+        # Only needed to judge coverage; reuse the cached CLIP matrix when present.
+        cached = _indexes(request.app.state).get(CLIP_L14_MODEL_KEY)
+        counts[CLIP_L14_MODEL_KEY] = (
+            len(cached.asset_ids)
+            if cached is not None
+            else count_image_embeddings(conn, CLIP_L14_MODEL_KEY)
         )
-        if counts[key] > 0:
-            break
-    return search_backbones.resolve_backbone_key("auto", counts)
+    return search_backbones.resolve_backbone_key("auto", counts, available)
 
 
 @router.get("/api/search/backbones")
@@ -134,6 +176,7 @@ def list_search_backbones(
     total_assets = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     entries = []
     counts: dict[str, int] = {}
+    available = _availability()
     for key in search_backbones.AUTO_ORDER:
         b = search_backbones.get_backbone(key)
         counts[key] = count_image_embeddings(conn, key)
@@ -144,14 +187,15 @@ def list_search_backbones(
                 "description": b.description,
                 "dim": b.dim,
                 "count": counts[key],
-                "available": b.available(),
+                "available": available[key],
             }
         )
     return JSONResponse(
         {
             "backbones": entries,
             "total_assets": total_assets,
-            "auto": search_backbones.resolve_backbone_key("auto", counts),
+            "auto": search_backbones.resolve_backbone_key("auto", counts, available),
+            "auto_min_coverage": search_backbones.AUTO_MIN_COVERAGE,
         }
     )
 
@@ -190,6 +234,11 @@ def search_assets(
         return JSONResponse({"results": [], "total": 0, "query": ""})
 
     model_key = _resolve_model(request, conn, model)
+    if model_key != CLIP_L14_MODEL_KEY and not search_backbones.get_backbone(model_key).available():
+        raise HTTPException(
+            status_code=503,
+            detail=f"{model_key} is not installed (SigLIP 2 needs open-clip-torch>=2.31).",
+        )
     index = _get_search_index(request, conn, model_key)
     if index is None:
         if partial == "1":

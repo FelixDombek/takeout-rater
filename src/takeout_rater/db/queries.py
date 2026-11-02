@@ -1923,11 +1923,11 @@ CLIP_L14_MODEL_KEY = "clip-vit-l-14"
 def blobs_to_matrix(blobs: list[bytes], dim: int | None = None) -> Any:
     """Convert float32 embedding blobs into one ``(N, dim)`` numpy matrix.
 
-    Joins the blobs once and reinterprets them with :func:`numpy.frombuffer`,
-    which is far faster than unpacking each row with :mod:`struct`.  Rows
-    whose byte length differs from the first row (or from ``dim``) raise
-    :class:`ValueError`, since mixing dimensions would silently corrupt the
-    matrix.
+    Preallocates the result and fills it row by row with
+    :func:`numpy.frombuffer`, which is far faster than unpacking each row with
+    :mod:`struct` and avoids an intermediate joined copy.  Raises
+    :class:`ValueError` when a blob's length differs from the first row (or
+    from ``dim``), since mixing dimensions would corrupt the matrix.
 
     Returns a writable, C-contiguous ``float32`` array.
     """
@@ -1936,37 +1936,72 @@ def blobs_to_matrix(blobs: list[bytes], dim: int | None = None) -> Any:
     if not blobs:
         return np.empty((0, dim or 0), dtype=np.float32)
     row_bytes = len(blobs[0]) if dim is None else dim * 4
-    if row_bytes % 4 or any(len(b) != row_bytes for b in blobs):
-        raise ValueError("Embedding blobs have inconsistent lengths")
-    flat = np.frombuffer(b"".join(blobs), dtype="<f4")
-    return flat.reshape(len(blobs), row_bytes // 4).astype(np.float32, copy=True)
+    if row_bytes % 4:
+        raise ValueError("Embedding blob length is not a multiple of 4 bytes")
+    out = np.empty((len(blobs), row_bytes // 4), dtype=np.float32)
+    for i, blob in enumerate(blobs):
+        if len(blob) != row_bytes:
+            raise ValueError("Embedding blobs have inconsistent lengths")
+        out[i] = np.frombuffer(blob, dtype="<f4")
+    return out
 
 
 def load_embedding_matrix(conn: sqlite3.Connection, model_key: str) -> tuple[Any, Any]:
     """Load every stored embedding for *model_key* as numpy arrays.
 
     ``model_key`` :data:`CLIP_L14_MODEL_KEY` reads the ``clip_embeddings``
-    table; any other key reads ``image_embeddings``.
+    table; any other key reads ``image_embeddings``.  Rows are streamed from
+    the cursor into a preallocated matrix, so peak memory stays close to the
+    size of the result.  Rows whose length differs from the first row's are
+    skipped and logged, rather than failing the whole load.
 
     Returns:
         ``(asset_ids, matrix)``: an ``int64`` array of shape ``(N,)`` and a
         ``float32`` array of shape ``(N, dim)``, both ordered by asset id.
         Both are empty (``N == 0``) when nothing is stored.
     """
+    import logging
+
     import numpy as np
 
     if model_key == CLIP_L14_MODEL_KEY:
-        rows = conn.execute(
-            "SELECT asset_id, embedding FROM clip_embeddings ORDER BY asset_id"
-        ).fetchall()
+        count_sql = "SELECT COUNT(*) FROM clip_embeddings"
+        rows_sql = "SELECT asset_id, embedding FROM clip_embeddings ORDER BY asset_id"
+        params: tuple = ()
     else:
-        rows = conn.execute(
-            "SELECT asset_id, embedding FROM image_embeddings"
-            " WHERE model_key = ? ORDER BY asset_id",
-            (model_key,),
-        ).fetchall()
-    asset_ids = np.fromiter((r[0] for r in rows), dtype=np.int64, count=len(rows))
-    matrix = blobs_to_matrix([r[1] for r in rows])
+        count_sql = "SELECT COUNT(*) FROM image_embeddings WHERE model_key = ?"
+        rows_sql = (
+            "SELECT asset_id, embedding FROM image_embeddings WHERE model_key = ? ORDER BY asset_id"
+        )
+        params = (model_key,)
+
+    capacity = conn.execute(count_sql, params).fetchone()[0]
+    asset_ids = np.empty(capacity, dtype=np.int64)
+    matrix: Any = None
+    n = 0
+    skipped = 0
+    for aid, blob in conn.execute(rows_sql, params):
+        if n >= capacity:  # rows inserted between COUNT and SELECT
+            break
+        if matrix is None:
+            if len(blob) == 0 or len(blob) % 4:
+                skipped += 1
+                continue
+            matrix = np.empty((capacity, len(blob) // 4), dtype=np.float32)
+        if len(blob) != matrix.shape[1] * 4:
+            skipped += 1
+            continue
+        asset_ids[n] = aid
+        matrix[n] = np.frombuffer(blob, dtype="<f4")
+        n += 1
+    if skipped:
+        logging.getLogger(__name__).warning(
+            "Skipped %d %s embedding(s) with an unexpected length", skipped, model_key
+        )
+    if matrix is None:
+        return np.empty(0, dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+    if n < capacity:
+        return asset_ids[:n].copy(), matrix[:n].copy()
     return asset_ids, matrix
 
 
@@ -1998,6 +2033,16 @@ def bulk_upsert_image_embeddings(
         raise ValueError("CLIP L/14 embeddings belong in clip_embeddings")
     if not rows:
         return
+    lengths = {len(blob) for _aid, blob in rows}
+    if len(lengths) != 1 or next(iter(lengths)) % 4 or not next(iter(lengths)):
+        raise ValueError("Embedding blobs must all have the same non-zero float32 length")
+    existing = conn.execute(
+        "SELECT dim FROM image_embeddings WHERE model_key = ? LIMIT 1", (model_key,)
+    ).fetchone()
+    if existing is not None and existing[0] * 4 not in lengths:
+        raise ValueError(
+            f"{model_key} embeddings are {existing[0]}-d; refusing to mix in other dimensions"
+        )
     now = int(time.time())
     conn.executemany(
         "INSERT INTO image_embeddings (asset_id, model_key, dim, embedding, computed_at)"

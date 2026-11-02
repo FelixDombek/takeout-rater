@@ -210,6 +210,7 @@
   var embedMsg = document.getElementById('embed-msg');
   var SIGLIP_KEY = 'siglip2-so400m-16-256';
   var backboneLabels = {};
+  var backbonesLoaded = false;
   var pollTimer = null;
 
   function fmt(n) { return Number(n).toLocaleString(); }
@@ -221,7 +222,9 @@
         if (!data) return;
         var saved = null;
         try { saved = localStorage.getItem('search-model'); } catch (e) { /* ignore */ }
-        var current = modelSel.value || saved || 'auto';
+        // First load restores the saved choice; later reloads keep the current one.
+        var current = backbonesLoaded ? modelSel.value : (saved || 'auto');
+        backbonesLoaded = true;
         while (modelSel.options.length > 1) modelSel.remove(1);
         var autoLabel = '';
         data.backbones.forEach(function(b) {
@@ -250,7 +253,11 @@
         } else if (missing > 0 || pollTimer) {
           card.style.display = '';
           cardText.textContent = sig.description + ' ' + fmt(sig.count) + ' of ' +
-            fmt(data.total_assets) + ' photos have SigLIP 2 embeddings.';
+            fmt(data.total_assets) + ' photos have SigLIP 2 embeddings.' +
+            (data.auto !== SIGLIP_KEY && sig.count > 0
+              ? ' Auto switches to SigLIP 2 once it covers ' +
+                Math.round(100 * data.auto_min_coverage) + '% of your photos.'
+              : '');
           btnCompute.textContent = sig.count > 0
             ? 'Embed remaining ' + fmt(missing) + ' photos'
             : 'Compute SigLIP 2 embeddings';
@@ -348,7 +355,11 @@
               '&partial=1&model=' + encodeURIComponent(modelSel.value);
     fetch(url)
       .then(function(r) {
-        if (!r.ok) throw new Error('Search failed');
+        if (!r.ok) {
+          return r.json().catch(function() { return {}; }).then(function(d) {
+            throw new Error(d.detail || 'Search failed');
+          });
+        }
         return r.text();
       })
       .then(function(html) {

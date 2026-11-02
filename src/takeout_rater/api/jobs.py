@@ -127,6 +127,16 @@ def _job_status_dict(p: JobProgress) -> dict:
     }
 
 
+def _invalidate_clip_caches(app_state: object) -> None:
+    """Drop the cached CLIP L/14 search matrix and 3-D embedding map."""
+    from takeout_rater.api.search import invalidate_search_indexes
+    from takeout_rater.db.queries import CLIP_L14_MODEL_KEY
+
+    invalidate_search_indexes(app_state, CLIP_L14_MODEL_KEY)
+    if hasattr(app_state, "clip_embedding_map"):
+        app_state.clip_embedding_map = None  # type: ignore[attr-defined]
+
+
 def _require_db(request: Request) -> None:
     if request.app.state.db_conn is None:
         raise HTTPException(status_code=503, detail="Library not configured.")
@@ -323,11 +333,6 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
                 clip_fp16=bool(perf["clip_fp16"]),
             )
             progress.diagnostics = dict(result.diagnostics)
-            # New CLIP L/14 embeddings may have been written; drop the cached matrix.
-            from takeout_rater.api.search import invalidate_search_indexes
-            from takeout_rater.db.queries import CLIP_L14_MODEL_KEY
-
-            invalidate_search_indexes(app.state, CLIP_L14_MODEL_KEY)
             progress.total = result.found
             progress.processed = result.indexed
             progress.current_item = ""
@@ -348,6 +353,9 @@ def _start_index_job(app: object, photos_root: Path, db_root: Path) -> None:
             progress.done = True
         finally:
             worker_conn.close()
+            # CLIP L/14 embeddings may have been written (even on error or
+            # cancel); drop the cached search matrix so the next search reloads.
+            _invalidate_clip_caches(app.state)
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-indexer")
     thread.start()
@@ -1311,6 +1319,9 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
             progress.done = True
         finally:
             worker_conn.close()
+            # CLIP L/14 embeddings may have been written (even on error or
+            # cancel); drop the cached search matrix so the next search reloads.
+            _invalidate_clip_caches(request.app.state)
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-rescan")
     thread.start()
@@ -1423,12 +1434,6 @@ def start_embed_job(request: Request, body: _EmbedStartBody | None = None) -> JS
                 progress.processed = embedded
                 progress.message = f"Computing embeddings… {embedded}\u202f/\u202f{total}"
 
-            # Invalidate the in-memory search index so the next search rebuilds it.
-            invalidate_search_indexes(request.app.state, model_key)
-            # Invalidate the 3-D embedding map cache (CLIP L/14 only).
-            if model_key == CLIP_L14_MODEL_KEY and hasattr(request.app.state, "clip_embedding_map"):
-                request.app.state.clip_embedding_map = None
-
             progress.current_item = ""
             if progress.cancel_event.is_set():
                 progress.message = "Embedding cancelled."
@@ -1444,6 +1449,11 @@ def start_embed_job(request: Request, body: _EmbedStartBody | None = None) -> JS
             progress.done = True
         finally:
             worker_conn.close()
+            # Drop cached matrices even after an error or cancel: some rows were written.
+            if model_key == CLIP_L14_MODEL_KEY:
+                _invalidate_clip_caches(request.app.state)
+            else:
+                invalidate_search_indexes(request.app.state, model_key)
 
     thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-embed")
     thread.start()

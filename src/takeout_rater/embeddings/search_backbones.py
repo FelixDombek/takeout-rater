@@ -14,6 +14,7 @@ has embeddings stored.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -43,6 +44,7 @@ def _load_clip() -> tuple[Any, Any, Any, Any]:
     return get_clip_model()
 
 
+@functools.cache
 def _clip_available() -> bool:
     from takeout_rater.scoring.scorers.clip_backbone import is_available
 
@@ -92,17 +94,35 @@ def get_backbone(key: str) -> SearchBackbone:
     return BACKBONES[key]
 
 
-def resolve_backbone_key(requested: str, counts: dict[str, int]) -> str:
+#: ``model=auto`` only switches to a backbone once it covers this fraction of
+#: the images CLIP L/14 covers, so a half-finished (or cancelled) embedding
+#: pass never hides photos from search.
+AUTO_MIN_COVERAGE = 0.95
+
+
+def resolve_backbone_key(
+    requested: str,
+    counts: dict[str, int],
+    available: dict[str, bool] | None = None,
+) -> str:
     """Resolve ``requested`` (a key or ``"auto"``) against embedding counts.
 
-    ``"auto"`` (or an unknown key) returns the first backbone in
-    :data:`AUTO_ORDER` with at least one stored embedding, falling back to
-    CLIP L/14 when nothing is stored yet.
+    A known key is returned as is.  ``"auto"`` (or an unknown key) returns the
+    first backbone in :data:`AUTO_ORDER` that is installed (per *available*,
+    default: assumed installed), has embeddings, and covers at least
+    :data:`AUTO_MIN_COVERAGE` of CLIP L/14's count.  CLIP L/14 is the
+    fallback.
     """
     if requested in BACKBONES:
         return requested
+    reference = counts.get(CLIP_L14_MODEL_KEY, 0)
     for key in AUTO_ORDER:
-        if counts.get(key, 0) > 0:
+        if key == CLIP_L14_MODEL_KEY:
+            break
+        if available is not None and not available.get(key, False):
+            continue
+        n = counts.get(key, 0)
+        if n > 0 and n >= AUTO_MIN_COVERAGE * reference:
             return key
     return CLIP_L14_MODEL_KEY
 
