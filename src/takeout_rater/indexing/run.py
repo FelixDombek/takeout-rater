@@ -58,6 +58,71 @@ def _compute_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _env_float(name: str, default: float) -> float:
+    """Return float env var *name*, or *default* (with a warning) if it is not a number."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        _log.warning("Ignoring %s=%r: not a number; using %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    """Return int env var *name*, or *default* (with a warning) if it is not an integer."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        _log.warning("Ignoring %s=%r: not an integer; using %s", name, raw, default)
+        return default
+
+
+class _SlowOnnxBatchGuard:
+    """Decide when ONNX Runtime CUDA is slow enough to abandon for an indexing run.
+
+    The first batch is treated as warm-up and never counts: it pays one-time
+    costs (CUDA context, cuDNN algorithm search, memory arena growth, kernel
+    loading) that say nothing about steady-state speed.  After that, ONNX is
+    only abandoned after *strikes* consecutive slow batches, so a transient
+    stall (another process on the GPU, paging) does not disable ONNX for a
+    100k-photo run.  The per-batch limit scales with batch size beyond
+    *reference_batch_size*, so larger configured batches are not penalised
+    for legitimately taking longer.
+    """
+
+    def __init__(
+        self,
+        seconds_per_batch: float,
+        strikes: int,
+        reference_batch_size: int,
+    ) -> None:
+        self.seconds_per_batch = max(1.0, seconds_per_batch)
+        self.strikes = max(1, strikes)
+        self.reference_batch_size = max(1, reference_batch_size)
+        self.streak = 0
+        self._warmed_up = False
+
+    def limit_for(self, n_images: int) -> float:
+        """Return the slow-batch limit in seconds for a batch of *n_images*."""
+        return self.seconds_per_batch * max(1.0, n_images / self.reference_batch_size)
+
+    def observe(self, seconds: float, n_images: int) -> bool:
+        """Record one batch; return ``True`` when ONNX should be abandoned."""
+        if not self._warmed_up:
+            self._warmed_up = True
+            return False
+        if seconds >= self.limit_for(n_images):
+            self.streak += 1
+        else:
+            self.streak = 0
+        return self.streak >= self.strikes
+
+
 def _bool_to_int(v: bool | None) -> int | None:
     """Convert an optional bool to the 0/1 integer stored in SQLite."""
     if v is None:
@@ -191,13 +256,20 @@ def run_index(
         "clip_batches": 0,
         "clip_batch_items": 0,
         "clip_batch_size": 0,
+        "clip_batch_last_size": 0,
         "clip_batch_max_size": 0,
         "clip_batch_fill_wait_seconds": 0.0,
+        "clip_batch_inference_last_seconds": 0.0,
+        "clip_batch_inference_max_seconds": 0.0,
         "clip_accelerator": "",
         "clip_status": "",
         "clip_providers": "",
         "clip_preprocess_workers": 0,
+        "clip_image_queue_size": 0,
+        "clip_image_queue_max": 0,
         "clip_queue_wait_seconds": 0.0,
+        "clip_tensor_queue_size": 0,
+        "clip_tensor_queue_max": 0,
         "clip_inference_active_seconds": 0.0,
         "clip_first_inference_seconds": 0.0,
         "scan_seconds": 0.0,
@@ -232,6 +304,7 @@ def run_index(
         "clip_tensor_queue_wait_seconds": 0.0,
         "clip_onnx_input_seconds": 0.0,
         "clip_onnx_run_seconds": 0.0,
+        "clip_onnx_slow_fallbacks": 0,
         "clip_inference_seconds": 0.0,
         "clip_write_seconds": 0.0,
     }
@@ -298,9 +371,11 @@ def run_index(
         with _diagnostics_lock:
             _diagnostics[key] = int(_diagnostics.get(key, 0)) + amount
 
-    def _diag_max(key: str, value: int) -> None:
+    def _diag_max(key: str, value: int | float) -> None:
         with _diagnostics_lock:
-            _diagnostics[key] = max(int(_diagnostics.get(key, 0)), value)
+            current = _diagnostics.get(key, 0)
+            if not isinstance(current, (int, float)) or value > current:
+                _diagnostics[key] = value
 
     progress.diagnostics = _diag_snapshot()
 
@@ -449,7 +524,12 @@ def run_index(
         0.02,
         float(os.environ.get("TAKEOUT_RATER_CLIP_BATCH_FILL_WAIT_SECONDS", "0.35")),
     )
-    _clip_image_queue_max = max(256, _clip_batch_size * 4)
+    _slow_onnx_guard = _SlowOnnxBatchGuard(
+        seconds_per_batch=_env_float("TAKEOUT_RATER_ONNX_CUDA_SLOW_BATCH_SECONDS", 10.0),
+        strikes=_env_int("TAKEOUT_RATER_ONNX_CUDA_SLOW_BATCH_STRIKES", 3),
+        reference_batch_size=_clip_batch_size,
+    )
+    _clip_image_queue_max = max(_clip_batch_size, _clip_preprocess_workers * 8)
     _clip_tensor_queue_max = max(_clip_batch_size * 2, _clip_preprocess_workers * 8)
     _clip_image_queue: queue.Queue[object] = queue.Queue(maxsize=_clip_image_queue_max)
     _clip_tensor_queue: queue.Queue[object] = queue.Queue(maxsize=_clip_tensor_queue_max)
@@ -457,6 +537,12 @@ def run_index(
     _clip_tensor_sentinel = object()
     _diag_set("clip_batch_size", _clip_batch_size)
     _diag_set("clip_preprocess_workers", _clip_preprocess_workers)
+    _diag_set("clip_image_queue_max", _clip_image_queue_max)
+    _diag_set("clip_tensor_queue_max", _clip_tensor_queue_max)
+
+    def _diag_clip_queue_sizes() -> None:
+        _diag_set("clip_image_queue_size", _clip_image_queue.qsize())
+        _diag_set("clip_tensor_queue_size", _clip_tensor_queue.qsize())
 
     def _clip_batch_worker() -> None:
         import struct
@@ -496,6 +582,9 @@ def run_index(
                     onnx_bundle = None
                 if onnx_bundle is not None:
                     onnx_session, _preprocess, onnx_providers = onnx_bundle
+                    # Keep the session referenced only by ``onnx_session`` so
+                    # dropping it on fallback actually frees its GPU memory.
+                    onnx_bundle = None
                     _diag_set("clip_providers", ", ".join(onnx_providers))
                     if any(p == "TensorrtExecutionProvider" for p in onnx_providers):
                         _diag_set("clip_accelerator", "tensorrt")
@@ -521,19 +610,30 @@ def run_index(
         def _is_cuda_oom(exc: BaseException) -> bool:
             return "out of memory" in str(exc).lower()
 
+        def _drop_onnx_session() -> None:
+            """Release the ONNX session so its VRAM is free before Torch loads."""
+            nonlocal onnx_session
+            onnx_session = None
+            import gc
+
+            gc.collect()
+
         def _encode_tensors(tensors: list[object]) -> object:
             import numpy as np
 
             nonlocal device, model, onnx_session
 
             if onnx_session is not None:
+                io_binding = None
                 try:
                     _onnx_input_start = time.perf_counter()
                     batch_tensor = torch.stack(tensors).contiguous()
                     embeddings_np = None
+                    onnx_providers = onnx_session.get_providers()
+                    is_tensorrt_session = "TensorrtExecutionProvider" in onnx_providers
                     use_cuda_binding = (
                         torch.cuda.is_available()
-                        and "CPUExecutionProvider" not in onnx_session.get_providers()[:1]
+                        and "CPUExecutionProvider" not in onnx_providers[:1]
                     )
                     if use_cuda_binding:
                         try:
@@ -607,8 +707,24 @@ def run_index(
                         _diag_set("clip_status", "ONNX/TensorRT inference ready")
                     norms = np.linalg.norm(embeddings_np, axis=-1, keepdims=True)
                     embeddings_np = embeddings_np / np.maximum(norms, 1e-12)
-                    _diag_add("clip_inference_seconds", time.perf_counter() - _clip_infer_start)
+                    _onnx_infer_seconds = time.perf_counter() - _clip_infer_start
+                    _diag_add("clip_inference_seconds", _onnx_infer_seconds)
                     _diag_inc("clip_batches")
+                    if not is_tensorrt_session and _slow_onnx_guard.observe(
+                        _onnx_infer_seconds, len(tensors)
+                    ):
+                        _log.warning(
+                            "CLIP ONNX CUDA was slow for %d batches in a row (last: %.1fs "
+                            "for %d image(s), limit %.1fs); disabling ONNX CUDA for the "
+                            "rest of this indexing run and falling back to Torch",
+                            _slow_onnx_guard.streak,
+                            _onnx_infer_seconds,
+                            len(tensors),
+                            _slow_onnx_guard.limit_for(len(tensors)),
+                        )
+                        _diag_inc("clip_onnx_slow_fallbacks")
+                        _diag_set("clip_status", "ONNX CUDA slow; falling back to Torch")
+                        _drop_onnx_session()
                     return embeddings_np.astype("float32", copy=False)
                 except Exception:  # noqa: BLE001
                     _log.warning(
@@ -618,7 +734,8 @@ def run_index(
                     )
                     _diag_set("clip_inference_started_at", 0.0)
                     _diag_set("clip_status", "ONNX/TensorRT failed; falling back to Torch")
-                    onnx_session = None
+                    io_binding = None  # may still reference the session
+                    _drop_onnx_session()
 
             try:
                 if model is None or device is None:
@@ -668,9 +785,11 @@ def run_index(
         def _clip_preprocess_worker() -> None:
             while True:
                 item = _clip_image_queue.get()
+                _diag_clip_queue_sizes()
                 if item is _clip_image_sentinel:
                     _clip_image_queue.task_done()
                     _clip_tensor_queue.put(_clip_tensor_sentinel)
+                    _diag_clip_queue_sizes()
                     break
                 asset_id, relpath, img = item  # type: ignore[misc]
                 try:
@@ -682,6 +801,7 @@ def run_index(
                     )
                     _tensor_queue_wait_start = time.perf_counter()
                     _clip_tensor_queue.put((asset_id, relpath, tensor))
+                    _diag_clip_queue_sizes()
                     _diag_add(
                         "clip_tensor_queue_wait_seconds",
                         time.perf_counter() - _tensor_queue_wait_start,
@@ -707,6 +827,7 @@ def run_index(
             preprocess_sentinels_seen = 0
             while True:
                 item = _clip_tensor_queue.get()
+                _diag_clip_queue_sizes()
                 if item is _clip_tensor_sentinel:
                     _clip_tensor_queue.task_done()
                     preprocess_sentinels_seen += 1
@@ -725,6 +846,7 @@ def run_index(
                         break
                     try:
                         next_item = _clip_tensor_queue.get(timeout=min(0.05, remaining))
+                        _diag_clip_queue_sizes()
                     except queue.Empty:
                         continue
                     if next_item is _clip_tensor_sentinel:
@@ -747,7 +869,11 @@ def run_index(
                         "clip_batch_fill_wait_seconds",
                         time.perf_counter() - _batch_fill_start,
                     )
+                    _batch_infer_start = time.perf_counter()
                     embeddings_np = _encode_tensors(tensors)
+                    _batch_infer_seconds = time.perf_counter() - _batch_infer_start
+                    _diag_set("clip_batch_inference_last_seconds", _batch_infer_seconds)
+                    _diag_max("clip_batch_inference_max_seconds", _batch_infer_seconds)
                     rows = [
                         (asset_id, struct.pack(f"{emb.shape[0]}f", *emb), now)
                         for asset_id, emb in zip(asset_ids, embeddings_np, strict=True)
@@ -762,6 +888,7 @@ def run_index(
                     _diag_add("clip_write_seconds", time.perf_counter() - _clip_write_start)
                     _diag_inc("clip_embeddings_computed", len(rows))
                     _diag_inc("clip_batch_items", len(rows))
+                    _diag_set("clip_batch_last_size", len(rows))
                     _diag_max("clip_batch_max_size", len(rows))
                     for relpath in relpaths:
                         _log.debug("CLIP inference done for %r", relpath)
@@ -800,9 +927,11 @@ def run_index(
                 return
             try:
                 _clip_image_queue.put((asset_id, relpath, img_rgb), timeout=0.25)
+                _diag_clip_queue_sizes()
                 _diag_add("clip_queue_wait_seconds", time.perf_counter() - _queue_wait_start)
                 return
             except queue.Full:
+                _diag_clip_queue_sizes()
                 continue
 
     # SQLite writes are serialized through one writer thread.  Claims and pHash

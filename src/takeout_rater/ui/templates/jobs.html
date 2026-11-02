@@ -234,10 +234,16 @@
           ['CLIP providers', 'clip_providers', 'providers'],
           ['CLIP embeddings', 'clip_embeddings_computed', 'count'],
           ['CLIP batches', 'clip_batches', 'count'],
+          ['CLIP ONNX slow fallbacks', 'clip_onnx_slow_fallbacks', 'count'],
           ['CLIP batch target', 'clip_batch_size', 'count'],
+          ['CLIP batch last', 'clip_batch_last_size', 'count'],
           ['CLIP batch average', 'clip_batch_avg_size', 'number'],
           ['CLIP batch max', 'clip_batch_max_size', 'count'],
-          ['CLIP preprocess workers', 'clip_preprocess_workers', 'count']
+          ['CLIP preprocess workers', 'clip_preprocess_workers', 'count'],
+          ['CLIP image queue', 'clip_image_queue_size', 'count'],
+          ['CLIP image queue max', 'clip_image_queue_max', 'count'],
+          ['CLIP tensor queue', 'clip_tensor_queue_size', 'count'],
+          ['CLIP tensor queue max', 'clip_tensor_queue_max', 'count']
         ]
       },
       {
@@ -269,6 +275,8 @@
           ['CLIP preprocess', 'clip_preprocess_seconds'],
           ['CLIP tensor queue wait', 'clip_tensor_queue_wait_seconds'],
           ['CLIP batch fill wait', 'clip_batch_fill_wait_seconds'],
+          ['CLIP batch last inference', 'clip_batch_inference_last_seconds'],
+          ['CLIP batch max inference', 'clip_batch_inference_max_seconds'],
           ['CLIP ONNX input', 'clip_onnx_input_seconds'],
           ['CLIP ONNX run', 'clip_onnx_run_seconds'],
           ['CLIP current inference', 'clip_inference_active_seconds'],
