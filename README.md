@@ -9,6 +9,7 @@ and exports, and it will give you access to tools such as:
  - Library and album browsing
  - Several aesthetics scorers
  - CLIP-based semantic search
+ - Text-in-photo search (OCR with RapidOCR + SQLite FTS5)
  - Face detection and grouping
 
 and much more.

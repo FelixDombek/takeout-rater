@@ -23,6 +23,7 @@ from takeout_rater.db.queries import (
     get_asset_by_id,
     get_asset_scores,
     get_clip_embedding_for_asset,
+    get_ocr_text,
     get_phash,
     get_taken_at_range,
     list_assets,
@@ -473,6 +474,8 @@ def asset_detail(
     phash_row = get_phash(conn, asset_id)
     phash_hex: str | None = phash_row["phash_hex"] if phash_row else None
 
+    ocr_row = get_ocr_text(conn, asset_id)
+
     templates = request.app.state.templates
     ctx = {
         "request": request,
@@ -482,6 +485,7 @@ def asset_detail(
         "sidecar_json": sidecar_json,
         "exif_data": exif_data,
         "phash_hex": phash_hex,
+        "ocr": ocr_row,
     }
     if partial == "1":
         return templates.TemplateResponse("detail_partial.html", ctx)

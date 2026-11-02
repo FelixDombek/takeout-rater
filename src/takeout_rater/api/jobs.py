@@ -53,6 +53,7 @@ _JOB_TYPES = (
     "embed",
     "detect_faces",
     "cluster_faces",
+    "ocr",
 )
 
 
@@ -1846,3 +1847,240 @@ def start_cluster_faces_job(body: _ClusterFacesStartBody, request: Request) -> J
     thread.start()
 
     return JSONResponse({"status": "started"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/ocr/start
+# ---------------------------------------------------------------------------
+
+
+class _OcrStartBody(BaseModel):
+    source: str = "thumbnail"  # "thumbnail" | "original"
+    accelerator: str = "gpu"  # "gpu" | "cpu"
+    min_score: float = 0.6
+    redo: bool = False
+
+
+@router.post("/api/jobs/ocr/start")
+def start_ocr_job(body: _OcrStartBody, request: Request) -> JSONResponse:
+    """Start a background OCR job that reads text in photos for text search.
+
+    Runs RapidOCR (ONNX Runtime, CUDA when available) on every asset that has
+    not been processed yet and stores the recognised text in ``ocr_text``,
+    which is indexed by the ``ocr_text_fts`` FTS5 table.
+
+    Body fields
+    -----------
+    source : str
+        ``"thumbnail"`` (default, fast: reads the cached 512 px thumbnails) or
+        ``"original"`` (slower: decodes the original photo, downscaled to
+        2048 px, which reads much smaller text).  Falls back to the thumbnail
+        when an original cannot be decoded.
+    accelerator : str
+        ``"gpu"`` (CUDA, falling back to CPU) or ``"cpu"``.
+    min_score : float
+        Drop recognised lines below this confidence (0–1). Default ``0.6``.
+    redo : bool
+        Clear all stored OCR text first and process every asset again.
+
+    Returns ``409`` if an OCR job is already running.
+    """
+    _require_photos_root(request)
+    jobs = _get_jobs(request.app)
+
+    if body.source not in ("thumbnail", "original"):
+        raise HTTPException(status_code=400, detail="source must be 'thumbnail' or 'original'.")
+    if body.accelerator not in ("gpu", "cpu"):
+        raise HTTPException(status_code=400, detail="accelerator must be 'gpu' or 'cpu'.")
+    if not 0.0 <= body.min_score <= 1.0:
+        raise HTTPException(status_code=400, detail="min_score must be between 0 and 1.")
+
+    existing = jobs.get("ocr")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="An OCR job is already running.")
+
+    source = body.source
+    accelerator = body.accelerator
+    min_score = body.min_score
+    redo = body.redo
+    progress = JobProgress(job_type="ocr", running=True, message="Starting…")
+    jobs["ocr"] = progress
+
+    def _worker() -> None:
+        from collections import deque
+        from concurrent.futures import Future, ThreadPoolExecutor
+
+        from takeout_rater.db.queries import (
+            clear_ocr_text,
+            list_asset_ids_without_ocr,
+            upsert_ocr_texts,
+        )
+        from takeout_rater.indexing.thumbnailer import thumb_path_for_id
+        from takeout_rater.ocr.engine import ORIGINAL_MAX_SIDE, OcrEngine, load_image_bgr
+
+        worker_conn = _open_worker_conn(request.app)
+        thumbs_dir = _configured_thumbs_dir(request.app)
+        photos_root = _configured_photos_root(request.app)
+        db_batch_size = 64
+        prefetch_workers = 4
+        prefetch_window = 32
+        try:
+            if redo:
+                progress.message = "Clearing previous OCR results…"
+                clear_ocr_text(worker_conn)
+
+            asset_ids = list_asset_ids_without_ocr(worker_conn)
+            total = len(asset_ids)
+            progress.total = total
+            if total == 0:
+                progress.message = "All assets already have OCR text."
+                progress.running = False
+                progress.done = True
+                return
+
+            relpaths: dict[int, str] = {}
+            if source == "original":
+                relpaths = {
+                    int(r[0]): r[1]
+                    for r in worker_conn.execute("SELECT id, relpath FROM assets").fetchall()
+                }
+
+            progress.message = "Loading OCR models…"
+            engine = OcrEngine(accelerator=accelerator, min_score=min_score)
+            backend = "CUDA" if engine.active_accelerator == "gpu" else "CPU"
+            engine_id = engine.engine_id
+            progress.diagnostics = {
+                "backend": backend,
+                "engine": engine_id,
+                "source": source,
+                "with_text": 0,
+                "unreadable": 0,
+            }
+
+            def _load(aid: int) -> tuple[int, str, object | None, str]:
+                if source == "original" and photos_root is not None:
+                    rel = relpaths.get(aid)
+                    if rel:
+                        img = load_image_bgr(photos_root / rel, max_side=ORIGINAL_MAX_SIDE)
+                        if img is not None:
+                            return aid, rel, img, "original"
+                thumb = thumb_path_for_id(thumbs_dir, aid)
+                if not thumb.exists():
+                    return aid, thumb.name, None, "thumbnail"
+                return aid, thumb.name, load_image_bgr(thumb), "thumbnail"
+
+            rows: list[tuple[int, str, int, float | None, str, str]] = []
+            processed = 0
+            with_text = 0
+            unreadable = 0
+
+            def _handle(aid: int, label: str, img: object | None, used_source: str) -> None:
+                nonlocal processed, with_text, unreadable
+                progress.current_item = label
+                if img is None:
+                    unreadable += 1
+                    # Leave unreadable assets unprocessed so a later run retries
+                    # them (e.g. once thumbnails exist).
+                else:
+                    try:
+                        result = engine.recognize(img)
+                    except Exception:  # noqa: BLE001
+                        _log.warning("OCR failed for asset %s (%s)", aid, label, exc_info=True)
+                        unreadable += 1
+                    else:
+                        if result.lines:
+                            with_text += 1
+                        rows.append(
+                            (
+                                aid,
+                                result.text,
+                                len(result.lines),
+                                result.mean_score,
+                                used_source,
+                                engine_id,
+                            )
+                        )
+                processed += 1
+                if len(rows) >= db_batch_size:
+                    upsert_ocr_texts(worker_conn, rows)
+                    rows.clear()
+                progress.processed = processed
+                progress.diagnostics["with_text"] = with_text
+                progress.diagnostics["unreadable"] = unreadable
+                progress.message = (
+                    f"Reading text on {backend}… {processed} / {total} ({with_text} with text)"
+                )
+
+            if threading.Thread is not _REAL_THREAD:
+                # Tests patch threading.Thread to run synchronously; keep it simple.
+                for aid in asset_ids:
+                    if progress.cancel_event.is_set():
+                        break
+                    _handle(*_load(aid))
+            else:
+                asset_iter = iter(asset_ids)
+                pending: deque[Future[tuple[int, str, object | None, str]]] = deque()
+
+                def _fill(executor: ThreadPoolExecutor) -> None:
+                    while len(pending) < prefetch_window and not progress.cancel_event.is_set():
+                        try:
+                            next_aid = next(asset_iter)
+                        except StopIteration:
+                            break
+                        pending.append(executor.submit(_load, next_aid))
+
+                with ThreadPoolExecutor(max_workers=prefetch_workers) as executor:
+                    _fill(executor)
+                    while pending and not progress.cancel_event.is_set():
+                        future = pending.popleft()
+                        _fill(executor)
+                        try:
+                            loaded = future.result()
+                        except Exception:  # noqa: BLE001
+                            _log.warning("OCR image prefetch failed", exc_info=True)
+                            continue
+                        _handle(*loaded)
+                    for future in pending:
+                        future.cancel()
+
+            if rows:
+                upsert_ocr_texts(worker_conn, rows)
+
+            progress.current_item = ""
+            if progress.cancel_event.is_set():
+                progress.message = (
+                    f"OCR cancelled — {processed} asset(s) processed, {with_text} with text."
+                )
+            else:
+                progress.message = (
+                    f"OCR complete — {processed} asset(s) processed, {with_text} with text."
+                )
+                if unreadable:
+                    progress.message += f" {unreadable} could not be read."
+            progress.running = False
+            progress.done = True
+        except Exception as exc:  # noqa: BLE001
+            _log.exception("OCR job failed")
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+            progress.current_item = ""
+            progress.running = False
+            progress.done = True
+        finally:
+            worker_conn.close()
+
+    thread = threading.Thread(target=_worker, daemon=True, name="takeout-rater-ocr")
+    thread.start()
+
+    return JSONResponse({"status": "started"})
+
+
+@router.post("/api/jobs/ocr/cancel")
+def cancel_ocr_job(request: Request) -> JSONResponse:
+    """Request cancellation of the running OCR job (``404`` if none is running)."""
+    jobs = _get_jobs(request.app)
+    p = jobs.get("ocr")
+    if p is None or not p.running:
+        raise HTTPException(status_code=404, detail="No OCR job is currently running.")
+    p.cancel_event.set()
+    return JSONResponse({"status": "cancelling"})

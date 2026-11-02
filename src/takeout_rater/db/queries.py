@@ -19,8 +19,10 @@ CURRENT_INDEXER_VERSION : int
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -2538,3 +2540,227 @@ def count_album_assets(conn: sqlite3.Connection, album_id: int) -> int:
         "SELECT COUNT(*) FROM album_assets WHERE album_id = ?", (album_id,)
     ).fetchone()
     return row[0]
+
+
+# ---------------------------------------------------------------------------
+# OCR text + FTS5 search
+# ---------------------------------------------------------------------------
+
+# Sentinel characters wrapped around matched terms by FTS5 ``snippet()``.  They
+# never occur in OCR output, so the API layer can HTML-escape the snippet and
+# then turn them into ``<mark>`` tags safely.
+OCR_SNIPPET_START = "\x02"
+OCR_SNIPPET_END = "\x03"
+
+#: Shortest term the trigram FTS index can match; shorter terms use LIKE.
+_FTS_MIN_TERM_CHARS = 3
+
+
+def fold_for_search(text: str) -> str:
+    """Strip diacritics character by character (``"Brötchen"`` → ``"Brotchen"``).
+
+    Each character maps to exactly one character, so offsets in the folded
+    string are valid offsets in the original.  Case is kept; the trigram index
+    and the highlighter compare case-insensitively.
+    """
+    out = []
+    for ch in text:
+        if ch.isascii():
+            out.append(ch)
+            continue
+        base = unicodedata.normalize("NFD", ch)[0]
+        out.append(base if not unicodedata.combining(base) else ch)
+    return "".join(out)
+
+
+def parse_ocr_query(user_query: str) -> list[str]:
+    """Split free text typed by a user into search terms.
+
+    Whitespace separates terms; text in double quotes is one term (a phrase).
+    Every term is matched as a case-insensitive substring of the OCR text and
+    all terms must match.
+    """
+    terms: list[str] = []
+    for i, seg in enumerate(user_query.split('"')):
+        if i % 2 == 1:
+            phrase = " ".join(seg.split())
+            if phrase:
+                terms.append(phrase)
+        else:
+            terms.extend(seg.split())
+    return terms
+
+
+def build_ocr_fts_query(terms: list[str]) -> str:
+    """Build an FTS5 MATCH expression for the terms the trigram index can match.
+
+    Each term of at least three characters becomes a quoted string, which the
+    trigram tokenizer matches as a substring.  Quoting neutralises FTS5
+    operators (``OR``, ``NEAR``, ``-``, ``:``…), so arbitrary input never raises
+    a syntax error.  Returns ``''`` when no term is long enough.
+    """
+    return " ".join(
+        '"' + term.replace('"', '""') + '"' for term in terms if len(term) >= _FTS_MIN_TERM_CHARS
+    )
+
+
+def _like_pattern(term: str) -> str:
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _highlight(text: str, terms: list[str], context: int = 60) -> str:
+    """Return an excerpt of *text* around the first match, with every match of
+    *terms* (diacritic- and case-insensitive) wrapped in snippet sentinels."""
+    folded = fold_for_search(text)
+    pattern = re.compile(
+        "|".join(re.escape(fold_for_search(t)) for t in sorted(terms, key=len, reverse=True)),
+        re.IGNORECASE,
+    )
+    spans = [m.span() for m in pattern.finditer(folded)]
+    first = spans[0][0] if spans else 0
+    lo = max(0, first - context)
+    hi = min(len(text), first + context)
+    parts: list[str] = []
+    pos = lo
+    for start, end in spans:
+        if end <= lo or start >= hi:
+            continue
+        start, end = max(start, lo), min(end, hi)
+        parts.append(text[pos:start])
+        parts.append(OCR_SNIPPET_START + text[start:end] + OCR_SNIPPET_END)
+        pos = end
+    parts.append(text[pos:hi])
+    return ("…" if lo > 0 else "") + "".join(parts) + ("…" if hi < len(text) else "")
+
+
+def upsert_ocr_texts(
+    conn: sqlite3.Connection,
+    rows: list[tuple[int, str, int, float | None, str, str]],
+) -> None:
+    """Insert or update OCR results in one transaction.
+
+    Args:
+        conn: Open database connection.
+        rows: Tuples of ``(asset_id, text, n_lines, mean_score, source, engine)``.
+            ``text`` is ``''`` for assets in which no text was found.
+    """
+    now = int(time.time())
+    # ON CONFLICT DO UPDATE (not INSERT OR REPLACE) so the FTS update trigger fires.
+    conn.executemany(
+        "INSERT INTO ocr_text"
+        " (asset_id, text, text_folded, n_lines, mean_score, source, engine, processed_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(asset_id) DO UPDATE SET"
+        "  text = excluded.text, text_folded = excluded.text_folded,"
+        "  n_lines = excluded.n_lines,"
+        "  mean_score = excluded.mean_score, source = excluded.source,"
+        "  engine = excluded.engine, processed_at = excluded.processed_at",
+        [(r[0], r[1], fold_for_search(r[1]), *r[2:], now) for r in rows],
+    )
+    conn.commit()
+
+
+def clear_ocr_text(conn: sqlite3.Connection) -> None:
+    """Delete all OCR results (and their FTS index entries)."""
+    conn.execute("DELETE FROM ocr_text")
+    conn.execute("INSERT INTO ocr_text_fts (ocr_text_fts) VALUES ('rebuild')")
+    conn.commit()
+
+
+def list_asset_ids_without_ocr(conn: sqlite3.Connection) -> list[int]:
+    """Return IDs of assets that have not been processed by the OCR job yet."""
+    rows = conn.execute(
+        "SELECT a.id FROM assets a"
+        " LEFT JOIN ocr_text o ON o.asset_id = a.id"
+        " WHERE o.asset_id IS NULL"
+        " ORDER BY a.id"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def get_ocr_stats(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return OCR coverage counts.
+
+    Keys: ``total_assets``, ``processed`` (assets the OCR job has seen) and
+    ``with_text`` (processed assets in which some text was found).
+    """
+    total = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    processed, with_text = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(CASE WHEN text != '' THEN 1 ELSE 0 END), 0) FROM ocr_text"
+    ).fetchone()
+    return {"total_assets": total, "processed": processed, "with_text": with_text}
+
+
+def get_ocr_text(conn: sqlite3.Connection, asset_id: int) -> dict[str, Any] | None:
+    """Return the stored OCR row for *asset_id*, or ``None`` if not processed."""
+    row = conn.execute(
+        "SELECT asset_id, text, n_lines, mean_score, source, engine, processed_at"
+        " FROM ocr_text WHERE asset_id = ?",
+        (asset_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    keys = ("asset_id", "text", "n_lines", "mean_score", "source", "engine", "processed_at")
+    return dict(zip(keys, tuple(row), strict=True))
+
+
+def search_ocr_text(
+    conn: sqlite3.Connection,
+    user_query: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    """Substring search over OCR text, ranked by BM25.
+
+    Terms of three or more characters go through the trigram FTS5 index;
+    shorter terms (e.g. ``"7"`` in ``gleis 7``) are applied as ``LIKE``
+    filters on the matching rows.
+
+    Args:
+        conn: Open database connection.
+        user_query: Free text typed by the user (see :func:`parse_ocr_query`).
+        limit: Page size.
+        offset: Number of ranked results to skip.
+
+    Returns:
+        ``(results, total)`` where each result is
+        ``{"asset_id", "rank", "snippet"}``.  ``rank`` is the BM25 score (lower
+        is better; ``0`` when only short terms were given).  ``snippet``
+        contains :data:`OCR_SNIPPET_START` / :data:`OCR_SNIPPET_END` around
+        matches and is *not* HTML-escaped.
+    """
+    terms = parse_ocr_query(user_query)
+    if not terms:
+        return [], 0
+    match = build_ocr_fts_query([fold_for_search(t) for t in terms])
+    short_terms = [t for t in terms if len(t) < _FTS_MIN_TERM_CHARS]
+    like_sql = "".join(" AND o.text_folded LIKE ? ESCAPE '\\'" for _ in short_terms)
+    like_args = [_like_pattern(fold_for_search(t)) for t in short_terms]
+
+    if match:
+        from_where = (
+            " FROM ocr_text_fts JOIN ocr_text o ON o.asset_id = ocr_text_fts.rowid"
+            " WHERE ocr_text_fts MATCH ?" + like_sql
+        )
+        args: list[Any] = [match, *like_args]
+        total = conn.execute("SELECT COUNT(*)" + from_where, args).fetchone()[0]
+        rows = conn.execute(
+            "SELECT o.asset_id, bm25(ocr_text_fts), o.text" + from_where + " ORDER BY"
+            " bm25(ocr_text_fts), o.asset_id LIMIT ? OFFSET ?",
+            [*args, limit, offset],
+        ).fetchall()
+    else:
+        from_where = " FROM ocr_text o WHERE o.text_folded != ''" + like_sql
+        total = conn.execute("SELECT COUNT(*)" + from_where, like_args).fetchone()[0]
+        rows = conn.execute(
+            "SELECT o.asset_id, 0.0, o.text" + from_where + " ORDER BY o.asset_id LIMIT ? OFFSET ?",
+            [*like_args, limit, offset],
+        ).fetchall()
+
+    results = [
+        {"asset_id": int(r[0]), "rank": float(r[1]), "snippet": _highlight(r[2] or "", terms)}
+        for r in rows
+    ]
+    return results, int(total)

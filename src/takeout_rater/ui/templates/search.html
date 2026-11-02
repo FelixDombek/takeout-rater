@@ -109,6 +109,38 @@
   }
   .empty-state .icon { font-size: 3rem; margin-bottom: 0.5rem; }
 
+
+  /* Search type toggle + OCR panel */
+  .search-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .search-mode-row .mode-desc { flex: 1; min-width: 200px; }
+  .ocr-snippet {
+    padding: 0 0.5rem 0.45rem;
+    font-size: 0.72rem;
+    color: #555;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  .ocr-snippet mark { background: #fde68a; color: inherit; padding: 0 1px; border-radius: 2px; }
+  .ocr-panel { margin-bottom: 1.25rem; }
+  .ocr-panel > summary {
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #444;
+    padding: 0.35rem 0;
+  }
+  .ocr-panel > summary .ocr-coverage { color: #888; font-weight: normal; margin-left: 0.4rem; }
+  .ocr-panel .job-card { margin-top: 0.5rem; }
+
   /* Highlight active card when lightbox is open */
   .card.card--active { box-shadow: 0 0 0 3px #7ec8e3, 0 4px 10px rgba(0,0,0,.2); }
 </style>
@@ -117,20 +149,68 @@
 
 {% block content %}
 <div class="search-page">
-  <h1>🔍 Semantic Search</h1>
+  <h1>🔍 Search</h1>
   <p class="subtitle">
-    Search your photos by describing what you're looking for. Uses CLIP to match
-    text descriptions against image content.
+    Search your photos by describing what you're looking for (CLIP), or by words
+    that appear in them, like signs, menus, documents and screenshots (OCR).
   </p>
+
+  <div class="search-mode-row">
+    <div class="seg-tabs" role="tablist" aria-label="Search type">
+      <button class="seg-tab{% if mode != 'text' %} active{% endif %}" role="tab"
+              aria-selected="{{ 'false' if mode == 'text' else 'true' }}"
+              data-search-mode="clip" id="search-mode-clip">Visual (CLIP)</button>
+      <button class="seg-tab{% if mode == 'text' %} active{% endif %}" role="tab"
+              aria-selected="{{ 'true' if mode == 'text' else 'false' }}"
+              data-search-mode="text" id="search-mode-text">Text in photo (OCR)</button>
+    </div>
+    <span class="mode-desc" id="search-mode-desc"></span>
+  </div>
+
+  <details class="ocr-panel" id="ocr-panel"{% if mode != 'text' %} style="display:none"{% endif %}>
+    <summary>Text recognition (OCR) <span class="ocr-coverage" id="ocr-coverage"></span></summary>
+    <div class="job-card" id="card-ocr">
+      <div class="job-card-header">
+        <h2>Read Text in Photos</h2>
+        <span class="badge-running" id="badge-ocr" style="display:none;">Running…</span>
+        <button class="btn" id="btn-cancel-ocr" style="display:none;" onclick="cancelOcrJob()">Cancel</button>
+        <button class="btn btn-primary btn-run" id="btn-ocr" onclick="startOcrJob()">Run OCR</button>
+      </div>
+      <p class="desc">
+        Recognises text in every photo with <strong>RapidOCR</strong> (PaddleOCR models on
+        ONNX Runtime) and indexes it for full-text search. Only photos that have not been
+        read yet are processed, so the job can be re-run after indexing new photos.
+      </p>
+      <div class="job-options">
+        <label for="ocr-source">Source:</label>
+        <select id="ocr-source">
+          <option value="thumbnail">Thumbnails (fast)</option>
+          <option value="original">Originals (smaller text, slower)</option>
+        </select>
+        <label for="ocr-accelerator">Backend:</label>
+        <select id="ocr-accelerator">
+          <option value="gpu">CUDA (falls back to CPU)</option>
+          <option value="cpu">CPU</option>
+        </select>
+        <label for="ocr-min-score">Min confidence:</label>
+        <input type="number" id="ocr-min-score" value="0.6" min="0" max="1" step="0.05" style="width:70px;">
+        <label><input type="checkbox" id="ocr-redo"> Re-read all photos</label>
+      </div>
+      <div class="progress-bar-wrap" id="prog-wrap-ocr"><div class="progress-bar" id="prog-bar-ocr"></div></div>
+      <div class="job-current-item" id="current-item-ocr"></div>
+      <div class="job-status" id="status-ocr"></div>
+    </div>
+  </details>
 
   <div class="search-bar">
     <input type="text"
            id="search-input"
            placeholder="e.g. sunset over the ocean, birthday cake, dog playing in snow…"
+           value="{{ query }}"
            autocomplete="off"
            autofocus>
   </div>
-  <p class="search-hint">Results update as you type. Try describing colors, objects, scenes, or activities.</p>
+  <p class="search-hint" id="search-hint">Results update as you type. Try describing colors, objects, scenes, or activities.</p>
 
   <div id="search-status" class="search-status"></div>
   <div id="search-results" class="grid"></div>
@@ -141,10 +221,63 @@
   var input = document.getElementById('search-input');
   var resultsEl = document.getElementById('search-results');
   var statusEl = document.getElementById('search-status');
+  var hintEl = document.getElementById('search-hint');
+  var modeDescEl = document.getElementById('search-mode-desc');
+  var ocrPanel = document.getElementById('ocr-panel');
   var debounceTimer = null;
   var currentQuery = '';
   var currentPage = 1;
   var isLoadingMore = false;
+  var hasMore = false;
+  var searchMode = {{ (mode or 'clip')|tojson }};
+  var requestSeq = 0;
+
+  var MODES = {
+    clip: {
+      placeholder: 'e.g. sunset over the ocean, birthday cake, dog playing in snow…',
+      hint: 'Results update as you type. Try describing colors, objects, scenes, or activities.',
+      desc: 'Matches the meaning of your description against image content.'
+    },
+    text: {
+      placeholder: 'e.g. hauptbahnhof, menu, "happy birthday", invoice…',
+      hint: 'Matches text written in the photos, ignoring case. Parts of words match too (bahn finds Hauptbahnhof); use "quotes" for a phrase.',
+      desc: 'Finds photos by words that appear in them (signs, documents, screenshots).'
+    }
+  };
+
+  function syncUrl() {
+    var params = new URLSearchParams();
+    if (searchMode !== 'clip') params.set('mode', searchMode);
+    if (currentQuery) params.set('q', currentQuery);
+    var qs = params.toString();
+    history.replaceState(null, '', '/search' + (qs ? '?' + qs : ''));
+  }
+
+  function applyMode(mode) {
+    searchMode = mode;
+    document.querySelectorAll('.seg-tab[data-search-mode]').forEach(function(btn) {
+      var active = btn.dataset.searchMode === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    input.placeholder = MODES[mode].placeholder;
+    hintEl.textContent = MODES[mode].hint;
+    modeDescEl.textContent = MODES[mode].desc;
+    ocrPanel.style.display = mode === 'text' ? '' : 'none';
+    if (mode === 'text') refreshOcrStatus();
+  }
+
+  document.querySelectorAll('.seg-tab[data-search-mode]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (btn.dataset.searchMode === searchMode) return;
+      applyMode(btn.dataset.searchMode);
+      currentQuery = input.value;
+      currentPage = 1;
+      syncUrl();
+      doSearch(currentQuery, 1);
+      input.focus();
+    });
+  });
 
   function doSearch(query, page) {
     if (!query.trim()) {
@@ -153,23 +286,27 @@
       statusEl.className = 'search-status';
       currentQuery = '';
       currentPage = 1;
+      hasMore = false;
       return;
     }
 
+    var seq = ++requestSeq;
     if (page === 1) {
       statusEl.textContent = 'Searching…';
       statusEl.className = 'search-status loading';
     }
 
-    var url = '/api/search?q=' + encodeURIComponent(query) + '&limit=50&page=' + page + '&partial=1';
+    var url = '/api/search?q=' + encodeURIComponent(query) + '&limit=50&page=' + page +
+      '&partial=1&mode=' + searchMode;
+    var modeAtRequest = searchMode;
     fetch(url)
       .then(function(r) {
         if (!r.ok) throw new Error('Search failed');
         return r.text();
       })
       .then(function(html) {
-        if (query !== currentQuery && page === 1) {
-          // Query changed while we were fetching — discard stale results
+        if (page === 1 && (seq !== requestSeq || query !== currentQuery || modeAtRequest !== searchMode)) {
+          // Query or mode changed while we were fetching — discard stale results
           return;
         }
         if (page === 1) {
@@ -186,23 +323,34 @@
 
         // Update status from data attributes on the injected meta div
         var meta = resultsEl.querySelector('[data-search-meta]');
+        var shown = resultsEl.querySelectorAll('.card').length;
         if (meta) {
           var totalEmbedded = meta.getAttribute('data-total-embedded');
-          var totalResults = meta.getAttribute('data-total-results');
+          var totalResults = parseInt(meta.getAttribute('data-total-results') || '0', 10);
           var noEmbed = meta.getAttribute('data-no-embeddings');
+          var noOcr = meta.getAttribute('data-no-ocr');
           meta.remove();
+          hasMore = shown < totalResults;
 
           if (noEmbed === 'true') {
             statusEl.innerHTML = '⚠️ No CLIP embeddings computed yet. Re-run the indexer to compute embeddings.';
             statusEl.className = 'search-status';
+          } else if (noOcr === 'true') {
+            statusEl.textContent = '⚠️ No photos have been read yet. Run OCR below to make text searchable.';
+            statusEl.className = 'search-status';
+            ocrPanel.open = true;
           } else if (totalResults) {
-            var shown = resultsEl.querySelectorAll('.card').length;
-            statusEl.textContent = 'Showing ' + shown + ' of ' + totalResults + ' results (from ' + totalEmbedded + ' embedded images)';
+            var noun = modeAtRequest === 'text' ? ' photos read by OCR' : ' embedded images';
+            statusEl.textContent = 'Showing ' + shown + ' of ' + totalResults + ' results (from ' + totalEmbedded + noun + ')';
+            statusEl.className = 'search-status';
+          } else if (shown === 0) {
+            statusEl.textContent = 'No results found.';
             statusEl.className = 'search-status';
           }
         } else if (resultsEl.children.length === 0) {
           statusEl.textContent = 'No results found.';
           statusEl.className = 'search-status';
+          hasMore = false;
         }
       })
       .catch(function(err) {
@@ -218,13 +366,14 @@
     debounceTimer = setTimeout(function() {
       currentQuery = q;
       currentPage = 1;
+      syncUrl();
       doSearch(q, 1);
     }, 300);
   });
 
   // Infinite scroll for more results
   window.addEventListener('scroll', function() {
-    if (isLoadingMore || !currentQuery) return;
+    if (isLoadingMore || !currentQuery || !hasMore) return;
     var scrollBottom = window.innerHeight + window.scrollY;
     if (scrollBottom >= document.body.offsetHeight - 400) {
       isLoadingMore = true;
@@ -232,6 +381,127 @@
       doSearch(currentQuery, currentPage);
     }
   });
+
+  // ── OCR job card ──────────────────────────────────────────────────────
+  var ocrPoller = null;
+  var ocrWasRunning = false;
+
+  function refreshOcrStatus() {
+    fetch('/api/ocr/status')
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(s) {
+        if (!s) return;
+        var el = document.getElementById('ocr-coverage');
+        el.textContent = '— ' + s.processed.toLocaleString() + ' of ' +
+          s.total_assets.toLocaleString() + ' photos read, ' +
+          s.with_text.toLocaleString() + ' with text';
+        if (!s.rapidocr_installed) {
+          setOcrStatus('RapidOCR is not installed. Run `pip install rapidocr` in the app environment.', 'error');
+          document.getElementById('btn-ocr').disabled = true;
+        }
+        if (!s.cuda_available) {
+          document.getElementById('ocr-accelerator').value = 'cpu';
+        }
+        if (s.processed === 0) ocrPanel.open = true;
+      })
+      .catch(function() {});
+  }
+
+  function setOcrStatus(text, cls) {
+    var el = document.getElementById('status-ocr');
+    el.textContent = text;
+    el.className = 'job-status' + (cls ? ' ' + cls : '');
+  }
+
+  function applyOcrState(d) {
+    var wrap = document.getElementById('prog-wrap-ocr');
+    var bar = document.getElementById('prog-bar-ocr');
+    document.getElementById('badge-ocr').style.display = d.running ? '' : 'none';
+    document.getElementById('btn-cancel-ocr').style.display = d.running ? '' : 'none';
+    document.getElementById('btn-ocr').disabled = !!d.running;
+    document.getElementById('current-item-ocr').textContent = d.running ? (d.current_item || '') : '';
+    if (d.running && d.total > 0) {
+      wrap.classList.add('visible');
+      bar.style.width = Math.min(100, (100 * d.processed / d.total)).toFixed(1) + '%';
+    } else {
+      wrap.classList.remove('visible');
+    }
+    if (d.message) setOcrStatus(d.message, d.error ? 'error' : (d.running ? 'info' : 'ok'));
+    if (d.running) {
+      ocrWasRunning = true;
+    } else if (ocrWasRunning) {
+      ocrWasRunning = false;
+      stopOcrPolling();
+      refreshOcrStatus();
+      if (searchMode === 'text' && currentQuery) doSearch(currentQuery, 1);
+    }
+  }
+
+  function pollOcr() {
+    fetch('/api/jobs/status?job_type=ocr')
+      .then(function(r) { return r.json(); })
+      .then(applyOcrState)
+      .catch(function() {});
+  }
+
+  function startOcrPolling() {
+    if (ocrPoller) return;
+    pollOcr();
+    ocrPoller = setInterval(function() {
+      pollOcr();
+      if (ocrWasRunning) refreshOcrStatus();
+    }, 1500);
+  }
+
+  function stopOcrPolling() {
+    if (ocrPoller) { clearInterval(ocrPoller); ocrPoller = null; }
+  }
+
+  window.startOcrJob = function() {
+    var body = {
+      source: document.getElementById('ocr-source').value,
+      accelerator: document.getElementById('ocr-accelerator').value,
+      min_score: parseFloat(document.getElementById('ocr-min-score').value) || 0.6,
+      redo: document.getElementById('ocr-redo').checked
+    };
+    if (body.redo && !confirm('Discard all recognised text and read every photo again?')) return;
+    document.getElementById('btn-ocr').disabled = true;
+    setOcrStatus('Starting…', 'info');
+    fetch('/api/jobs/ocr/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || r.statusText); });
+        return r.json();
+      })
+      .then(function() { ocrWasRunning = true; startOcrPolling(); })
+      .catch(function(err) {
+        setOcrStatus('✗ ' + err.message, 'error');
+        document.getElementById('btn-ocr').disabled = false;
+      });
+  };
+
+  window.cancelOcrJob = function() {
+    fetch('/api/jobs/ocr/cancel', { method: 'POST' }).then(function() {
+      setOcrStatus('Cancelling…', 'info');
+    });
+  };
+
+  // Initial state: mode from the URL, resume polling if a job is running.
+  applyMode(searchMode);
+  fetch('/api/jobs/status?job_type=ocr')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.running) { ocrPanel.open = true; startOcrPolling(); }
+      else if (d.message) applyOcrState(d);
+    })
+    .catch(function() {});
+  if (input.value.trim()) {
+    currentQuery = input.value;
+    doSearch(currentQuery, 1);
+  }
 })();
 </script>
 

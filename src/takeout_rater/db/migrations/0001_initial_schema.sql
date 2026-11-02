@@ -180,6 +180,38 @@ CREATE TABLE IF NOT EXISTS face_cluster_members (
     PRIMARY KEY (cluster_id, face_id)
 );
 
+-- OCR text + FTS5 index (see 0009_ocr_text.sql)
+CREATE TABLE IF NOT EXISTS ocr_text (
+    asset_id     INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    text         TEXT    NOT NULL DEFAULT '',
+    text_folded  TEXT    NOT NULL DEFAULT '',
+    n_lines      INTEGER NOT NULL DEFAULT 0,
+    mean_score   REAL,
+    source       TEXT    NOT NULL,
+    engine       TEXT    NOT NULL,
+    processed_at INTEGER NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS ocr_text_fts USING fts5(
+    text_folded,
+    content = 'ocr_text',
+    content_rowid = 'asset_id',
+    tokenize = 'trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS ocr_text_ai AFTER INSERT ON ocr_text BEGIN
+    INSERT INTO ocr_text_fts (rowid, text_folded) VALUES (new.asset_id, new.text_folded);
+END;
+
+CREATE TRIGGER IF NOT EXISTS ocr_text_ad AFTER DELETE ON ocr_text BEGIN
+    INSERT INTO ocr_text_fts (ocr_text_fts, rowid, text_folded) VALUES ('delete', old.asset_id, old.text_folded);
+END;
+
+CREATE TRIGGER IF NOT EXISTS ocr_text_au AFTER UPDATE ON ocr_text BEGIN
+    INSERT INTO ocr_text_fts (ocr_text_fts, rowid, text_folded) VALUES ('delete', old.asset_id, old.text_folded);
+    INSERT INTO ocr_text_fts (rowid, text_folded) VALUES (new.asset_id, new.text_folded);
+END;
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_assets_taken_at         ON assets (taken_at);
 CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
@@ -194,4 +226,4 @@ CREATE INDEX IF NOT EXISTS idx_face_embeddings_run_id   ON face_embeddings(run_i
 CREATE INDEX IF NOT EXISTS idx_face_clusters_run_id     ON face_clusters(run_id);
 CREATE INDEX IF NOT EXISTS idx_face_cluster_members_face_id ON face_cluster_members(face_id);
 
-PRAGMA user_version = 14;
+PRAGMA user_version = 15;

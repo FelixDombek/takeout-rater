@@ -202,7 +202,8 @@ class TestSearchAPI:
     def test_search_page_returns_200(self, client_with_db: TestClient) -> None:
         resp = client_with_db.get("/search")
         assert resp.status_code == 200
-        assert b"Semantic Search" in resp.content
+        assert b"Visual (CLIP)" in resp.content
+        assert b"Text in photo (OCR)" in resp.content
 
     def test_search_page_redirects_without_db(self, client_no_db: TestClient) -> None:
         resp = client_no_db.get("/search")
