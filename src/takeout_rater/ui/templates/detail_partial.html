@@ -21,6 +21,13 @@
     {% if loc %}
     <tr><td>Location</td><td>{{ "%.5f"|format(loc[0]) }}, {{ "%.5f"|format(loc[1]) }} · <a href="/map?asset={{ asset.id }}">🗺️ Show on map</a></td></tr>
     {% endif %}
+    {% if place %}
+    <tr>
+      <td>Place</td>
+      <td><a href="/assets?{{ {"country": place.country_code, "region": place.admin1 or "", "city": place.city or ""} | urlencode }}"
+             title="Browse photos from this place">{{ [place.city, place.admin1, place.country] | select | unique | join(", ") }}</a></td>
+    </tr>
+    {% endif %}
     {% if asset.favorited %}
     <tr><td>Favorited</td><td>⭐ Yes</td></tr>
     {% endif %}

@@ -19,7 +19,7 @@ _INCREMENTAL_MIGRATION_BASE: int = 13
 _INCREMENTAL_MIGRATIONS: dict[int, Path] = {
     14: _MIGRATIONS_DIR / "0008_clustering_n_skipped.sql",
     15: _MIGRATIONS_DIR / "0009_image_embeddings.sql",
-    # 16: place names (0010_asset_places.sql, PR #172) lands before this one.
+    16: _MIGRATIONS_DIR / "0010_asset_places.sql",
     17: _MIGRATIONS_DIR / "0011_ocr_text.sql",
 }
 

@@ -243,6 +243,43 @@ def lookup_sha256(conn: sqlite3.Connection, sha256: str) -> tuple[int, bool] | N
     return None
 
 
+@dataclass(frozen=True)
+class PlaceFilter:
+    """Restrict asset queries to a reverse-geocoded place (see ``asset_places``).
+
+    Each field is optional; set fields are combined with AND.  ``country_code``
+    is an ISO alpha-2 code, ``admin1`` and ``city`` are the stored names.
+    """
+
+    country_code: str | None = None
+    admin1: str | None = None
+    city: str | None = None
+
+    def is_empty(self) -> bool:
+        return not (self.country_code or self.admin1 or self.city)
+
+    def sql_condition(self, id_column: str) -> tuple[str, list[Any]]:
+        """Return ``("<id_column> IN (SELECT …)", params)`` for a WHERE clause.
+
+        *id_column* is a trusted, code-controlled column reference such as
+        ``"id"`` or ``"a.id"``.
+        """
+        conds: list[str] = []
+        params: list[Any] = []
+        for col, value in (
+            ("country_code", self.country_code),
+            ("admin1", self.admin1),
+            ("city", self.city),
+        ):
+            if value:
+                conds.append(f"{col} = ?")
+                params.append(value)
+        if not conds:
+            return "1 = 1", []
+        where = " AND ".join(conds)
+        return f"{id_column} IN (SELECT asset_id FROM asset_places WHERE {where})", params  # noqa: S608
+
+
 def list_assets(
     conn: sqlite3.Connection,
     *,
@@ -250,6 +287,7 @@ def list_assets(
     offset: int = 0,
     order_by: str = "taken_at DESC",
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     archived: bool | None = None,
     trashed: bool | None = None,
     ext: str | None = None,
@@ -263,6 +301,7 @@ def list_assets(
         order_by: SQL ``ORDER BY`` clause fragment.  Must be a trusted value
             (not user-supplied without validation).
         favorited: If not ``None``, filter to assets where ``favorited`` matches.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         archived: If not ``None``, filter to assets where ``archived`` matches.
         trashed: If not ``None``, filter to assets where ``trashed`` matches.
         ext: If not ``None``, filter to assets with this file extension (e.g. ``".jpg"``).
@@ -276,6 +315,10 @@ def list_assets(
     if favorited is not None:
         conditions.append("favorited = ?")
         params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("id")
+        conditions.append(place_sql)
+        params.extend(place_params)
     if archived is not None:
         conditions.append("archived = ?")
         params.append(1 if archived else 0)
@@ -299,6 +342,7 @@ def count_assets(
     conn: sqlite3.Connection,
     *,
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     archived: bool | None = None,
     trashed: bool | None = None,
     ext: str | None = None,
@@ -308,6 +352,7 @@ def count_assets(
     Args:
         conn: Open database connection.
         favorited: Optional favorited filter.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         archived: Optional archived filter.
         trashed: Optional trashed filter.
         ext: Optional file-extension filter.
@@ -321,6 +366,10 @@ def count_assets(
     if favorited is not None:
         conditions.append("favorited = ?")
         params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("id")
+        conditions.append(place_sql)
+        params.extend(place_params)
     if archived is not None:
         conditions.append("archived = ?")
         params.append(1 if archived else 0)
@@ -394,6 +443,7 @@ def list_assets_deduped(
     offset: int = 0,
     order_by: str = "taken_at DESC",
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     archived: bool | None = None,
     trashed: bool | None = None,
     ext: str | None = None,
@@ -410,6 +460,7 @@ def list_assets_deduped(
         offset: Rows to skip (for pagination).
         order_by: SQL ``ORDER BY`` clause fragment (trusted, code-controlled).
         favorited: Optional favorited filter.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         archived: Optional archived filter.
         trashed: Optional trashed filter.
         ext: Optional file-extension filter (e.g. ``".jpg"``).
@@ -423,6 +474,10 @@ def list_assets_deduped(
     if favorited is not None:
         conditions.append("favorited = ?")
         params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("id")
+        conditions.append(place_sql)
+        params.extend(place_params)
     if archived is not None:
         conditions.append("archived = ?")
         params.append(1 if archived else 0)
@@ -448,6 +503,7 @@ def count_assets_deduped(
     conn: sqlite3.Connection,
     *,
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     archived: bool | None = None,
     trashed: bool | None = None,
     ext: str | None = None,
@@ -460,6 +516,7 @@ def count_assets_deduped(
     Args:
         conn: Open database connection.
         favorited: Optional favorited filter.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         archived: Optional archived filter.
         trashed: Optional trashed filter.
         ext: Optional file-extension filter.
@@ -473,6 +530,10 @@ def count_assets_deduped(
     if favorited is not None:
         conditions.append("favorited = ?")
         params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("id")
+        conditions.append(place_sql)
+        params.extend(place_params)
     if archived is not None:
         conditions.append("archived = ?")
         params.append(1 if archived else 0)
@@ -567,6 +628,7 @@ def count_assets_newer_than(
     timestamp: int,
     *,
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     deduped: bool = False,
 ) -> int:
     """Count assets with ``taken_at`` strictly greater than *timestamp*.
@@ -580,6 +642,7 @@ def count_assets_newer_than(
         timestamp: Unix timestamp threshold.  Assets taken *after* this time
             are counted.
         favorited: Optional favorited filter.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         deduped: If ``True``, count only the representative (lowest ``id``) of
             each SHA-256 group, matching the behaviour of
             :func:`list_assets_deduped`.
@@ -593,6 +656,10 @@ def count_assets_newer_than(
     if favorited is not None:
         conditions.append("favorited = ?")
         params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("id")
+        conditions.append(place_sql)
+        params.extend(place_params)
 
     where = f"WHERE {' AND '.join(conditions)}"
 
@@ -822,6 +889,7 @@ def list_assets_by_score(
     offset: int = 0,
     descending: bool = True,
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     trashed: bool | None = None,
     min_score: float | None = None,
     max_score: float | None = None,
@@ -840,6 +908,7 @@ def list_assets_by_score(
         offset: Rows to skip (for pagination).
         descending: ``True`` (default) → highest score first.
         favorited: Optional favorited filter.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         trashed: Optional trashed filter.
         min_score: Optional inclusive lower bound on the score value.
         max_score: Optional inclusive upper bound on the score value.
@@ -861,6 +930,10 @@ def list_assets_by_score(
     if favorited is not None:
         conditions.append("a.favorited = ?")
         params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("a.id")
+        conditions.append(place_sql)
+        params.extend(place_params)
     if trashed is not None:
         conditions.append("a.trashed = ?")
         params.append(1 if trashed else 0)
@@ -893,6 +966,7 @@ def count_assets_with_score(
     variant_id: str,
     *,
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     trashed: bool | None = None,
     min_score: float | None = None,
     max_score: float | None = None,
@@ -905,6 +979,7 @@ def count_assets_with_score(
         metric_key: Metric key.
         variant_id: Variant identifier.
         favorited: Optional favorited filter.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         trashed: Optional trashed filter.
         min_score: Optional inclusive lower bound on the score value.
         max_score: Optional inclusive upper bound on the score value.
@@ -922,6 +997,10 @@ def count_assets_with_score(
     if favorited is not None:
         conditions.append("a.favorited = ?")
         params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("a.id")
+        conditions.append(place_sql)
+        params.extend(place_params)
     if trashed is not None:
         conditions.append("a.trashed = ?")
         params.append(1 if trashed else 0)
@@ -961,6 +1040,7 @@ def list_assets_multi_sort(
     limit: int = 100,
     offset: int = 0,
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     trashed: bool | None = None,
 ) -> list[tuple[AssetRow, float]]:
     """Return assets sorted by multiple score criteria.
@@ -974,6 +1054,7 @@ def list_assets_multi_sort(
         limit: Maximum number of rows.
         offset: Rows to skip (for pagination).
         favorited: Optional favorited filter (applied at the asset level).
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         trashed: Optional trashed filter.
 
     Returns:
@@ -1015,6 +1096,10 @@ def list_assets_multi_sort(
     if favorited is not None:
         conditions.append("a.favorited = ?")
         where_params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("a.id")
+        conditions.append(place_sql)
+        where_params.extend(place_params)
     if trashed is not None:
         conditions.append("a.trashed = ?")
         where_params.append(1 if trashed else 0)
@@ -1053,6 +1138,7 @@ def count_assets_multi_sort(
     criteria: list[SortCriterion],
     *,
     favorited: bool | None = None,
+    place: PlaceFilter | None = None,
     trashed: bool | None = None,
 ) -> int:
     """Count assets that satisfy a multi-criteria sort/filter specification.
@@ -1063,6 +1149,7 @@ def count_assets_multi_sort(
         conn: Open database connection.
         criteria: Ordered list of sort levels.
         favorited: Optional favorited filter.
+        place: Optional place-name filter (see :class:`PlaceFilter`).
         trashed: Optional trashed filter.
 
     Returns:
@@ -1098,6 +1185,10 @@ def count_assets_multi_sort(
     if favorited is not None:
         conditions.append("a.favorited = ?")
         where_params.append(1 if favorited else 0)
+    if place is not None:
+        place_sql, place_params = place.sql_condition("a.id")
+        conditions.append(place_sql)
+        where_params.extend(place_params)
     if trashed is not None:
         conditions.append("a.trashed = ?")
         where_params.append(1 if trashed else 0)
@@ -2802,6 +2893,178 @@ def count_album_assets(conn: sqlite3.Connection, album_id: int) -> int:
         "SELECT COUNT(*) FROM album_assets WHERE album_id = ?", (album_id,)
     ).fetchone()
     return row[0]
+
+
+# ---------------------------------------------------------------------------
+# Reverse-geocoded place names (asset_places)
+# ---------------------------------------------------------------------------
+
+
+def list_assets_for_geocoding(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return candidate rows for the place-name lookup.
+
+    One row per asset with some non-zero coordinates, with columns ``id``,
+    ``geo_lat``, ``geo_lon``, ``geo_exif_lat``, ``geo_exif_lon`` and the stored
+    ``asset_places`` values ``p_lat``, ``p_lon``, ``p_ver`` (``NULL`` when the
+    asset has not been geocoded yet).
+    """
+    sql = (
+        "SELECT a.id, a.geo_lat, a.geo_lon, a.geo_exif_lat, a.geo_exif_lon,"
+        " p.lat AS p_lat, p.lon AS p_lon, p.geocoder_version AS p_ver"
+        " FROM assets a LEFT JOIN asset_places p ON p.asset_id = a.id"
+        " WHERE (a.geo_lat IS NOT NULL AND a.geo_lon IS NOT NULL"
+        "        AND (a.geo_lat != 0 OR a.geo_lon != 0))"
+        "    OR (a.geo_exif_lat IS NOT NULL AND a.geo_exif_lon IS NOT NULL"
+        "        AND (a.geo_exif_lat != 0 OR a.geo_exif_lon != 0))"
+        " ORDER BY a.id"
+    )
+    return conn.execute(sql).fetchall()
+
+
+def upsert_asset_places(
+    conn: sqlite3.Connection,
+    rows: list[dict[str, Any]],
+) -> None:
+    """Insert or replace ``asset_places`` rows and commit.
+
+    Each dict needs ``asset_id``, ``lat``, ``lon``, ``geocoder_version`` and may
+    carry ``country_code``, ``country``, ``admin1``, ``admin2``, ``city``,
+    ``distance_km`` (missing keys are stored as NULL).
+    """
+    if not rows:
+        return
+    now = int(time.time())
+    conn.executemany(
+        "INSERT OR REPLACE INTO asset_places"
+        " (asset_id, lat, lon, country_code, country, admin1, admin2, city,"
+        "  distance_km, geocoder_version, geocoded_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                r["asset_id"],
+                r["lat"],
+                r["lon"],
+                r.get("country_code"),
+                r.get("country"),
+                r.get("admin1"),
+                r.get("admin2"),
+                r.get("city"),
+                r.get("distance_km"),
+                r["geocoder_version"],
+                now,
+            )
+            for r in rows
+        ],
+    )
+    conn.commit()
+
+
+def delete_stale_asset_places(conn: sqlite3.Connection, keep_ids: set[int]) -> int:
+    """Delete ``asset_places`` rows whose asset is not in *keep_ids*; return count.
+
+    Used to drop stored places of assets whose GPS coordinates were cleared.
+    """
+    stale = [
+        (r[0],)
+        for r in conn.execute("SELECT asset_id FROM asset_places").fetchall()
+        if r[0] not in keep_ids
+    ]
+    if stale:
+        conn.executemany("DELETE FROM asset_places WHERE asset_id = ?", stale)
+        conn.commit()
+    return len(stale)
+
+
+def get_asset_places(conn: sqlite3.Connection, asset_ids: list[int]) -> dict[int, Any]:
+    """Return ``{asset_id: Place}`` for assets that have a named place.
+
+    Assets without a row, or whose row has no country (coordinates far from
+    any populated place), are omitted.
+    """
+    from takeout_rater.geo.places import Place
+
+    out: dict[int, Any] = {}
+    ids = list(dict.fromkeys(asset_ids))
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        marks = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            "SELECT asset_id, country_code, country, admin1, admin2, city, distance_km"
+            f" FROM asset_places WHERE asset_id IN ({marks})"  # noqa: S608
+            " AND country_code IS NOT NULL",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            out[r["asset_id"]] = Place(
+                country_code=r["country_code"],
+                country=r["country"] or r["country_code"],
+                admin1=r["admin1"],
+                admin2=r["admin2"],
+                city=r["city"],
+                distance_km=r["distance_km"],
+            )
+    return out
+
+
+def get_asset_place(conn: sqlite3.Connection, asset_id: int) -> Any | None:
+    """Return the :class:`~takeout_rater.geo.places.Place` of one asset, or ``None``."""
+    return get_asset_places(conn, [asset_id]).get(asset_id)
+
+
+def count_asset_places(conn: sqlite3.Connection) -> int:
+    """Number of assets with a named place."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM asset_places WHERE country_code IS NOT NULL"
+    ).fetchone()[0]
+
+
+def list_place_facets(
+    conn: sqlite3.Connection,
+    *,
+    country_code: str | None = None,
+    admin1: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return place values with photo counts for cascading browse filters.
+
+    Always returns ``countries`` (``[{code, name, count}]``).  When
+    *country_code* is given also returns ``regions`` (``[{name, count}]``) for
+    that country, and ``cities`` (``[{name, count}]``) for the country, further
+    narrowed to *admin1* when given.  Lists are ordered by descending count.
+    """
+    countries = [
+        {"code": r[0], "name": r[1] or r[0], "count": r[2]}
+        for r in conn.execute(
+            "SELECT country_code, MAX(country), COUNT(*) AS n FROM asset_places"
+            " WHERE country_code IS NOT NULL"
+            " GROUP BY country_code ORDER BY n DESC, country_code"
+        ).fetchall()
+    ]
+    result: dict[str, list[dict[str, Any]]] = {"countries": countries}
+    if country_code:
+        result["regions"] = [
+            {"name": r[0], "count": r[1]}
+            for r in conn.execute(
+                "SELECT admin1, COUNT(*) AS n FROM asset_places"
+                " WHERE country_code = ? AND admin1 IS NOT NULL"
+                " GROUP BY admin1 ORDER BY n DESC, admin1",
+                (country_code,),
+            ).fetchall()
+        ]
+        params: list[Any] = [country_code]
+        extra = ""
+        if admin1:
+            extra = " AND admin1 = ?"
+            params.append(admin1)
+        result["cities"] = [
+            {"name": r[0], "count": r[1]}
+            for r in conn.execute(
+                "SELECT city, COUNT(*) AS n FROM asset_places"
+                f" WHERE country_code = ? AND city IS NOT NULL{extra}"  # noqa: S608
+                " GROUP BY city ORDER BY n DESC, city",
+                params,
+            ).fetchall()
+        ]
+    return result
 
 
 # ---------------------------------------------------------------------------

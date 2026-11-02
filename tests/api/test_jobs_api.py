@@ -56,6 +56,7 @@ def test_jobs_status_returns_list_by_default(client_no_db: TestClient) -> None:
         "embed",
         "detect_faces",
         "cluster_faces",
+        "geocode",
         "ocr",
     }
 

@@ -13,7 +13,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from takeout_rater.db.queries import (
     AssetRow,
+    PlaceFilter,
     SortCriterion,
+    count_asset_places,
     count_assets,
     count_assets_deduped,
     count_assets_multi_sort,
@@ -21,6 +23,7 @@ from takeout_rater.db.queries import (
     count_assets_with_score,
     get_asset_alias_paths,
     get_asset_by_id,
+    get_asset_place,
     get_asset_scores,
     get_clip_embedding_for_asset,
     get_ocr_text,
@@ -32,6 +35,7 @@ from takeout_rater.db.queries import (
     list_assets_multi_sort,
     list_available_score_metrics_with_variants,
     list_clip_user_tags,
+    list_place_facets,
     list_view_presets,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
@@ -229,6 +233,21 @@ def _parse_sort_by(sort_by: str | None) -> tuple[str, str, str] | None:
     return scorer_id, variant_id, metric_key
 
 
+def _parse_place(country: str | None, region: str | None, city: str | None) -> PlaceFilter | None:
+    """Build a :class:`PlaceFilter` from browse query params (``None`` when unset)."""
+
+    def clean(v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v[:200] or None
+
+    pf = PlaceFilter(
+        country_code=(clean(country) or "").upper() or None,
+        admin1=clean(region),
+        city=clean(city),
+    )
+    return None if pf.is_empty() else pf
+
+
 @router.get("/assets", response_class=HTMLResponse)
 def browse_assets(
     request: Request,
@@ -251,6 +270,9 @@ def browse_assets(
     max_score_4: str | None = None,
     sort_desc_4: str = "1",
     dedupe: str = "1",
+    country: str | None = None,
+    region: str | None = None,
+    city: str | None = None,
     partial: str = "0",
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
@@ -272,9 +294,13 @@ def browse_assets(
       appear, sorted last.
     - ``dedupe``: ``"1"`` (default) to hide exact duplicate files (same SHA-256
       content hash); ``"0"`` to show all physical copies.
+    - ``country`` / ``region`` / ``city``: Optional place filters (ISO country
+      code, first-level region name, city name) matched against
+      ``asset_places``.  Only geotagged photos with a looked-up place match.
     - ``partial``: ``"1"`` to return only a card fragment (for infinite scroll
       fetch requests); ``"0"`` (default) to return the full page.
     """
+    place = _parse_place(country, region, city)
     offset = max(0, (page - 1) * _PAGE_SIZE)
     fav_filter: bool | None = True if favorited == "1" else None
     dedup_enabled = dedupe != "0"
@@ -335,10 +361,11 @@ def browse_assets(
                 limit=_PAGE_SIZE,
                 offset=offset,
                 favorited=fav_filter,
+                place=place,
             )
             assets = [a for a, _ in asset_score_pairs]
             score_map = {a.id: s for a, s in asset_score_pairs}
-            total = count_assets_multi_sort(conn, criteria, favorited=fav_filter)
+            total = count_assets_multi_sort(conn, criteria, favorited=fav_filter, place=place)
         else:
             asset_score_pairs = list_assets_by_score(
                 conn,
@@ -349,6 +376,7 @@ def browse_assets(
                 offset=offset,
                 descending=eff_desc,
                 favorited=fav_filter,
+                place=place,
                 min_score=eff_min,
                 max_score=eff_max,
             )
@@ -360,15 +388,20 @@ def browse_assets(
                 metric_key,
                 variant_id=variant_id,
                 favorited=fav_filter,
+                place=place,
                 min_score=eff_min,
                 max_score=eff_max,
             )
     elif dedup_enabled:
-        assets = list_assets_deduped(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
-        total = count_assets_deduped(conn, favorited=fav_filter)
+        assets = list_assets_deduped(
+            conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter, place=place
+        )
+        total = count_assets_deduped(conn, favorited=fav_filter, place=place)
     else:
-        assets = list_assets(conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter)
-        total = count_assets(conn, favorited=fav_filter)
+        assets = list_assets(
+            conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter, place=place
+        )
+        total = count_assets(conn, favorited=fav_filter, place=place)
 
     total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
@@ -401,6 +434,28 @@ def browse_assets(
     # When sorting by score, also fetch the total indexed count so the
     # template can distinguish "no indexed photos" from "no scored photos".
     total_indexed = count_assets(conn) if sort_parsed is not None and total == 0 else None
+
+    # Place filter facets (full page only): countries always, regions/cities
+    # for the selected country.  ``places_total`` = 0 hides the section.
+    place_facets: dict = {}
+    places_total = 0
+    has_geotagged = False
+    if partial != "1":
+        places_total = count_asset_places(conn)
+        if not places_total:
+            has_geotagged = (
+                conn.execute(
+                    "SELECT 1 FROM assets WHERE geo_lat != 0 OR geo_lon != 0"
+                    " OR geo_exif_lat != 0 OR geo_exif_lon != 0 LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+        if places_total:
+            place_facets = list_place_facets(
+                conn,
+                country_code=place.country_code if place else None,
+                admin1=place.admin1 if place else None,
+            )
 
     templates = request.app.state.templates
     if partial == "1":
@@ -436,6 +491,10 @@ def browse_assets(
             "presets": presets,
             # dedupe is only actively applied when not sorting by score metric
             "dedupe": dedup_enabled and sort_parsed is None,
+            "place": place,
+            "place_facets": place_facets,
+            "places_total": places_total,
+            "has_geotagged": has_geotagged,
         },
     )
 
@@ -474,10 +533,12 @@ def asset_detail(
     phash_row = get_phash(conn, asset_id)
     phash_hex: str | None = phash_row["phash_hex"] if phash_row else None
 
+    place = get_asset_place(conn, asset_id)
     ocr_row = get_ocr_text(conn, asset_id)
 
     templates = request.app.state.templates
     ctx = {
+        "place": place,
         "request": request,
         "asset": asset,
         "scores": scores,
@@ -1117,6 +1178,9 @@ def timeline_seek(
     timestamp: int,
     favorited: str | None = None,
     dedupe: str = "1",
+    country: str | None = None,
+    region: str | None = None,
+    city: str | None = None,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> JSONResponse:
     """Return the 1-based page number for the given Unix timestamp.
@@ -1128,6 +1192,7 @@ def timeline_seek(
     - ``timestamp``: Unix timestamp (seconds) to seek to.
     - ``favorited``: ``"1"`` to restrict to favorited assets.
     - ``dedupe``: ``"0"`` to include duplicate files; defaults to ``"1"``.
+    - ``country`` / ``region`` / ``city``: place filters, as on ``/assets``.
 
     Returns ``{"page": N}`` where *N* is the 1-based page that contains photos
     taken around the requested time.
@@ -1139,7 +1204,30 @@ def timeline_seek(
         conn,
         timestamp,
         favorited=fav_filter,
+        place=_parse_place(country, region, city),
         deduped=dedup_enabled,
     )
     page = max(1, count // _PAGE_SIZE + 1)
     return JSONResponse({"page": page})
+
+
+@router.get("/api/places")
+def get_places(
+    country: str | None = None,
+    region: str | None = None,
+    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
+) -> JSONResponse:
+    """Return place-name facets with photo counts.
+
+    - Always: ``countries`` – ``[{"code", "name", "count"}]``.
+    - With ``country`` (ISO code): ``regions`` and ``cities`` –
+      ``[{"name", "count"}]``; ``cities`` is narrowed to ``region`` when given.
+    - ``total``: number of photos with a place name.
+    """
+    place = _parse_place(country, region, None)
+    facets = list_place_facets(
+        conn,
+        country_code=place.country_code if place else None,
+        admin1=place.admin1 if place else None,
+    )
+    return JSONResponse({"total": count_asset_places(conn), **facets})
