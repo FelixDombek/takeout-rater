@@ -69,6 +69,15 @@
 
   /* ── Presets ──────────────────────────────────────────────────────────── */
   .sidebar-presets { margin-bottom: 0.65rem; }
+  .place-filter select {
+    width: 100%;
+    font-size: 0.82rem;
+    padding: 0.22rem 0.35rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    margin-bottom: 0.35rem;
+  }
+  .place-filter .place-clear { font-size: 0.78rem; }
   .sidebar-presets select {
     width: 100%;
     font-size: 0.82rem;
@@ -314,6 +323,7 @@
         {{ total }} {% if dedupe %}unique {% endif %}photo{{ "s" if total != 1 else "" }}
       {% endif %}
       {% if favorited == "1" %}<br>(favorites only){% endif %}
+      {% if place %}<br>in {{ [place.city, place.admin1, (place_facets.countries | selectattr("code", "equalto", place.country_code) | map(attribute="name") | first) if place.country_code else none] | select | unique | join(", ") }}{% endif %}
       {% if sort_by %}<br>sorted by score{% endif %}
       {% if min_score is not none or max_score is not none %}<br>filtered by range{% endif %}
     </span>
@@ -323,6 +333,40 @@
       <a class="btn sidebar-fav-btn" href="/assets?favorited=1&page=1">⭐ Favorites only</a>
     {% endif %}
   </div>
+
+  {% if places_total %}
+  <div class="sidebar-divider"></div>
+  <div class="place-filter" id="place-filter">
+    <div class="sidebar-section-title">📍 Place</div>
+    <select id="place-country" aria-label="Country" onchange="placeFilterChanged('country')">
+      <option value="">— all countries —</option>
+      {% for c in place_facets.countries %}
+      <option value="{{ c.code }}"{% if place and place.country_code == c.code %} selected{% endif %}>{{ c.name }} ({{ c.count }})</option>
+      {% endfor %}
+    </select>
+    {% if place and place.country_code %}
+    <select id="place-region" aria-label="Region" onchange="placeFilterChanged('region')">
+      <option value="">— all regions —</option>
+      {% for r in place_facets.regions %}
+      <option value="{{ r.name }}"{% if place.admin1 == r.name %} selected{% endif %}>{{ r.name }} ({{ r.count }})</option>
+      {% endfor %}
+    </select>
+    <select id="place-city" aria-label="City" onchange="placeFilterChanged('city')">
+      <option value="">— all cities —</option>
+      {% for c in place_facets.cities %}
+      <option value="{{ c.name }}"{% if place.city == c.name %} selected{% endif %}>{{ c.name }} ({{ c.count }})</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    {% if place %}
+    <a class="place-clear" href="#" onclick="placeFilterChanged('clear'); return false;">✕ Clear place filter</a>
+    {% endif %}
+  </div>
+  {% elif has_geotagged %}
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">📍 Place</div>
+  <p class="sidebar-note">No place names yet. Run <a href="/jobs#card-geocode">Look up place names</a> on the Jobs page to filter by country and city.</p>
+  {% endif %}
 
   {% if sort_options %}
   <div class="sidebar-divider"></div>
@@ -538,6 +582,7 @@ function applySortFilters() {
   const fav = {{ (favorited | tojson) if favorited else "null" }};
   if (fav) params.set("favorited", fav);
   {% if not dedupe %} params.set("dedupe", "0"); {% endif %}
+  copyPlaceParams(new URLSearchParams(window.location.search), params);
 
   const suffixes = ["", "_2", "_3", "_4"];
   for (let i = 0; i < MAX_SORT_LEVELS; i++) {
@@ -616,6 +661,32 @@ function sortSelectChanged(level) {
     }
     removePanelsAboveLevel(level);
   }
+}
+
+const PLACE_PARAMS = ["country", "region", "city"];
+
+/** Copy the place filter params (country/region/city) from one query to another. */
+function copyPlaceParams(from, to) {
+  PLACE_PARAMS.forEach(function (k) {
+    const v = from.get(k);
+    if (v) to.set(k, v);
+  });
+}
+
+/**
+ * Navigate after a place select changes.  Changing a broader level clears
+ * the narrower ones (country → region → city); 'clear' removes all three.
+ */
+function placeFilterChanged(level) {
+  const params = new URLSearchParams(window.location.search);
+  params.set("page", "1");
+  const drop = { country: ["region", "city"], region: ["city"], city: [], clear: PLACE_PARAMS };
+  (drop[level] || []).forEach(function (k) { params.delete(k); });
+  if (level !== "clear") {
+    const el = document.getElementById("place-" + level);
+    if (el && el.value) params.set(level, el.value); else params.delete(level);
+  }
+  window.location.href = "/assets?" + params.toString();
 }
 
 function loadPreset(sel) {
@@ -1207,6 +1278,7 @@ function savePreset() {
     if (favParam)   p.set('favorited', favParam);
     if (dedupeParam !== '1') p.set('dedupe', dedupeParam);
     if (sortByParam) p.set('sort_by', sortByParam);
+    copyPlaceParams(pageParams, p);
     const minS = pageParams.get('min_score');
     const maxS = pageParams.get('max_score');
     if (minS) p.set('min_score', minS);
@@ -1338,6 +1410,7 @@ function savePreset() {
         sp.set('timestamp', ts);
         if (favParam)              sp.set('favorited', favParam);
         if (dedupeParam !== '1')   sp.set('dedupe', dedupeParam);
+        copyPlaceParams(pageParams, sp);
 
         fetch('/api/timeline/seek?' + sp.toString())
           .then(function (r) { return r.json(); })

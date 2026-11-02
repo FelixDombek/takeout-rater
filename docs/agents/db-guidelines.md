@@ -41,6 +41,20 @@
 - Never store scores in columns on the `assets` table.
 - This allows adding new scorers without schema migrations.
 
+### Place names
+
+- `asset_places` (schema v15) holds one row per geotagged asset: the coordinates
+  used, `country_code`, `country`, `admin1`, `admin2`, `city`, `distance_km`,
+  `geocoder_version`.  Rows with NULL names mean "far from any populated place"
+  and stop the job from retrying them.
+- Filled by `takeout_rater.geo.library.geocode_library` (Jobs → *Look up place
+  names*, and automatically after each index run).  The lookup itself is
+  `takeout_rater.geo.places.reverse_geocode[_many]`; coordinate selection
+  (geoData first, EXIF fallback, 0/0 = unknown) is `asset_coords`.
+- Bump `GEOCODER_VERSION` when the lookup changes; *Missing only* runs then
+  recompute stale rows.
+- Listing queries take `place: PlaceFilter | None`.
+
 ### Indexer versioning
 
 - `assets.indexer_version` (INTEGER, nullable) tracks which version of the

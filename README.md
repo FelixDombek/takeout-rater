@@ -47,6 +47,7 @@ Enter the new path and click **Save & continue**.
 - **Indexes** your photo library in place (read-only)
 - **Scores** photos using pluggable scorers (aesthetic quality, media type, …)
 - **Browses** your library via a local web UI with filters and sorting
+- **Names places** from GPS (country / region / city, fully offline via GeoNames) so you can filter by place
 - **Exports** your best photos (top-N, or best-of-cluster) to a folder
 
 See [`docs/design.md`](docs/design.md) for the full architecture overview.

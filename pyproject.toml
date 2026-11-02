@@ -40,6 +40,8 @@ dependencies = [
     "scikit-learn>=1.4",
     # UMAP dimensionality reduction (embedding visualization)
     "umap-learn>=0.5",
+    # Offline reverse geocoding (bundled GeoNames cities1000 gazetteer)
+    "reverse_geocode>=1.6",
 ]
 
 [project.optional-dependencies]
