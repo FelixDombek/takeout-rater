@@ -261,6 +261,14 @@
       .catch(function() { /* selector stays on auto */ });
   }
 
+  // Re-run the current query from page 1 (e.g. after the model changed).
+  function restartSearch() {
+    if (!currentQuery) return;
+    currentPage = 1;
+    isLoadingMore = false;
+    doSearch(currentQuery, 1);
+  }
+
   function setRunning(running) {
     btnCompute.disabled = running;
     btnCancel.style.display = running ? '' : 'none';
@@ -286,7 +294,7 @@
         setRunning(false);
         if (isSiglip && st.done) embedMsg.textContent = st.error ? ('✗ ' + st.error) : st.message;
         if (wasPolling) {
-          loadBackbones().then(function() { if (currentQuery) doSearch(currentQuery, 1); });
+          loadBackbones().then(restartSearch);
         }
       })
       .catch(function() { pollTimer = null; setRunning(false); });
@@ -315,7 +323,7 @@
 
   modelSel.addEventListener('change', function() {
     try { localStorage.setItem('search-model', modelSel.value); } catch (e) { /* ignore */ }
-    if (currentQuery) doSearch(currentQuery, 1);
+    restartSearch();
   });
 
   loadBackbones();
