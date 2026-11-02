@@ -263,7 +263,7 @@ def test_trips_page_empty_then_detect(client: tuple[TestClient, sqlite3.Connecti
     resp = c.get("/trips")
     assert "Trip · Jun 2023" in resp.text
     assert "3–7 Jun 2023" in resp.text
-    assert "/map?from=" not in resp.text  # no map page in this app → no dead links
+    assert "/map?from=" in resp.text
 
     resp = c.get("/trips?show=events")
     assert "Trip · Jun 2023" not in resp.text
@@ -293,13 +293,9 @@ def test_api_list_trips(client: tuple[TestClient, sqlite3.Connection]) -> None:
     _detect(c)
     data = c.get("/api/trips?kind=trip").json()
     assert len(data["items"]) == 1
-    assert data["items"][0]["map_url"] is None
-
-    # Once a /map page exists, trips link to their time range on it.
-    c.app.add_api_route("/map", lambda: {}, methods=["GET"])
-    item = c.get("/api/trips?kind=trip").json()["items"][0]
+    item = data["items"][0]
     assert item["map_url"] == f"/map?from={item['start_ts']}&to={item['end_ts']}"
-    assert "/map?from=" in c.get("/trips").text
+    assert c.get(item["map_url"]).status_code == 200
     assert c.get("/api/trips?kind=bogus").status_code == 400
 
 

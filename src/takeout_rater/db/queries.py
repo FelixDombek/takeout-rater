@@ -369,6 +369,22 @@ def update_asset_sha256(conn: sqlite3.Connection, asset_id: int, sha256: str) ->
     conn.commit()
 
 
+def _deduped_assets_sql(where: str) -> str:
+    """Return a subquery selecting one row per SHA-256 group from ``assets``.
+
+    *where* (a full ``WHERE …`` clause or ``""``) is applied **before** ranking,
+    so each group's representative is its lowest-``id`` row that passes the
+    filters.  Assets without a SHA-256 are each their own group.
+    """
+    return (
+        f"(SELECT * FROM ("
+        f"  SELECT *, ROW_NUMBER() OVER ("
+        f"    PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id"
+        f"  ) AS _rn FROM assets {where}"
+        f") WHERE _rn = 1)"
+    )
+
+
 def list_assets_deduped(
     conn: sqlite3.Connection,
     *,
@@ -419,15 +435,7 @@ def list_assets_deduped(
     # are partitioned individually via COALESCE with a unique per-row key.
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     sql = (  # noqa: S608
-        f"SELECT * FROM ("
-        f"  SELECT *, ROW_NUMBER() OVER ("
-        f"    PARTITION BY COALESCE(sha256, CAST(id AS TEXT))"
-        f"    ORDER BY id"
-        f"  ) AS _rn"
-        f"  FROM assets {where}"
-        f") WHERE _rn = 1"
-        f" ORDER BY {order_by}"
-        f" LIMIT ? OFFSET ?"
+        f"SELECT * FROM {_deduped_assets_sql(where)} ORDER BY {order_by} LIMIT ? OFFSET ?"
     )
     params.extend([limit, offset])
     rows = conn.execute(sql, params).fetchall()
@@ -598,6 +606,102 @@ def count_assets_newer_than(
         sql = f"SELECT COUNT(*) FROM assets {where}"  # noqa: S608
 
     return conn.execute(sql, params).fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
+# Geolocation (map view)
+# ---------------------------------------------------------------------------
+
+
+_HAS_GEO = "(geo_lat IS NOT NULL AND geo_lon IS NOT NULL AND (geo_lat != 0 OR geo_lon != 0))"
+_HAS_EXIF_GEO = (
+    "(geo_exif_lat IS NOT NULL AND geo_exif_lon IS NOT NULL"
+    " AND (geo_exif_lat != 0 OR geo_exif_lon != 0))"
+)
+
+
+def _map_filter_sql(favorited: bool | None, *, with_location: bool) -> tuple[str, list[Any]]:
+    """Return the ``WHERE`` clause and params shared by the map queries."""
+    conditions: list[str] = ["COALESCE(trashed, 0) = 0"]
+    params: list[Any] = []
+    if favorited is not None:
+        conditions.append("COALESCE(favorited, 0) = ?")
+        params.append(1 if favorited else 0)
+    if with_location:
+        conditions.append(f"({_HAS_GEO} OR {_HAS_EXIF_GEO})")
+    return "WHERE " + " AND ".join(conditions), params
+
+
+def count_map_candidates(
+    conn: sqlite3.Connection,
+    *,
+    favorited: bool | None = None,
+    deduped: bool = True,
+) -> int:
+    """Count the assets the map could show under these filters, with or without a location.
+
+    Used for the "N of M photos have a location" figure, so M reflects the same
+    favorite / duplicate filters as :func:`list_geotagged_points`.
+    """
+    where, params = _map_filter_sql(favorited, with_location=False)
+    source = _deduped_assets_sql(where) if deduped else f"(SELECT * FROM assets {where})"
+    return conn.execute(f"SELECT COUNT(*) FROM {source}", params).fetchone()[0]  # noqa: S608
+
+
+def _valid_coords(lat: float | None, lon: float | None) -> bool:
+    return lat is not None and lon is not None and (lat != 0 or lon != 0)
+
+
+def asset_location(asset: Any) -> tuple[float, float] | None:
+    """Return the ``(lat, lon)`` the map uses for *asset*, or ``None``.
+
+    Same rule as :func:`list_geotagged_points`: ``geoData`` first, then
+    ``geoDataExif``; ``0.0/0.0`` means "no location".
+    """
+    if _valid_coords(asset.geo_lat, asset.geo_lon):
+        return asset.geo_lat, asset.geo_lon
+    if _valid_coords(asset.geo_exif_lat, asset.geo_exif_lon):
+        return asset.geo_exif_lat, asset.geo_exif_lon
+    return None
+
+
+def list_geotagged_points(
+    conn: sqlite3.Connection,
+    *,
+    favorited: bool | None = None,
+    deduped: bool = True,
+) -> list[tuple[int, float, float, int | None, int]]:
+    """Return a compact ``(id, lat, lon, taken_at, favorited)`` tuple per geotagged asset.
+
+    The location comes from the sidecar ``geoData`` block and falls back to
+    ``geoDataExif`` when ``geoData`` is missing or ``0.0/0.0`` (Google Takeout's
+    encoding for "no location").  Assets without any usable location, and
+    trashed assets, are omitted.  Rows are ordered by ``taken_at`` (NULLs first)
+    so clients can binary-search by time.
+
+    Args:
+        conn: Open database connection.
+        favorited: Optional favorited filter.
+        deduped: If ``True`` (default), keep only the lowest-``id`` asset per
+            SHA-256 group, matching :func:`list_assets_deduped`.
+
+    Returns:
+        List of ``(id, lat, lon, taken_at, favorited)`` tuples, where
+        ``favorited`` is ``0`` or ``1``.
+    """
+    where, params = _map_filter_sql(favorited, with_location=True)
+    # Filters run before picking a duplicate group's representative, so a group
+    # keeps an eligible copy even if its lowest-id copy is filtered out.
+    source = _deduped_assets_sql(where) if deduped else f"(SELECT * FROM assets {where})"
+    sql = (  # noqa: S608
+        f"SELECT id,"
+        f" CASE WHEN {_HAS_GEO} THEN geo_lat ELSE geo_exif_lat END AS lat,"
+        f" CASE WHEN {_HAS_GEO} THEN geo_lon ELSE geo_exif_lon END AS lon,"
+        f" taken_at, COALESCE(favorited, 0) AS fav"
+        f" FROM {source}"
+        f" ORDER BY taken_at, id"
+    )
+    return [(r[0], r[1], r[2], r[3], r[4]) for r in conn.execute(sql, params)]
 
 
 def upsert_asset_scores(
@@ -1909,6 +2013,164 @@ def load_clip_embeddings_with_relpaths(
         " ORDER BY ce.asset_id"
     ).fetchall()
     return [(row[0], row[1], row[2]) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Model-keyed image embeddings (search backbones other than CLIP L/14)
+# ---------------------------------------------------------------------------
+
+#: Key under which the legacy ``clip_embeddings`` table (CLIP ViT-L/14,
+#: OpenAI weights) is exposed by the model-keyed helpers below.
+CLIP_L14_MODEL_KEY = "clip-vit-l-14"
+
+
+def blobs_to_matrix(blobs: list[bytes], dim: int | None = None) -> Any:
+    """Convert float32 embedding blobs into one ``(N, dim)`` numpy matrix.
+
+    Preallocates the result and fills it row by row with
+    :func:`numpy.frombuffer`, which is far faster than unpacking each row with
+    :mod:`struct` and avoids an intermediate joined copy.  Raises
+    :class:`ValueError` when a blob's length differs from the first row (or
+    from ``dim``), since mixing dimensions would corrupt the matrix.
+
+    Returns a writable, C-contiguous ``float32`` array.
+    """
+    import numpy as np
+
+    if not blobs:
+        return np.empty((0, dim or 0), dtype=np.float32)
+    row_bytes = len(blobs[0]) if dim is None else dim * 4
+    if row_bytes % 4:
+        raise ValueError("Embedding blob length is not a multiple of 4 bytes")
+    out = np.empty((len(blobs), row_bytes // 4), dtype=np.float32)
+    for i, blob in enumerate(blobs):
+        if len(blob) != row_bytes:
+            raise ValueError("Embedding blobs have inconsistent lengths")
+        out[i] = np.frombuffer(blob, dtype="<f4")
+    return out
+
+
+def load_embedding_matrix(conn: sqlite3.Connection, model_key: str) -> tuple[Any, Any]:
+    """Load every stored embedding for *model_key* as numpy arrays.
+
+    ``model_key`` :data:`CLIP_L14_MODEL_KEY` reads the ``clip_embeddings``
+    table; any other key reads ``image_embeddings``.  Rows are streamed from
+    the cursor into a preallocated matrix, so peak memory stays close to the
+    size of the result.  Rows whose length differs from the first row's are
+    skipped and logged, rather than failing the whole load.
+
+    Returns:
+        ``(asset_ids, matrix)``: an ``int64`` array of shape ``(N,)`` and a
+        ``float32`` array of shape ``(N, dim)``, both ordered by asset id.
+        Both are empty (``N == 0``) when nothing is stored.
+    """
+    import logging
+
+    import numpy as np
+
+    if model_key == CLIP_L14_MODEL_KEY:
+        count_sql = "SELECT COUNT(*) FROM clip_embeddings"
+        rows_sql = "SELECT asset_id, embedding FROM clip_embeddings ORDER BY asset_id"
+        params: tuple = ()
+    else:
+        count_sql = "SELECT COUNT(*) FROM image_embeddings WHERE model_key = ?"
+        rows_sql = (
+            "SELECT asset_id, embedding FROM image_embeddings WHERE model_key = ? ORDER BY asset_id"
+        )
+        params = (model_key,)
+
+    capacity = conn.execute(count_sql, params).fetchone()[0]
+    asset_ids = np.empty(capacity, dtype=np.int64)
+    matrix: Any = None
+    n = 0
+    skipped = 0
+    for aid, blob in conn.execute(rows_sql, params):
+        if n >= capacity:  # rows inserted between COUNT and SELECT
+            break
+        if matrix is None:
+            if len(blob) == 0 or len(blob) % 4:
+                skipped += 1
+                continue
+            matrix = np.empty((capacity, len(blob) // 4), dtype=np.float32)
+        if len(blob) != matrix.shape[1] * 4:
+            skipped += 1
+            continue
+        asset_ids[n] = aid
+        matrix[n] = np.frombuffer(blob, dtype="<f4")
+        n += 1
+    if skipped:
+        logging.getLogger(__name__).warning(
+            "Skipped %d %s embedding(s) with an unexpected length", skipped, model_key
+        )
+    if matrix is None:
+        return np.empty(0, dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+    if n < capacity:
+        return asset_ids[:n].copy(), matrix[:n].copy()
+    return asset_ids, matrix
+
+
+def count_image_embeddings(conn: sqlite3.Connection, model_key: str) -> int:
+    """Return how many assets have an embedding stored for *model_key*."""
+    if model_key == CLIP_L14_MODEL_KEY:
+        return count_clip_embeddings(conn)
+    row = conn.execute(
+        "SELECT COUNT(*) FROM image_embeddings WHERE model_key = ?", (model_key,)
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def bulk_upsert_image_embeddings(
+    conn: sqlite3.Connection,
+    model_key: str,
+    rows: list[tuple[int, bytes]],
+) -> None:
+    """Insert or replace embeddings for *model_key* in one transaction.
+
+    Args:
+        conn: Open database connection.
+        model_key: Search backbone key.  Must not be :data:`CLIP_L14_MODEL_KEY`
+            (use :func:`bulk_upsert_clip_embeddings` for that).
+        rows: ``(asset_id, float32_blob)`` tuples; every blob must have the
+            same length.
+    """
+    if model_key == CLIP_L14_MODEL_KEY:
+        raise ValueError("CLIP L/14 embeddings belong in clip_embeddings")
+    if not rows:
+        return
+    lengths = {len(blob) for _aid, blob in rows}
+    if len(lengths) != 1 or next(iter(lengths)) % 4 or not next(iter(lengths)):
+        raise ValueError("Embedding blobs must all have the same non-zero float32 length")
+    existing = conn.execute(
+        "SELECT dim FROM image_embeddings WHERE model_key = ? LIMIT 1", (model_key,)
+    ).fetchone()
+    if existing is not None and existing[0] * 4 not in lengths:
+        raise ValueError(
+            f"{model_key} embeddings are {existing[0]}-d; refusing to mix in other dimensions"
+        )
+    now = int(time.time())
+    conn.executemany(
+        "INSERT INTO image_embeddings (asset_id, model_key, dim, embedding, computed_at)"
+        " VALUES (?, ?, ?, ?, ?)"
+        " ON CONFLICT(model_key, asset_id) DO UPDATE SET embedding = excluded.embedding,"
+        "   dim = excluded.dim, computed_at = excluded.computed_at",
+        [(aid, model_key, len(blob) // 4, blob, now) for aid, blob in rows],
+    )
+    conn.commit()
+
+
+def list_asset_ids_without_image_embedding(conn: sqlite3.Connection, model_key: str) -> list[int]:
+    """Return IDs of assets with no stored embedding for *model_key*, by ID."""
+    if model_key == CLIP_L14_MODEL_KEY:
+        return list_asset_ids_without_embedding(conn)
+    rows = conn.execute(
+        "SELECT a.id FROM assets a"
+        " WHERE NOT EXISTS ("
+        "   SELECT 1 FROM image_embeddings ie"
+        "   WHERE ie.model_key = ? AND ie.asset_id = a.id"
+        " ) ORDER BY a.id",
+        (model_key,),
+    ).fetchall()
+    return [r[0] for r in rows]
 
 
 # ---------------------------------------------------------------------------

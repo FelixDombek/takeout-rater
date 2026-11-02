@@ -285,7 +285,7 @@ def reset_library(request: Request) -> JSONResponse:
     request.app.state.db_conn = conn
     request.app.state.db_path = db_path
     request.app.state.thumbs_dir = state_dir / "thumbs"
-    request.app.state.clip_index = None
+    request.app.state.search_indexes = {}
     request.app.state.clip_embedding_map = None
 
     from takeout_rater.api.jobs import _start_index_job
