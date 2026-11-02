@@ -84,12 +84,13 @@ class TestSchema:
 
         db = sqlite3.connect(tmp_path / "lib.sqlite")
         migrate(db)
-        # Roll the fresh DB back to the version just before the OCR migration.
+        # Roll the fresh DB back to the version just before the OCR migration
+        # (later migrations use IF NOT EXISTS, so they simply re-apply).
         for trig in ("ocr_text_ai", "ocr_text_ad", "ocr_text_au"):
             db.execute(f"DROP TRIGGER {trig}")
         db.execute("DROP TABLE ocr_text_fts")
         db.execute("DROP TABLE ocr_text")
-        db.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION - 1}")
+        db.execute("PRAGMA user_version = 16")  # v17 = OCR (0011_ocr_text.sql)
         db.commit()
 
         migrate(db)
