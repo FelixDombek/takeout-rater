@@ -13,8 +13,15 @@ from typing import Any
 _EVENT_COLUMNS = """
     e.id, e.kind, e.parent_id, e.auto_name, e.custom_name,
     COALESCE(e.custom_name, e.auto_name) AS name,
-    e.place_label, e.start_ts, e.end_ts, e.n_assets, e.n_days,
-    e.center_lat, e.center_lon, e.max_distance_km, e.cover_asset_id, e.detected_at
+    e.place_label, e.start_ts, e.end_ts, e.n_days,
+    -- Live count and cover, so a rescan that removes photos is reflected
+    -- before the next detection run.
+    (SELECT COUNT(*) FROM event_assets ea WHERE ea.event_id = e.id) AS n_assets,
+    COALESCE(
+        e.cover_asset_id,
+        (SELECT MIN(ea.asset_id) FROM event_assets ea WHERE ea.event_id = e.id)
+    ) AS cover_asset_id,
+    e.center_lat, e.center_lon, e.max_distance_km, e.detected_at
 """
 
 
@@ -79,11 +86,20 @@ def load_asset_places(
 
 
 def load_custom_names(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Return ``kind, start_ts, end_ts, custom_name`` of every user-renamed group."""
+    """Return ``kind, custom_name, asset_ids`` (a set) of every user-renamed group."""
     rows = conn.execute(
-        "SELECT kind, start_ts, end_ts, custom_name FROM events WHERE custom_name IS NOT NULL"
+        "SELECT id, kind, custom_name FROM events WHERE custom_name IS NOT NULL"
     ).fetchall()
-    return [{"kind": r[0], "start_ts": r[1], "end_ts": r[2], "custom_name": r[3]} for r in rows]
+    out = []
+    for r in rows:
+        ids = {
+            a[0]
+            for a in conn.execute(
+                "SELECT asset_id FROM event_assets WHERE event_id = ?", (r[0],)
+            ).fetchall()
+        }
+        out.append({"kind": r[1], "custom_name": r[2], "asset_ids": ids})
+    return out
 
 
 def replace_events(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
@@ -224,7 +240,12 @@ def rename_event(conn: sqlite3.Connection, event_id: int, name: str | None) -> b
     """Set (or with ``None``/blank, clear) the custom name. Returns ``False`` if not found."""
     name = (name or "").strip() or None
     with conn:
-        cur = conn.execute("UPDATE events SET custom_name = ? WHERE id = ?", (name, event_id))
+        # Saving the detected name unchanged must not pin it as a custom name.
+        cur = conn.execute(
+            "UPDATE events SET custom_name = CASE WHEN ? = auto_name THEN NULL ELSE ? END"
+            " WHERE id = ?",
+            (name, name, event_id),
+        )
     return cur.rowcount > 0
 
 

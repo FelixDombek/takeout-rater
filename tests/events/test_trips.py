@@ -70,7 +70,7 @@ def test_home_is_most_frequent_place() -> None:
     homes, default = estimate_homes(_points())
     assert default is not None
     assert haversine_km(*default, *BERLIN) < 5
-    assert haversine_km(*homes[2023], *BERLIN) < 5
+    assert homes and all(haversine_km(*h, *BERLIN) < 5 for h in homes.values())
 
 
 def test_detects_trip_bridging_day_without_gps() -> None:
@@ -229,10 +229,24 @@ def test_run_detection_uses_asset_places_when_present() -> None:
 
 @pytest.fixture()
 def client(tmp_path: Path) -> tuple[TestClient, sqlite3.Connection]:
-    conn = _make_db()
+    from takeout_rater.db.connection import open_library_db
+
+    conn = open_library_db(tmp_path)  # file DB: the detection job opens its own connection
     _populate(conn)
     app = create_app(tmp_path, conn, db_root=tmp_path)
     return TestClient(app, follow_redirects=True), conn
+
+
+def _detect(c: TestClient, body: dict | None = None) -> dict:
+    """Start the trips job and wait for it to finish; return its final status."""
+    resp = c.post("/api/jobs/trips/start", json=body or {})
+    assert resp.status_code == 200, resp.text
+    for _ in range(200):
+        status = c.get("/api/jobs/status?job_type=trips").json()
+        if status["done"]:
+            return status
+        time.sleep(0.05)
+    raise AssertionError("trips job did not finish")
 
 
 def test_trips_page_empty_then_detect(client: tuple[TestClient, sqlite3.Connection]) -> None:
@@ -242,9 +256,9 @@ def test_trips_page_empty_then_detect(client: tuple[TestClient, sqlite3.Connecti
     assert "No trips or events detected yet" in resp.text
     assert 'href="/trips"' in resp.text  # nav link
 
-    resp = c.post("/api/trips/detect", json={"trip_min_distance_km": 100})
-    assert resp.status_code == 200
-    assert resp.json()["n_trips"] == 1
+    status = _detect(c, {"trip_min_distance_km": 100})
+    assert status["error"] is None
+    assert status["diagnostics"]["n_trips"] == 1
 
     resp = c.get("/trips")
     assert "Trip · Jun 2023" in resp.text
@@ -258,7 +272,7 @@ def test_trips_page_empty_then_detect(client: tuple[TestClient, sqlite3.Connecti
 
 def test_trip_detail_and_rename(client: tuple[TestClient, sqlite3.Connection]) -> None:
     c, conn = client
-    c.post("/api/trips/detect")
+    _detect(c)
     trip = eq.list_events(conn, kind="trip")[0]
     resp = c.get(f"/trips/{trip['id']}")
     assert resp.status_code == 200
@@ -276,7 +290,7 @@ def test_trip_detail_and_rename(client: tuple[TestClient, sqlite3.Connection]) -
 
 def test_api_list_trips(client: tuple[TestClient, sqlite3.Connection]) -> None:
     c, _ = client
-    c.post("/api/trips/detect")
+    _detect(c)
     data = c.get("/api/trips?kind=trip").json()
     assert len(data["items"]) == 1
     assert data["items"][0]["map_url"] is None
@@ -313,3 +327,100 @@ def test_event_crossing_trip_boundary_is_split() -> None:
     assert len(trip.children) == 1
     assert 500 not in trip.children[0].asset_ids
     assert set(trip.children[0].asset_ids) <= set(trip.asset_ids)
+
+
+MUNICH = (48.14, 11.58)
+
+
+def _daily(start: int, days: int, where: tuple[float, float], first_id: int) -> list[PhotoPoint]:
+    return [PhotoPoint(first_id + i, start + i * DAY, *where) for i in range(days)]
+
+
+def test_moving_house_is_not_a_trip() -> None:
+    # Berlin until early July, then Munich for the rest of the year: one photo a day.
+    pts = _daily(_ts(2023, 1, 1), 185, BERLIN, 1) + _daily(_ts(2023, 7, 5), 180, MUNICH, 1000)
+    # A real week in Lisbon in October, after the move.
+    pts += [PhotoPoint(5000 + k, _ts(2023, 10, 10, 8) + k * 3 * HOUR, *LISBON) for k in range(40)]
+    result = detect(pts)
+    assert len(result.trips) == 1
+    trip = result.trips[0]
+    assert haversine_km(trip.center_lat, trip.center_lon, *LISBON) < 50
+    assert trip.n_days <= 6
+
+
+def test_trips_longer_than_max_days_are_dropped() -> None:
+    pts = _daily(_ts(2023, 1, 1), 120, BERLIN, 1)
+    pts += _daily(_ts(2023, 5, 1), 30, LISBON, 1000)
+    assert len(detect(pts, DetectionParams(trip_min_photos=5)).trips) == 1
+    assert detect(pts, DetectionParams(trip_min_photos=5, trip_max_days=20)).trips == []
+
+
+def test_trip_includes_travel_day_photos_without_gps() -> None:
+    pts = _daily(_ts(2023, 1, 1), 60, BERLIN, 1)
+    pts.append(PhotoPoint(900, _ts(2023, 3, 10, 6), *BERLIN))  # at home before leaving
+    pts += [PhotoPoint(901 + k, _ts(2023, 3, 10, 7) + k * 600, None, None) for k in range(3)]
+    pts += [PhotoPoint(950 + k, _ts(2023, 3, 10, 14) + k * HOUR, *LISBON) for k in range(12)]
+    trip = detect(pts).trips[0]
+    assert {901, 902, 903} <= set(trip.asset_ids)  # airport photos, no GPS
+    assert 900 not in trip.asset_ids
+
+
+def test_local_year_uses_local_time() -> None:
+    from takeout_rater.events.detector import local_year
+
+    ts = _ts(2023, 12, 31, 20)  # 20:00 UTC = 05:00 next day in Tokyo
+    assert local_year(ts, 139.7) == 2024
+    assert local_year(ts, -9.1) == 2023
+
+
+def test_custom_names_are_matched_one_to_one() -> None:
+    from takeout_rater.events.detector import DetectedGroup
+    from takeout_rater.events.service import _match_custom_names
+
+    a = DetectedGroup("trip", 0, 10, list(range(1, 61)))
+    b = DetectedGroup("trip", 11, 20, list(range(61, 101)))
+    single = DetectedGroup("event", 30, 30, [500])
+    custom = [
+        {"kind": "trip", "custom_name": "Big trip", "asset_ids": set(range(1, 101))},
+        {"kind": "event", "custom_name": "One shot", "asset_ids": {500}},
+    ]
+    names = _match_custom_names([a, b, single], custom)
+    assert names == {id(a): "Big trip", id(single): "One shot"}
+
+
+def test_saving_unchanged_name_keeps_it_automatic() -> None:
+    conn = _make_db()
+    _populate(conn)
+    run_detection(conn)
+    trip = eq.list_events(conn, kind="trip")[0]
+    assert eq.rename_event(conn, trip["id"], trip["auto_name"])
+    assert eq.get_event(conn, trip["id"])["custom_name"] is None
+
+
+def test_cancelled_detection_keeps_previous_result() -> None:
+    from takeout_rater.events.service import DetectionCancelled
+
+    conn = _make_db()
+    _populate(conn)
+    run_detection(conn)
+    before = eq.event_stats(conn)
+    conn.execute("DELETE FROM events WHERE kind = 'event'")  # would be recreated by a full run
+    conn.commit()
+    with pytest.raises(DetectionCancelled):
+        run_detection(conn, should_cancel=lambda: True)
+    assert eq.event_stats(conn)["n_trips"] == before["n_trips"]
+    assert eq.event_stats(conn)["n_events"] == 0
+
+
+def test_counts_follow_deleted_assets() -> None:
+    conn = _make_db()
+    _populate(conn)
+    run_detection(conn)
+    trip = eq.list_events(conn, kind="trip")[0]
+    victim = conn.execute(
+        "SELECT asset_id FROM event_assets WHERE event_id = ? LIMIT 1", (trip["id"],)
+    ).fetchone()[0]
+    conn.execute("DELETE FROM asset_scores WHERE asset_id = ?", (victim,))
+    conn.execute("DELETE FROM assets WHERE id = ?", (victim,))
+    conn.commit()
+    assert eq.get_event(conn, trip["id"])["n_assets"] == trip["n_assets"] - 1

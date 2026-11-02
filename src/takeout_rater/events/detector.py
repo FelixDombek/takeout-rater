@@ -4,12 +4,14 @@ Two kinds of groups are detected:
 
 * **Trips**: runs of local calendar days on which most geotagged photos were
   taken far away (``trip_min_distance_km``) from *home*.  Home is estimated
-  per calendar year as the coarse grid cell on which photos were taken on the
-  most distinct days, so a move to another city is picked up automatically.
+  week by week as the coarse grid cell photographed on the most distinct days
+  within a centred rolling window, so a move to another city switches home at
+  about the moving date instead of turning into a months-long "trip".
   Days without any geotagged photo do not interrupt a trip (up to
   ``trip_max_gap_days`` of them); a day with geotagged photos at home ends it.
-  A trip spans from its first to its last *away* photo, and every photo taken
-  in that time range belongs to it, with or without GPS.
+  A trip spans its away days (widened to the travel days' photos without GPS,
+  but never past a photo taken at home), and every photo in that time range
+  belongs to it, with or without GPS.
 
 * **Events**: bursts of photos separated from their neighbours by more than
   ``event_gap_hours`` (the classic "time gap" rule used by photo apps).  Events
@@ -52,10 +54,12 @@ class DetectionParams:
     """Tunable thresholds for :func:`detect`."""
 
     home_cell_deg: float = 0.05  # ~5 km grid cells for the home estimate
-    min_home_days: int = 20  # a year needs this many geotagged days for its own home
+    home_window_days: int = 60  # home = most-photographed cell within ± this many days
+    min_home_days: int = 10  # geotagged days needed in that window, else all-time home
     trip_min_distance_km: float = 50.0
     trip_max_gap_days: int = 2  # days without geotagged photos tolerated inside a trip
     trip_min_photos: int = 10
+    trip_max_days: int = 60  # longer "trips" are relocations, not trips
     event_gap_hours: float = 4.0
     event_min_photos: int = 15
 
@@ -82,7 +86,7 @@ class DetectedGroup:
 class DetectionResult:
     trips: list[DetectedGroup]
     events: list[DetectedGroup]  # stand-alone events (not inside any trip)
-    homes: dict[int, tuple[float, float]]  # year -> (lat, lon)
+    homes: dict[int, tuple[float, float]]  # local week number -> (lat, lon)
     default_home: tuple[float, float] | None
 
 
@@ -95,10 +99,6 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * _EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(a)))
 
 
-def _year(ts: int) -> int:
-    return datetime.fromtimestamp(ts, tz=UTC).year
-
-
 def _utc_offset_s(lon: float | None) -> int:
     """Rough local-time offset from longitude (solar time, whole hours)."""
     if lon is None:
@@ -106,37 +106,41 @@ def _utc_offset_s(lon: float | None) -> int:
     return int(round(lon / 15.0)) * 3600
 
 
+def _local_day(p: PhotoPoint) -> int:
+    """Local calendar day number of a photo (UTC shifted by its solar offset)."""
+    return (p.ts + _utc_offset_s(p.lon)) // _DAY
+
+
 def estimate_homes(
     points: list[PhotoPoint], params: DetectionParams = DEFAULT_PARAMS
 ) -> tuple[dict[int, tuple[float, float]], tuple[float, float] | None]:
-    """Estimate the home location for each calendar year.
+    """Estimate where home was, week by week, with a centred rolling window.
 
-    The home of a year is the grid cell on which geotagged photos were taken on
-    the most distinct days (weighting by days, not photos, keeps one big
-    photo session from outweighing everyday life).  Years with fewer than
-    ``min_home_days`` geotagged days use the all-time home instead.
+    Home for a given week is the grid cell on which geotagged photos were taken
+    on the most distinct days within ``± home_window_days`` (weighting by days,
+    not photos, keeps one big photo session from outweighing everyday life).
+    Because the window is centred, a move switches home at about the moving
+    date, while a trip shorter than the half-window never becomes "home".
+    Weeks whose window holds fewer than ``min_home_days`` geotagged days use
+    the all-time home instead.
 
     Returns:
-        ``(homes_by_year, default_home)``; ``default_home`` is ``None`` when no
-        photo has coordinates.
+        ``(homes_by_week, default_home)``: keys are local week numbers
+        (``local_day // 7``); ``default_home`` is ``None`` when no photo has
+        coordinates.
     """
     cell = params.home_cell_deg
-    days_per_cell: dict[int, dict[tuple[int, int], set[int]]] = defaultdict(
-        lambda: defaultdict(set)
-    )
+    day_cells: dict[int, set[tuple[int, int]]] = defaultdict(set)
     all_days: dict[tuple[int, int], set[int]] = defaultdict(set)
     coords_per_cell: dict[tuple[int, int], list[tuple[float, float]]] = defaultdict(list)
-    geo_days_per_year: dict[int, set[int]] = defaultdict(set)
 
     for p in points:
         if not p.has_geo:
             continue
         key = (int(math.floor(p.lat / cell)), int(math.floor(p.lon / cell)))  # type: ignore[operator]
-        day = (p.ts + _utc_offset_s(p.lon)) // _DAY
-        year = _year(p.ts)
-        days_per_cell[year][key].add(day)
+        day = _local_day(p)
+        day_cells[day].add(key)
         all_days[key].add(day)
-        geo_days_per_year[year].add(day)
         coords_per_cell[key].append((p.lat, p.lon))  # type: ignore[arg-type]
 
     if not all_days:
@@ -153,24 +157,38 @@ def estimate_homes(
             )
         return centers[key]
 
-    def _best(cells: dict[tuple[int, int], set[int]]) -> tuple[int, int]:
-        # Most distinct days; ties broken deterministically by cell key.
-        return max(cells, key=lambda k: (len(cells[k]), k))
+    default_home = _cell_center(max(all_days, key=lambda k: (len(all_days[k]), k)))
 
-    default_home = _cell_center(_best(all_days))
+    # Slide a window of ± home_window_days over the sorted geotagged days and
+    # keep, per cell, the number of distinct days it was photographed on.
+    days = sorted(day_cells)
+    half = params.home_window_days
+    counts: Counter[tuple[int, int]] = Counter()
+    lo = hi = 0
     homes: dict[int, tuple[float, float]] = {}
-    for year, cells in days_per_cell.items():
-        if len(geo_days_per_year[year]) >= params.min_home_days:
-            homes[year] = _cell_center(_best(cells))
+    for week in sorted({d // 7 for d in days}):
+        mid = week * 7 + 3
+        while hi < len(days) and days[hi] <= mid + half:
+            counts.update(day_cells[days[hi]])
+            hi += 1
+        while lo < hi and days[lo] < mid - half:
+            counts.subtract(day_cells[days[lo]])
+            for c in day_cells[days[lo]]:
+                if counts[c] <= 0:
+                    del counts[c]
+            lo += 1
+        if hi - lo >= params.min_home_days and counts:
+            best = max(counts, key=lambda k: (counts[k], k))
+            homes[week] = _cell_center(best)
         else:
-            homes[year] = default_home
+            homes[week] = default_home
     return homes, default_home
 
 
 def _home_for(
-    ts: int, homes: dict[int, tuple[float, float]], default: tuple[float, float] | None
+    p: PhotoPoint, homes: dict[int, tuple[float, float]], default: tuple[float, float] | None
 ) -> tuple[float, float] | None:
-    return homes.get(_year(ts), default)
+    return homes.get(_local_day(p) // 7, default)
 
 
 def _center(points: list[PhotoPoint]) -> tuple[float | None, float | None]:
@@ -202,10 +220,10 @@ def detect_trips(
     for p in points:
         if not p.has_geo:
             continue
-        home = _home_for(p.ts, homes, default_home)
+        home = _home_for(p, homes, default_home)
         assert home is not None
         dist = haversine_km(home[0], home[1], p.lat, p.lon)  # type: ignore[arg-type]
-        by_day[(p.ts + _utc_offset_s(p.lon)) // _DAY].append((p, dist))
+        by_day[_local_day(p)].append((p, dist))
 
     runs: list[list[int]] = []
     current: list[int] = []
@@ -227,16 +245,34 @@ def detect_trips(
         runs.append(current)
 
     timestamps = [p.ts for p in points]
+    home_ts = sorted(
+        p.ts for entries in by_day.values() for p, d in entries if d < params.trip_min_distance_km
+    )
     trips: list[DetectedGroup] = []
     for run in runs:
+        n_days = run[-1] - run[0] + 1
+        if n_days > params.trip_max_days:
+            continue  # months "away" means home moved, not a trip
         away_pts = [
             (p, d) for day in run for p, d in by_day[day] if d >= params.trip_min_distance_km
         ]
-        start_ts = min(p.ts for p, _ in away_pts)
-        end_ts = max(p.ts for p, _ in away_pts)
+        first = min(away_pts, key=lambda e: e[0].ts)[0]
+        last = max(away_pts, key=lambda e: e[0].ts)[0]
+        # Widen to the travel days' photos without GPS: back to the start of the
+        # first local day (or just after the last photo at home), and likewise
+        # forward to the end of the last day.
+        day_start = run[0] * _DAY - _utc_offset_s(first.lon)
+        day_end = (run[-1] + 1) * _DAY - _utc_offset_s(last.lon) - 1
+        i = bisect.bisect_left(home_ts, first.ts)
+        start_ts = max(day_start, home_ts[i - 1] + 1) if i > 0 else day_start
+        j = bisect.bisect_right(home_ts, last.ts)
+        end_ts = min(day_end, home_ts[j] - 1) if j < len(home_ts) else day_end
+        start_ts, end_ts = min(start_ts, first.ts), max(end_ts, last.ts)
         lo = bisect.bisect_left(timestamps, start_ts)
         hi = bisect.bisect_right(timestamps, end_ts)
         members = points[lo:hi]
+        # Report the span of actual photos, not of the widened window.
+        start_ts, end_ts = members[0].ts, members[-1].ts
         if len(members) < params.trip_min_photos:
             continue
         clat, clon = _center([p for p, _ in away_pts])
@@ -249,7 +285,7 @@ def detect_trips(
                 center_lat=clat,
                 center_lon=clon,
                 max_distance_km=round(max(d for _, d in away_pts), 1),
-                n_days=run[-1] - run[0] + 1,
+                n_days=n_days,
             )
         )
     return trips
@@ -303,7 +339,7 @@ def detect_events(
             dists = []
             for p in seg:
                 if p.has_geo:
-                    home = _home_for(p.ts, homes, default_home)
+                    home = _home_for(p, homes, default_home)
                     assert home is not None
                     dists.append(haversine_km(home[0], home[1], p.lat, p.lon))  # type: ignore[arg-type]
             if dists:
@@ -338,6 +374,11 @@ def detect(points: list[PhotoPoint], params: DetectionParams = DEFAULT_PARAMS) -
 # ── Naming ────────────────────────────────────────────────────────────────────
 
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def local_year(ts: int, lon: float | None = None) -> int:
+    """Calendar year of *ts* in (approximate) local time at longitude *lon*."""
+    return datetime.fromtimestamp(ts + _utc_offset_s(lon), tz=UTC).year
 
 
 def format_date_range(start_ts: int, end_ts: int, lon: float | None = None) -> str:

@@ -3,38 +3,18 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Generator
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from takeout_rater.api.albums import _get_conn
 from takeout_rater.db import event_queries as eq
-from takeout_rater.events.detector import DetectionParams, format_date_range
+from takeout_rater.events.detector import DEFAULT_PARAMS, format_date_range, local_year
 
 router = APIRouter()
 
 _PAGE_SIZE = 100
-
-
-def _get_conn(request: Request) -> Generator[sqlite3.Connection, None, None]:
-    db_path = request.app.state.db_path
-    if db_path is not None:
-        from takeout_rater.db.connection import open_db
-
-        conn = open_db(db_path)
-        try:
-            yield conn
-        finally:
-            conn.close()
-        return
-
-    # Fallback for in-memory databases (used in tests).
-    conn = request.app.state.db_conn
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
-    yield conn
 
 
 def _has_map(request: Request) -> bool:
@@ -49,7 +29,7 @@ def _decorate(ev: dict, has_map: bool) -> dict:
     """
     ev = dict(ev)
     ev["date_label"] = format_date_range(ev["start_ts"], ev["end_ts"], ev["center_lon"])
-    ev["year"] = datetime.fromtimestamp(ev["start_ts"], tz=UTC).year
+    ev["year"] = local_year(ev["start_ts"], ev["center_lon"])
     ev["map_url"] = f"/map?from={ev['start_ts']}&to={ev['end_ts']}" if has_map else None
     return ev
 
@@ -75,7 +55,7 @@ def trips_page(
             "years": years,
             "show": show if kind else "all",
             "stats": eq.event_stats(conn),
-            "defaults": DetectionParams(),
+            "defaults": DEFAULT_PARAMS,
         },
     )
 
@@ -157,26 +137,15 @@ def api_asset_trips(
     return JSONResponse({"items": items})
 
 
-class _DetectBody(BaseModel):
-    trip_min_distance_km: float = Field(DetectionParams.trip_min_distance_km, gt=0, le=20000)
-    trip_min_photos: int = Field(DetectionParams.trip_min_photos, ge=1)
-    trip_max_gap_days: int = Field(DetectionParams.trip_max_gap_days, ge=0, le=30)
-    event_gap_hours: float = Field(DetectionParams.event_gap_hours, gt=0, le=240)
-    event_min_photos: int = Field(DetectionParams.event_min_photos, ge=2)
+class TripDetectBody(BaseModel):
+    """Detection thresholds accepted by ``POST /api/jobs/trips/start``."""
 
-
-@router.post("/api/trips/detect")
-def api_detect_trips(
-    body: _DetectBody | None = None,
-    conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
-) -> JSONResponse:
-    """(Re-)detect all trips and events.  Runs synchronously (a few seconds for 200k photos)."""
-    from takeout_rater.events.service import run_detection
-
-    body = body or _DetectBody()
-    params = DetectionParams(**body.model_dump())
-    summary = run_detection(conn, params)
-    return JSONResponse(summary)
+    trip_min_distance_km: float = Field(DEFAULT_PARAMS.trip_min_distance_km, gt=0, le=20000)
+    trip_min_photos: int = Field(DEFAULT_PARAMS.trip_min_photos, ge=1)
+    trip_max_gap_days: int = Field(DEFAULT_PARAMS.trip_max_gap_days, ge=0, le=30)
+    trip_max_days: int = Field(DEFAULT_PARAMS.trip_max_days, ge=1, le=3650)
+    event_gap_hours: float = Field(DEFAULT_PARAMS.event_gap_hours, gt=0, le=240)
+    event_min_photos: int = Field(DEFAULT_PARAMS.event_min_photos, ge=2)
 
 
 class _RenameBody(BaseModel):
