@@ -225,6 +225,7 @@ If HEIC decoding fails for a specific file, the asset is indexed but marked `uns
 | **12** ✅ | CLIP semantic search: `clip_embeddings` table (schema v10), shared CLIP backbone singleton, `embed` background job (batch CLIP ViT-L/14 image embedding), `/api/search` endpoint with in-memory cosine similarity, `/search` page with live-as-you-type results, 🔍 Search nav link |
 | **13** 🔜 | CLIP-based photo clustering: group photos by visual similarity using existing CLIP embeddings; cluster view on a dedicated `/clip-clusters` page |
 | **14** 🔜 | Facial Detection: InsightFace (`buffalo_l`, SCRFD + ArcFace R100 via ONNX Runtime) for face detection and 512-d identity embeddings; DBSCAN clustering into named person groups; CLIP-based "similar photos" surfacing for hidden-face photos; new `/faces` top-level page |
+| **15** ✅ | SigLIP 2 search backbone: model-keyed `image_embeddings` table (schema v15), `siglip2-so400m-16-256` (open_clip `ViT-SO400M-16-SigLIP2-256`/`webli`, 1152-d) computed by the `embed` job on demand, `/api/search?model=` (auto prefers SigLIP 2), `/api/search/backbones`, per-model cached matrices built with `np.frombuffer`. CLIP L/14 stays in `clip_embeddings` for the CLIP-space scorers, clustering, similarity and the embedding map |
 
 ---
 

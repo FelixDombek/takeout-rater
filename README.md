@@ -8,7 +8,7 @@ and exports, and it will give you access to tools such as:
 
  - Library and album browsing
  - Several aesthetics scorers
- - CLIP-based semantic search
+ - Semantic search with SigLIP 2 (multilingual, opt-in embedding pass from the Search page) or CLIP ViT-L/14
  - Face detection and grouping
 
 and much more.

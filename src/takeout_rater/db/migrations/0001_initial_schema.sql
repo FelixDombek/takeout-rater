@@ -127,6 +127,15 @@ CREATE TABLE IF NOT EXISTS clip_embeddings (
     computed_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS image_embeddings (
+    asset_id    INTEGER NOT NULL REFERENCES assets(id),
+    model_key   TEXT    NOT NULL,   -- search backbone key, e.g. 'siglip2-so400m-16-256'
+    dim         INTEGER NOT NULL,   -- vector length (float32 values)
+    embedding   BLOB    NOT NULL,   -- L2-normalised little-endian float32 vector
+    computed_at INTEGER NOT NULL,
+    PRIMARY KEY (model_key, asset_id)
+);
+
 CREATE TABLE IF NOT EXISTS clip_user_tags (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     term       TEXT    UNIQUE NOT NULL,
@@ -193,8 +202,9 @@ CREATE INDEX IF NOT EXISTS idx_face_embeddings_asset_id ON face_embeddings(asset
 CREATE INDEX IF NOT EXISTS idx_face_embeddings_run_id   ON face_embeddings(run_id);
 CREATE INDEX IF NOT EXISTS idx_face_clusters_run_id     ON face_clusters(run_id);
 CREATE INDEX IF NOT EXISTS idx_face_cluster_members_face_id ON face_cluster_members(face_id);
+CREATE INDEX IF NOT EXISTS idx_image_embeddings_asset_id ON image_embeddings (asset_id);
 
--- Reverse-geocoded place names (added in schema v15, see 0009_asset_places.sql)
+-- Reverse-geocoded place names (added in schema v16, see 0010_asset_places.sql)
 CREATE TABLE IF NOT EXISTS asset_places (
     asset_id         INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
     lat              REAL NOT NULL,         -- coordinates the lookup used
@@ -212,4 +222,4 @@ CREATE TABLE IF NOT EXISTS asset_places (
 CREATE INDEX IF NOT EXISTS idx_asset_places_place ON asset_places (country_code, admin1, city);
 CREATE INDEX IF NOT EXISTS idx_asset_places_city  ON asset_places (city);
 
-PRAGMA user_version = 15;
+PRAGMA user_version = 16;

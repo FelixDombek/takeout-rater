@@ -42,6 +42,7 @@ takeout-rater/
 | `scoring/scorers/simple.py` | Simple Pillow scorer: sharpness, brightness/contrast, noise variants |
 | `scoring/scorers/brisque.py` | BRISQUE no-reference IQA scorer (piq wrapper) |
 | `scoring/scorers/laion.py` | LAION Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP, 0–10 scale) |
+| `scoring/scorers/aesthetic_v25.py` | Aesthetic Predictor V2.5 (SigLIP so400m-patch14-384 + MLP, ~1–10 scale, AGPL-3.0 model) |
 | `scoring/scorers/nsfw.py` | NSFW detector (Falconsai ViT classifier, 0–1 probability) |
 | `scoring/scorers/clip_iqa.py` | CLIP-IQA zero-shot quality scorer (CLIP ViT-L/14, 0–1) |
 | `scoring/scorers/nima.py` | NIMA aesthetic/technical scorer (MobileNet-V2, 1–10) |

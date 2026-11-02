@@ -1,4 +1,4 @@
--- Migration: version 14 → 15
+-- Migration: version 15 → 16
 -- Add asset_places: offline reverse-geocoded place names (GeoNames) for
 -- assets with usable GPS coordinates.  One row per processed asset; rows whose
 -- coordinates are far from any populated place keep NULL name columns so the
@@ -21,4 +21,4 @@ CREATE TABLE IF NOT EXISTS asset_places (
 CREATE INDEX IF NOT EXISTS idx_asset_places_place ON asset_places (country_code, admin1, city);
 CREATE INDEX IF NOT EXISTS idx_asset_places_city  ON asset_places (city);
 
-PRAGMA user_version = 15;
+PRAGMA user_version = 16;

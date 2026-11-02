@@ -43,7 +43,7 @@
 
 ### Place names
 
-- `asset_places` (schema v15) holds one row per geotagged asset: the coordinates
+- `asset_places` (schema v16) holds one row per geotagged asset: the coordinates
   used, `country_code`, `country`, `admin1`, `admin2`, `city`, `distance_km`,
   `geocoder_version`.  Rows with NULL names mean "far from any populated place"
   and stop the job from retrying them.
