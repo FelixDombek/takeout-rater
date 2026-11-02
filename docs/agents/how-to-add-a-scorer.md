@@ -33,7 +33,7 @@ class MyScorer(BaseScorer):
     @classmethod
     def spec(cls) -> ScorerSpec:
         return ScorerSpec(
-            scorer_id="my_scorer",          # stable, lowercase, underscore-separated
+            scorer_id="my_scorer",  # stable, lowercase, underscore-separated
             display_name="My Scorer",
             description="What this scorer measures and how.",
             variants=(
@@ -61,6 +61,7 @@ class MyScorer(BaseScorer):
     def is_available(cls) -> bool:
         try:
             from PIL import Image  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -150,6 +151,7 @@ class MyMLScorer(BaseScorer):
         """Return True when all optional runtime deps are importable (no model load)."""
         try:
             import some_optional_dep  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -162,6 +164,7 @@ class MyMLScorer(BaseScorer):
         if self._model is not None:
             return
         import some_optional_dep
+
         self._model = some_optional_dep.load(_MODEL_ID)
 
     def score_batch(
@@ -221,7 +224,7 @@ from takeout_rater.scoring.scorers.my_ml_scorer import MyMLScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
     # ...existing scorers...
-    MyMLScorer,   # ← add here
+    MyMLScorer,  # ← add here
 ]
 ```
 
