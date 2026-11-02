@@ -318,7 +318,7 @@ class PyIQAScorer(BaseScorer):
                         try:
                             raw = float(self._metric(tensors[idx].unsqueeze(0)).item())
                             sub_scores[idx] = _to_higher_is_better(self.variant_id, raw)
-                        except (ValueError, RuntimeError):
+                        except (OSError, ValueError, RuntimeError):
                             pass
 
             return [{"iqa_quality": s} for s in sub_scores]

@@ -143,7 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=256,
         metavar="N",
-        help="Number of images per scoring call; scorers split it into GPU batches (default: 256).",
+        help="Number of images per scoring call and progress/commit step (default: 256).",
     )
 
     # cluster

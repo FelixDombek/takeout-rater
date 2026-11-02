@@ -403,6 +403,34 @@ def run_index(
 
     _progress_lock = threading.Lock()
     _last_progress_emit = 0.0
+
+    def _emit_progress(force: bool = False) -> None:
+        """Publish a diagnostics snapshot + progress callback, throttled.
+
+        Copying ~70 counters and notifying the job for every single asset costs
+        more than the UI, which polls a few times per second, can use.  Callers
+        must hold ``_progress_lock``.
+        """
+        nonlocal _last_progress_emit
+        now_perf = time.perf_counter()
+        if not force and now_perf - _last_progress_emit < _PROGRESS_EMIT_INTERVAL:
+            return
+        _last_progress_emit = now_perf
+        progress.diagnostics = _diag_snapshot()
+        if on_progress:
+            on_progress(progress)
+
+    # A ticker keeps diagnostics moving while no claims arrive, e.g. while the
+    # thumbnail/CLIP queues drain after the last asset was claimed.
+    _ticker_stop = threading.Event()
+
+    def _progress_ticker() -> None:
+        while not _ticker_stop.wait(_PROGRESS_EMIT_INTERVAL):
+            with _progress_lock:
+                _emit_progress()
+
+    _ticker_thread = threading.Thread(target=_progress_ticker, daemon=True, name="index-progress")
+    _ticker_thread.start()
     # CLIP image preprocessing runs on a small CPU worker pool and feeds one
     # dedicated GPU/DB writer thread that forms inference batches. Calling
     # encode_image() from many Python workers can deadlock PyTorch's thread
@@ -674,7 +702,7 @@ def run_index(
         for thread in preprocess_threads:
             thread.start()
 
-        wconn = open_db(db_path)
+        wconn = open_db(db_path, bulk_writes=True)
         try:
             preprocess_sentinels_seen = 0
             while True:
@@ -861,21 +889,54 @@ def run_index(
                 _link_asset_to_album_no_commit(wconn, album_id, asset_id)
         return asset_id, is_new
 
+    class _BatchAbortedError(Exception):
+        """SQLite rolled back the whole batch transaction (e.g. SQLITE_FULL)."""
+
+    def _run_in_savepoint(wconn: sqlite3.Connection, fn: Callable[[], object]) -> object:
+        """Run *fn* inside a SAVEPOINT, undoing only its own writes on error.
+
+        Errors such as SQLITE_FULL or SQLITE_IOERR make SQLite roll back the
+        entire transaction rather than the statement.  In that case the
+        savepoint no longer exists and earlier items of the batch are gone
+        too, so :class:`_BatchAbortedError` is raised to fail the whole batch
+        instead of committing the remainder in a fresh implicit transaction.
+        """
+        wconn.execute("SAVEPOINT item")
+        try:
+            result = fn()
+        except Exception:
+            if not wconn.in_transaction:
+                raise _BatchAbortedError() from None
+            try:
+                wconn.execute("ROLLBACK TO SAVEPOINT item")
+                wconn.execute("RELEASE SAVEPOINT item")
+            except sqlite3.Error as rollback_exc:
+                raise _BatchAbortedError() from rollback_exc
+            raise
+        wconn.execute("RELEASE SAVEPOINT item")
+        return result
+
     def _write_db_batch(wconn: sqlite3.Connection, batch: list[object]) -> None:
         """Apply a batch of claim/pHash items in one transaction.
 
-        Each claim runs inside its own SAVEPOINT so a failing claim is rolled
+        Each item runs inside its own SAVEPOINT so a failing item is rolled
         back on its own without discarding the rest of the batch.  Claim
         futures are only resolved after the whole batch has been committed, so
-        a worker never proceeds with an asset id that is not yet durable in
-        the database.  Because there is a single writer thread, the hash
-        lookup + upsert of every claim remains atomic with respect to all other
-        claims (later claims in the batch see earlier ones on this connection).
+        a worker never proceeds with an asset id that is not yet in the
+        database.  Because there is a single writer thread, the hash lookup +
+        upsert of every claim remains atomic with respect to all other claims
+        (later claims in the batch see earlier ones on this connection).
+
+        If the transaction as a whole fails (commit error, or an error that
+        made SQLite abort the transaction), nothing of the batch was written;
+        the items are then retried one per transaction so one bad item cannot
+        fail up to :data:`_db_write_batch_max` claims.
         """
         claim_results: list[tuple[Future, tuple[int, bool] | BaseException]] = []
+        claim_seconds = 0.0
+        phash_seconds = 0.0
         n_claims = 0
         n_phash = 0
-        writer_start = time.perf_counter()
         try:
             # IMMEDIATE takes the write lock up front.  A deferred BEGIN would
             # read under a snapshot that a concurrent commit (e.g. the CLIP
@@ -884,49 +945,69 @@ def run_index(
             wconn.execute("BEGIN IMMEDIATE")
             for item in batch:
                 kind = item["kind"]  # type: ignore[index]
+                item_start = time.perf_counter()
                 if kind == "claim":
                     n_claims += 1
-                    wconn.execute("SAVEPOINT claim")
                     try:
-                        result = _apply_claim_item(wconn, item)
+                        result = _run_in_savepoint(
+                            wconn,
+                            lambda item=item: _apply_claim_item(wconn, item),
+                        )
+                    except _BatchAbortedError:
+                        raise
                     except Exception as exc:  # noqa: BLE001
-                        wconn.execute("ROLLBACK TO SAVEPOINT claim")
-                        wconn.execute("RELEASE SAVEPOINT claim")
                         claim_results.append((item["future"], exc))  # type: ignore[index]
                     else:
-                        wconn.execute("RELEASE SAVEPOINT claim")
-                        claim_results.append((item["future"], result))  # type: ignore[index]
+                        claim_results.append((item["future"], result))  # type: ignore[index,arg-type]
+                    claim_seconds += time.perf_counter() - item_start
                 elif kind == "phash":
                     n_phash += 1
                     try:
-                        _upsert_phash_no_commit(
+                        _run_in_savepoint(
                             wconn,
-                            item["asset_id"],  # type: ignore[index]
-                            item["dhash_hex"],  # type: ignore[index]
+                            lambda item=item: _upsert_phash_no_commit(
+                                wconn,
+                                item["asset_id"],  # type: ignore[index]
+                                item["dhash_hex"],  # type: ignore[index]
+                            ),
                         )
+                    except _BatchAbortedError:
+                        raise
                     except Exception:  # noqa: BLE001
                         _log.warning("pHash write failed", exc_info=True)
-            write_seconds = time.perf_counter() - writer_start
+                    phash_seconds += time.perf_counter() - item_start
             commit_start = time.perf_counter()
             wconn.commit()
             commit_seconds = time.perf_counter() - commit_start
         except Exception as exc:  # noqa: BLE001
             with contextlib.suppress(Exception):
                 wconn.rollback()
-            _log.warning("Index DB writer batch failed", exc_info=True)
-            for item in batch:
-                if item["kind"] == "claim":  # type: ignore[index]
-                    fut = item["future"]  # type: ignore[index]
-                    if not fut.done():
-                        fut.set_exception(exc)
+            if len(batch) > 1:
+                _log.warning(
+                    "Index DB writer batch of %d failed; retrying items one by one",
+                    len(batch),
+                    exc_info=True,
+                )
+                for item in batch:
+                    _write_db_batch(wconn, [item])
+                return
+            _log.warning("Index DB write failed", exc_info=True)
+            item = batch[0]
+            if item["kind"] == "claim":  # type: ignore[index]
+                fut = item["future"]  # type: ignore[index]
+                if not fut.done():
+                    fut.set_exception(exc.__cause__ or exc)
             return
 
-        _diag_add("db_claim_writer_seconds", write_seconds)
-        _diag_add("db_claim_commit_seconds", commit_seconds)
+        # Split the shared commit between claims and pHash rows so neither
+        # counter double-counts time spent on the other.
+        n_items = max(1, n_claims + n_phash)
         if n_claims:
+            _diag_add("db_claim_writer_seconds", claim_seconds)
+            _diag_add("db_claim_commit_seconds", commit_seconds * n_claims / n_items)
             _diag_inc("db_claims_committed", n_claims)
         if n_phash:
-            _diag_add("phash_write_seconds", write_seconds + commit_seconds)
+            _diag_add("phash_write_seconds", phash_seconds + commit_seconds * n_phash / n_items)
             _diag_inc("phash_commits")
         for fut, outcome in claim_results:
             if isinstance(outcome, BaseException):
@@ -935,7 +1016,7 @@ def run_index(
                 fut.set_result(outcome)
 
     def _db_writer() -> None:
-        wconn = open_db(db_path)
+        wconn = open_db(db_path, bulk_writes=True)
         try:
             while True:
                 item = _db_queue.get()
@@ -1002,7 +1083,6 @@ def run_index(
             _log.exception("Unexpected error processing asset %r – skipping", relpath)
 
     def _process_one_inner(asset_file: object, relpath: str) -> None:  # noqa: PLR0912,PLR0915
-        nonlocal _last_progress_emit
         # Step 1: Read file bytes + compute sha256 (parallel, no locking)
         sha256: str | None = None
         file_bytes: bytes | None = None
@@ -1075,22 +1155,11 @@ def run_index(
         _diag_inc("assets_new" if is_new else "assets_existing")
         _log.debug("Claimed asset %r → id=%d is_new=%s", relpath, asset_id, is_new)
 
-        # Update progress (guarded by separate lock).  The diagnostics snapshot
-        # and the progress callback are throttled: copying ~70 counters and
-        # notifying the job for every single asset costs more than the UI,
-        # which polls a few times per second, can use.
+        # Update progress (guarded by separate lock; emission is throttled).
         with _progress_lock:
             progress.indexed += 1
             _diag_set("assets_indexed", progress.indexed)
-            now_perf = time.perf_counter()
-            if (
-                now_perf - _last_progress_emit >= _PROGRESS_EMIT_INTERVAL
-                or progress.indexed >= progress.found
-            ):
-                _last_progress_emit = now_perf
-                progress.diagnostics = _diag_snapshot()
-                if on_progress:
-                    on_progress(progress)
+            _emit_progress()
 
         # Step 4: Thumbnail first, then phash + CLIP on the thumbnail image.
         #
@@ -1247,39 +1316,45 @@ def run_index(
     # Keep only a bounded number of futures in flight. Large takeouts can
     # contain hundreds of thousands of files; submitting every asset at once
     # wastes memory and weakens queue backpressure.
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        asset_iter = iter(assets)
-        max_in_flight = max(num_workers * 4, num_workers)
-        pending: set[Future] = set()
+    try:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            asset_iter = iter(assets)
+            max_in_flight = max(num_workers * 4, num_workers)
+            pending: set[Future] = set()
 
-        def _submit_more() -> None:
-            while len(pending) < max_in_flight:
-                try:
-                    asset_file = next(asset_iter)
-                except StopIteration:
-                    break
-                pending.add(executor.submit(_process_one, asset_file))
+            def _submit_more() -> None:
+                while len(pending) < max_in_flight:
+                    try:
+                        asset_file = next(asset_iter)
+                    except StopIteration:
+                        break
+                    pending.add(executor.submit(_process_one, asset_file))
 
-        _submit_more()
-        while pending:
-            done, pending = wait(pending, return_when=FIRST_COMPLETED)
-            for future in done:
-                future.result()
             _submit_more()
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    future.result()
+                _submit_more()
 
-    _db_queue.put(_db_sentinel)
-    _db_queue.join()
-    _db_thread.join(timeout=30)
+        _db_queue.put(_db_sentinel)
+        _db_queue.join()
+        _db_thread.join(timeout=30)
 
-    if _clip_thread is not None:
-        for _ in range(_clip_preprocess_workers):
-            _clip_image_queue.put(_clip_image_sentinel)
-        if _clip_thread.is_alive():
-            _clip_image_queue.join()
-            _clip_tensor_queue.join()
-            _clip_thread.join(timeout=30)
-
+        if _clip_thread is not None:
+            for _ in range(_clip_preprocess_workers):
+                _clip_image_queue.put(_clip_image_sentinel)
+            if _clip_thread.is_alive():
+                _clip_image_queue.join()
+                _clip_tensor_queue.join()
+                _clip_thread.join(timeout=30)
+    finally:
+        _ticker_stop.set()
+        _ticker_thread.join(timeout=5)
     _diag_set("processing_seconds", time.perf_counter() - _processing_start)
+    # Final flush so the job sees the end state of every counter.
+    with _progress_lock:
+        _emit_progress(force=True)
     progress.running = False
     progress.done = True
     if cancel_check is not None and cancel_check():

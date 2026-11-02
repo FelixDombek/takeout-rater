@@ -362,7 +362,7 @@ class NIMAScorer(BaseScorer):
                         try:
                             raw = float(self._model(tensors[idx].unsqueeze(0)).item())
                             sub_scores[idx] = _rescale(raw)
-                        except (ValueError, RuntimeError):
+                        except (OSError, ValueError, RuntimeError):
                             pass
 
             return [{"nima_score": s} for s in sub_scores]

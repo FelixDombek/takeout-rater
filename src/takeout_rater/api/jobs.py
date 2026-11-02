@@ -484,10 +484,13 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         import os
         import time
 
+        from takeout_rater.db.connection import enable_bulk_writes
         from takeout_rater.scoring.pipeline import DEFAULT_SCORE_BATCH_SIZE, run_scorer_by_id
         from takeout_rater.scoring.scorers.registry import list_scorers
 
         worker_conn = _open_worker_conn(request.app)
+        # Score rows are re-creatable, so skip the per-commit fsync.
+        enable_bulk_writes(worker_conn)
         thumbs_dir = _configured_thumbs_dir(request.app)
         try:
             score_batch_size = max(
