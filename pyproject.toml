@@ -25,6 +25,8 @@ dependencies = [
     "onnx>=1.16",
     "onnxscript>=0.1.0",
     "huggingface-hub>=0.20",
+    # Aesthetic Predictor V2.5 scorer (SigLIP so400m head; package is AGPL-3.0)
+    "aesthetic-predictor-v2-5>=2024.12.18",
     # NSFW scorer
     "transformers>=4.35",
     # BRISQUE scorer (classical NR-IQA, CPU-only)
