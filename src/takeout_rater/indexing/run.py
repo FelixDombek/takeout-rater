@@ -55,6 +55,71 @@ def _compute_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _env_float(name: str, default: float) -> float:
+    """Return float env var *name*, or *default* (with a warning) if it is not a number."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        _log.warning("Ignoring %s=%r: not a number; using %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    """Return int env var *name*, or *default* (with a warning) if it is not an integer."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        _log.warning("Ignoring %s=%r: not an integer; using %s", name, raw, default)
+        return default
+
+
+class _SlowOnnxBatchGuard:
+    """Decide when ONNX Runtime CUDA is slow enough to abandon for an indexing run.
+
+    The first batch is treated as warm-up and never counts: it pays one-time
+    costs (CUDA context, cuDNN algorithm search, memory arena growth, kernel
+    loading) that say nothing about steady-state speed.  After that, ONNX is
+    only abandoned after *strikes* consecutive slow batches, so a transient
+    stall (another process on the GPU, paging) does not disable ONNX for a
+    100k-photo run.  The per-batch limit scales with batch size beyond
+    *reference_batch_size*, so larger configured batches are not penalised
+    for legitimately taking longer.
+    """
+
+    def __init__(
+        self,
+        seconds_per_batch: float,
+        strikes: int,
+        reference_batch_size: int,
+    ) -> None:
+        self.seconds_per_batch = max(1.0, seconds_per_batch)
+        self.strikes = max(1, strikes)
+        self.reference_batch_size = max(1, reference_batch_size)
+        self.streak = 0
+        self._warmed_up = False
+
+    def limit_for(self, n_images: int) -> float:
+        """Return the slow-batch limit in seconds for a batch of *n_images*."""
+        return self.seconds_per_batch * max(1.0, n_images / self.reference_batch_size)
+
+    def observe(self, seconds: float, n_images: int) -> bool:
+        """Record one batch; return ``True`` when ONNX should be abandoned."""
+        if not self._warmed_up:
+            self._warmed_up = True
+            return False
+        if seconds >= self.limit_for(n_images):
+            self.streak += 1
+        else:
+            self.streak = 0
+        return self.streak >= self.strikes
+
+
 def _bool_to_int(v: bool | None) -> int | None:
     """Convert an optional bool to the 0/1 integer stored in SQLite."""
     if v is None:
@@ -431,6 +496,11 @@ def run_index(
         0.02,
         float(os.environ.get("TAKEOUT_RATER_CLIP_BATCH_FILL_WAIT_SECONDS", "0.35")),
     )
+    _slow_onnx_guard = _SlowOnnxBatchGuard(
+        seconds_per_batch=_env_float("TAKEOUT_RATER_ONNX_CUDA_SLOW_BATCH_SECONDS", 10.0),
+        strikes=_env_int("TAKEOUT_RATER_ONNX_CUDA_SLOW_BATCH_STRIKES", 3),
+        reference_batch_size=_clip_batch_size,
+    )
     _clip_image_queue_max = max(_clip_batch_size, _clip_preprocess_workers * 8)
     _clip_tensor_queue_max = max(_clip_batch_size * 2, _clip_preprocess_workers * 8)
     _clip_image_queue: queue.Queue[object] = queue.Queue(maxsize=_clip_image_queue_max)
@@ -484,6 +554,9 @@ def run_index(
                     onnx_bundle = None
                 if onnx_bundle is not None:
                     onnx_session, _preprocess, onnx_providers = onnx_bundle
+                    # Keep the session referenced only by ``onnx_session`` so
+                    # dropping it on fallback actually frees its GPU memory.
+                    onnx_bundle = None
                     _diag_set("clip_providers", ", ".join(onnx_providers))
                     if any(p == "TensorrtExecutionProvider" for p in onnx_providers):
                         _diag_set("clip_accelerator", "tensorrt")
@@ -509,27 +582,27 @@ def run_index(
         def _is_cuda_oom(exc: BaseException) -> bool:
             return "out of memory" in str(exc).lower()
 
+        def _drop_onnx_session() -> None:
+            """Release the ONNX session so its VRAM is free before Torch loads."""
+            nonlocal onnx_session
+            onnx_session = None
+            import gc
+
+            gc.collect()
+
         def _encode_tensors(tensors: list[object]) -> object:
             import numpy as np
 
             nonlocal device, model, onnx_session
 
             if onnx_session is not None:
+                io_binding = None
                 try:
                     _onnx_input_start = time.perf_counter()
                     batch_tensor = torch.stack(tensors).contiguous()
                     embeddings_np = None
                     onnx_providers = onnx_session.get_providers()
                     is_tensorrt_session = "TensorrtExecutionProvider" in onnx_providers
-                    slow_onnx_cuda_batch_seconds = max(
-                        1.0,
-                        float(
-                            os.environ.get(
-                                "TAKEOUT_RATER_ONNX_CUDA_SLOW_BATCH_SECONDS",
-                                "10",
-                            )
-                        ),
-                    )
                     use_cuda_binding = (
                         torch.cuda.is_available()
                         and "CPUExecutionProvider" not in onnx_providers[:1]
@@ -609,20 +682,21 @@ def run_index(
                     _onnx_infer_seconds = time.perf_counter() - _clip_infer_start
                     _diag_add("clip_inference_seconds", _onnx_infer_seconds)
                     _diag_inc("clip_batches")
-                    if (
-                        not is_tensorrt_session
-                        and _onnx_infer_seconds >= slow_onnx_cuda_batch_seconds
+                    if not is_tensorrt_session and _slow_onnx_guard.observe(
+                        _onnx_infer_seconds, len(tensors)
                     ):
                         _log.warning(
-                            "CLIP ONNX CUDA batch took %.1fs for %d image(s); "
-                            "disabling ONNX CUDA for the rest of this indexing run "
-                            "and falling back to Torch",
+                            "CLIP ONNX CUDA was slow for %d batches in a row (last: %.1fs "
+                            "for %d image(s), limit %.1fs); disabling ONNX CUDA for the "
+                            "rest of this indexing run and falling back to Torch",
+                            _slow_onnx_guard.streak,
                             _onnx_infer_seconds,
                             len(tensors),
+                            _slow_onnx_guard.limit_for(len(tensors)),
                         )
                         _diag_inc("clip_onnx_slow_fallbacks")
                         _diag_set("clip_status", "ONNX CUDA slow; falling back to Torch")
-                        onnx_session = None
+                        _drop_onnx_session()
                     return embeddings_np.astype("float32", copy=False)
                 except Exception:  # noqa: BLE001
                     _log.warning(
@@ -632,7 +706,8 @@ def run_index(
                     )
                     _diag_set("clip_inference_started_at", 0.0)
                     _diag_set("clip_status", "ONNX/TensorRT failed; falling back to Torch")
-                    onnx_session = None
+                    io_binding = None  # may still reference the session
+                    _drop_onnx_session()
 
             try:
                 if model is None or device is None:
