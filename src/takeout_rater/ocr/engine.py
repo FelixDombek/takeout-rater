@@ -12,6 +12,7 @@ The wrapper is deliberately small: it turns one BGR ``numpy`` image into an
 
 from __future__ import annotations
 
+import functools
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,8 +55,9 @@ class OcrResult:
         return sum(line.score for line in self.lines) / len(self.lines)
 
 
+@functools.cache
 def rapidocr_available() -> bool:
-    """Return ``True`` if the ``rapidocr`` package can be imported."""
+    """Return ``True`` if the ``rapidocr`` package can be imported (cached)."""
     try:
         import rapidocr  # noqa: F401
     except ImportError:
@@ -63,8 +65,9 @@ def rapidocr_available() -> bool:
     return True
 
 
+@functools.cache
 def cuda_available() -> bool:
-    """Return ``True`` if ONNX Runtime exposes the CUDA execution provider."""
+    """Return ``True`` if ONNX Runtime exposes the CUDA execution provider (cached)."""
     try:
         import onnxruntime as ort
     except ImportError:

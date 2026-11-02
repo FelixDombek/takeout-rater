@@ -231,6 +231,8 @@
   var hasMore = false;
   var searchMode = {{ (mode or 'clip')|tojson }};
   var searchGeneration = 0;
+  var PAGE_SIZE = 50;
+  var rapidocrMissing = false;
 
   var MODES = {
     clip: {
@@ -302,7 +304,7 @@
       statusEl.className = 'search-status loading';
     }
 
-    var url = '/api/search?q=' + encodeURIComponent(query) + '&limit=50&page=' + page +
+    var url = '/api/search?q=' + encodeURIComponent(query) + '&limit=' + PAGE_SIZE + '&page=' + page +
       '&partial=1&mode=' + searchMode;
     var modeAtRequest = searchMode;
     fetch(url)
@@ -336,7 +338,9 @@
           var noEmbed = meta.getAttribute('data-no-embeddings');
           var noOcr = meta.getAttribute('data-no-ocr');
           meta.remove();
-          hasMore = shown < totalResults;
+          // Compare pages fetched, not cards shown: an asset dropped from a page
+          // (e.g. deleted since indexing) must not make us fetch empty pages forever.
+          hasMore = page * PAGE_SIZE < totalResults;
 
           if (noEmbed === 'true') {
             statusEl.innerHTML = '⚠️ No CLIP embeddings computed yet. Re-run the indexer to compute embeddings.';
@@ -404,6 +408,7 @@
           s.with_text.toLocaleString() + ' with text';
         if (!s.rapidocr_installed) {
           setOcrStatus('RapidOCR is not installed. Run `pip install rapidocr` in the app environment.', 'error');
+          rapidocrMissing = true;
           document.getElementById('btn-ocr').disabled = true;
         }
         if (!s.cuda_available) {
@@ -425,7 +430,7 @@
     var bar = document.getElementById('prog-bar-ocr');
     document.getElementById('badge-ocr').style.display = d.running ? '' : 'none';
     document.getElementById('btn-cancel-ocr').style.display = d.running ? '' : 'none';
-    document.getElementById('btn-ocr').disabled = !!d.running;
+    document.getElementById('btn-ocr').disabled = !!d.running || rapidocrMissing;
     document.getElementById('current-item-ocr').textContent = d.running ? (d.current_item || '') : '';
     if (d.running && d.total > 0) {
       wrap.classList.add('visible');
@@ -440,7 +445,10 @@
       ocrWasRunning = false;
       stopOcrPolling();
       refreshOcrStatus();
-      if (searchMode === 'text' && currentQuery) doSearch(currentQuery, 1);
+      if (searchMode === 'text' && currentQuery) {
+        currentPage = 1;
+        doSearch(currentQuery, 1);
+      }
     }
   }
 
@@ -465,10 +473,12 @@
   }
 
   window.startOcrJob = function() {
+    var minScore = parseFloat(document.getElementById('ocr-min-score').value);
+    if (isNaN(minScore)) minScore = 0.6;
     var body = {
       source: document.getElementById('ocr-source').value,
       accelerator: document.getElementById('ocr-accelerator').value,
-      min_score: parseFloat(document.getElementById('ocr-min-score').value) || 0.6,
+      min_score: minScore,
       redo: document.getElementById('ocr-redo').checked
     };
     if (body.redo && !confirm('Discard all recognised text and read every photo again?')) return;
@@ -486,7 +496,7 @@
       .then(function() { ocrWasRunning = true; startOcrPolling(); })
       .catch(function(err) {
         setOcrStatus('✗ ' + err.message, 'error');
-        document.getElementById('btn-ocr').disabled = false;
+        document.getElementById('btn-ocr').disabled = rapidocrMissing;
       });
   };
 

@@ -2583,6 +2583,18 @@ def fold_for_search(text: str) -> str:
     return "".join(out)
 
 
+def search_key(text: str) -> str:
+    """Normalise text for matching: strip diacritics, then Unicode case-fold.
+
+    Stored in ``ocr_text.text_folded`` and applied to query terms, so the FTS
+    index and the ``LIKE`` path for short terms are case-insensitive for every
+    script (not just ASCII) and ``casefold`` also maps ``ß`` → ``ss``
+    ("strasse" finds "Straße").  Unlike :func:`fold_for_search` this may change
+    the length; the highlighter works on the original text instead.
+    """
+    return fold_for_search(text).casefold()
+
+
 def parse_ocr_query(user_query: str) -> list[str]:
     """Split free text typed by a user into search terms.
 
@@ -2624,7 +2636,11 @@ def _highlight(text: str, terms: list[str], context: int = 60) -> str:
     *terms* (diacritic- and case-insensitive) wrapped in snippet sentinels."""
     folded = fold_for_search(text)
     pattern = re.compile(
-        "|".join(re.escape(fold_for_search(t)) for t in sorted(terms, key=len, reverse=True)),
+        "|".join(
+            # search_key() folds ß → ss, so let "ss" in a term highlight a ß too.
+            re.sub("(?i)ss", "(?:ss|ß)", re.escape(fold_for_search(t)))
+            for t in sorted(terms, key=len, reverse=True)
+        ),
         re.IGNORECASE,
     )
     spans = [m.span() for m in pattern.finditer(folded)]
@@ -2666,15 +2682,14 @@ def upsert_ocr_texts(
         "  n_lines = excluded.n_lines,"
         "  mean_score = excluded.mean_score, source = excluded.source,"
         "  engine = excluded.engine, processed_at = excluded.processed_at",
-        [(r[0], r[1], fold_for_search(r[1]), *r[2:], now) for r in rows],
+        [(r[0], r[1], search_key(r[1]), *r[2:], now) for r in rows],
     )
     conn.commit()
 
 
 def clear_ocr_text(conn: sqlite3.Connection) -> None:
-    """Delete all OCR results (and their FTS index entries)."""
+    """Delete all OCR results (the delete trigger removes their FTS entries)."""
     conn.execute("DELETE FROM ocr_text")
-    conn.execute("INSERT INTO ocr_text_fts (ocr_text_fts) VALUES ('rebuild')")
     conn.commit()
 
 
@@ -2744,10 +2759,10 @@ def search_ocr_text(
     terms = parse_ocr_query(user_query)
     if not terms:
         return [], 0
-    match = build_ocr_fts_query([fold_for_search(t) for t in terms])
-    short_terms = [t for t in terms if len(t) < _FTS_MIN_TERM_CHARS]
+    match = build_ocr_fts_query([search_key(t) for t in terms])
+    short_terms = [t for t in terms if len(search_key(t)) < _FTS_MIN_TERM_CHARS]
     like_sql = "".join(" AND o.text_folded LIKE ? ESCAPE '\\'" for _ in short_terms)
-    like_args = [_like_pattern(fold_for_search(t)) for t in short_terms]
+    like_args = [_like_pattern(search_key(t)) for t in short_terms]
 
     if match:
         from_where = (

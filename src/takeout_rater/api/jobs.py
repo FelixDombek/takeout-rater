@@ -1881,7 +1881,8 @@ def start_ocr_job(body: _OcrStartBody, request: Request) -> JSONResponse:
     min_score : float
         Drop recognised lines below this confidence (0–1). Default ``0.6``.
     redo : bool
-        Clear all stored OCR text first and process every asset again.
+        Process every asset again.  Old results are overwritten asset by
+        asset, so a cancelled or failed redo keeps whatever was not reached yet.
 
     Returns ``409`` if an OCR job is already running.
     """
@@ -1911,7 +1912,6 @@ def start_ocr_job(body: _OcrStartBody, request: Request) -> JSONResponse:
         from concurrent.futures import Future, ThreadPoolExecutor
 
         from takeout_rater.db.queries import (
-            clear_ocr_text,
             list_asset_ids_without_ocr,
             upsert_ocr_texts,
         )
@@ -1923,13 +1923,16 @@ def start_ocr_job(body: _OcrStartBody, request: Request) -> JSONResponse:
         photos_root = _configured_photos_root(request.app)
         db_batch_size = 64
         prefetch_workers = 4
-        prefetch_window = 32
+        # Originals are decoded at up to 2048 px (~12 MB each); keep fewer in flight.
+        prefetch_window = 8 if source == "original" else 32
         try:
             if redo:
-                progress.message = "Clearing previous OCR results…"
-                clear_ocr_text(worker_conn)
-
-            asset_ids = list_asset_ids_without_ocr(worker_conn)
+                asset_ids = [
+                    int(r[0])
+                    for r in worker_conn.execute("SELECT id FROM assets ORDER BY id").fetchall()
+                ]
+            else:
+                asset_ids = list_asset_ids_without_ocr(worker_conn)
             total = len(asset_ids)
             progress.total = total
             if total == 0:
@@ -1958,6 +1961,13 @@ def start_ocr_job(body: _OcrStartBody, request: Request) -> JSONResponse:
             }
 
             def _load(aid: int) -> tuple[int, str, object | None, str]:
+                try:
+                    return _load_unsafe(aid)
+                except Exception:  # noqa: BLE001
+                    _log.warning("Could not load image for OCR (asset %s)", aid, exc_info=True)
+                    return aid, f"asset {aid}", None, source
+
+            def _load_unsafe(aid: int) -> tuple[int, str, object | None, str]:
                 if source == "original" and photos_root is not None:
                     rel = relpaths.get(aid)
                     if rel:
@@ -2037,7 +2047,10 @@ def start_ocr_job(body: _OcrStartBody, request: Request) -> JSONResponse:
                         try:
                             loaded = future.result()
                         except Exception:  # noqa: BLE001
+                            # _load catches its own errors; this only covers the
+                            # executor itself failing.  Still count the asset.
                             _log.warning("OCR image prefetch failed", exc_info=True)
+                            _handle(-1, "", None, source)
                             continue
                         _handle(*loaded)
                     for future in pending:

@@ -155,8 +155,10 @@ class TestOcrQueries:
 
         assert fold_for_search("가나다") == "가나다"
         assert fold_for_search("Ångström") == "Angstrom"
-        snippet = search_ocr_text(conn, "grosse gro")[0]
-        assert snippet == []  # ß is not folded to "ss"
+        # casefold maps ß → ss, and the highlighter marks the ß spelling.
+        hits = search_ocr_text(conn, "grosse")[0]
+        assert [h["asset_id"] for h in hits] == [c]
+        assert f"{OCR_SNIPPET_START}Größe{OCR_SNIPPET_END}" in hits[0]["snippet"]
         hit = search_ocr_text(conn, "große")[0][0]
         assert f"{OCR_SNIPPET_START}Größe{OCR_SNIPPET_END}" in hit["snippet"]
         # Short terms are applied as LIKE filters.
@@ -422,3 +424,82 @@ class TestTextSearchApi:
         assert 'data-tab="ocr"' in html and "Gleis 7" in html
         html_b = client.get(f"/assets/{b}", params={"partial": "1"}).text
         assert "Not read yet" in html_b
+
+
+class TestReviewFixes:
+    def test_unicode_case_folding_for_short_and_long_terms(self, conn) -> None:
+        a = _add_asset(conn, "a.jpg")
+        b = _add_asset(conn, "b.jpg")
+        upsert_ocr_texts(conn, [_ocr_row(a, "ЖД вокзал"), _ocr_row(b, "Hauptstraße 5")])
+        # Short (<3 chars) Cyrillic term goes through LIKE: must still ignore case.
+        assert [r["asset_id"] for r in search_ocr_text(conn, "жд")[0]] == [a]
+        assert [r["asset_id"] for r in search_ocr_text(conn, "ВОКЗАЛ")[0]] == [a]
+        # casefold maps ß → ss in both directions.
+        assert [r["asset_id"] for r in search_ocr_text(conn, "strasse")[0]] == [b]
+        hits = search_ocr_text(conn, "STRASSE 5")[0]
+        assert [r["asset_id"] for r in hits] == [b]
+        assert f"{OCR_SNIPPET_START}straße{OCR_SNIPPET_END}" in hits[0]["snippet"]
+        assert [r["asset_id"] for r in search_ocr_text(conn, "straße")[0]] == [b]
+
+    def test_redo_overwrites_instead_of_clearing(
+        self, tmp_path: Path, monkeypatch, sync_threads
+    ) -> None:
+        conn = open_library_db(tmp_path)
+        a = _add_asset(conn, "a.jpg")
+        b = _add_asset(conn, "b.jpg")
+        upsert_ocr_texts(conn, [_ocr_row(a, "old a"), _ocr_row(b, "old b")])
+        conn.close()
+        _write_thumb(tmp_path, a)
+        _write_thumb(tmp_path, b)
+
+        from takeout_rater.ocr.engine import OcrLine, OcrResult
+
+        holder: dict[str, object] = {}
+
+        class _CancellingEngine:
+            engine_id = "fake"
+
+            def __init__(self, *, accelerator: str, min_score: float) -> None:
+                self.active_accelerator = accelerator
+
+            def recognize(self, img) -> OcrResult:
+                # Cancel after the first asset: the second must keep its old text.
+                holder["app"].state.jobs["ocr"].cancel_event.set()
+                return OcrResult(lines=[OcrLine("new a", 0.9)])
+
+        monkeypatch.setattr("takeout_rater.ocr.engine.OcrEngine", _CancellingEngine)
+        client, app = _make_client(tmp_path)
+        holder["app"] = app
+        assert client.post("/api/jobs/ocr/start", json={"redo": True}).status_code == 200
+        assert "cancelled" in app.state.jobs["ocr"].message
+
+        check = open_library_db(tmp_path)
+        assert get_ocr_text(check, a)["text"] == "new a"
+        assert get_ocr_text(check, b)["text"] == "old b"
+        check.close()
+
+    def test_failed_load_still_counts_as_processed(
+        self, tmp_path: Path, monkeypatch, sync_threads
+    ) -> None:
+        conn = open_library_db(tmp_path)
+        a = _add_asset(conn, "a.jpg")
+        conn.close()
+        _write_thumb(tmp_path, a)
+
+        def _boom(*args, **kwargs):
+            raise OSError("disk gone")
+
+        class _Engine:
+            engine_id = "fake"
+
+            def __init__(self, *, accelerator: str, min_score: float) -> None:
+                self.active_accelerator = accelerator
+
+        monkeypatch.setattr("takeout_rater.ocr.engine.OcrEngine", _Engine)
+        monkeypatch.setattr("takeout_rater.ocr.engine.load_image_bgr", _boom)
+        client, app = _make_client(tmp_path)
+        assert client.post("/api/jobs/ocr/start", json={}).status_code == 200
+        progress = app.state.jobs["ocr"]
+        assert progress.error is None
+        assert progress.processed == 1 == progress.total
+        assert progress.diagnostics["unreadable"] == 1
