@@ -17,8 +17,9 @@
     {% if asset.width and asset.height %}
     <tr><td>Dimensions</td><td>{{ asset.width }} × {{ asset.height }}</td></tr>
     {% endif %}
-    {% if asset.geo_lat is not none and (asset.geo_lat != 0 or asset.geo_lon != 0) %}
-    <tr><td>Location</td><td>{{ "%.5f"|format(asset.geo_lat) }}, {{ "%.5f"|format(asset.geo_lon) }}</td></tr>
+    {% set loc = asset_location(asset) %}
+    {% if loc %}
+    <tr><td>Location</td><td>{{ "%.5f"|format(loc[0]) }}, {{ "%.5f"|format(loc[1]) }} · <a href="/map?asset={{ asset.id }}">🗺️ Show on map</a></td></tr>
     {% endif %}
     {% if place %}
     <tr>
