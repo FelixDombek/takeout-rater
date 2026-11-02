@@ -1912,6 +1912,119 @@ def load_clip_embeddings_with_relpaths(
 
 
 # ---------------------------------------------------------------------------
+# Model-keyed image embeddings (search backbones other than CLIP L/14)
+# ---------------------------------------------------------------------------
+
+#: Key under which the legacy ``clip_embeddings`` table (CLIP ViT-L/14,
+#: OpenAI weights) is exposed by the model-keyed helpers below.
+CLIP_L14_MODEL_KEY = "clip-vit-l-14"
+
+
+def blobs_to_matrix(blobs: list[bytes], dim: int | None = None) -> Any:
+    """Convert float32 embedding blobs into one ``(N, dim)`` numpy matrix.
+
+    Joins the blobs once and reinterprets them with :func:`numpy.frombuffer`,
+    which is far faster than unpacking each row with :mod:`struct`.  Rows
+    whose byte length differs from the first row (or from ``dim``) raise
+    :class:`ValueError`, since mixing dimensions would silently corrupt the
+    matrix.
+
+    Returns a writable, C-contiguous ``float32`` array.
+    """
+    import numpy as np
+
+    if not blobs:
+        return np.empty((0, dim or 0), dtype=np.float32)
+    row_bytes = len(blobs[0]) if dim is None else dim * 4
+    if row_bytes % 4 or any(len(b) != row_bytes for b in blobs):
+        raise ValueError("Embedding blobs have inconsistent lengths")
+    flat = np.frombuffer(b"".join(blobs), dtype="<f4")
+    return flat.reshape(len(blobs), row_bytes // 4).astype(np.float32, copy=True)
+
+
+def load_embedding_matrix(conn: sqlite3.Connection, model_key: str) -> tuple[Any, Any]:
+    """Load every stored embedding for *model_key* as numpy arrays.
+
+    ``model_key`` :data:`CLIP_L14_MODEL_KEY` reads the ``clip_embeddings``
+    table; any other key reads ``image_embeddings``.
+
+    Returns:
+        ``(asset_ids, matrix)``: an ``int64`` array of shape ``(N,)`` and a
+        ``float32`` array of shape ``(N, dim)``, both ordered by asset id.
+        Both are empty (``N == 0``) when nothing is stored.
+    """
+    import numpy as np
+
+    if model_key == CLIP_L14_MODEL_KEY:
+        rows = conn.execute(
+            "SELECT asset_id, embedding FROM clip_embeddings ORDER BY asset_id"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT asset_id, embedding FROM image_embeddings"
+            " WHERE model_key = ? ORDER BY asset_id",
+            (model_key,),
+        ).fetchall()
+    asset_ids = np.fromiter((r[0] for r in rows), dtype=np.int64, count=len(rows))
+    matrix = blobs_to_matrix([r[1] for r in rows])
+    return asset_ids, matrix
+
+
+def count_image_embeddings(conn: sqlite3.Connection, model_key: str) -> int:
+    """Return how many assets have an embedding stored for *model_key*."""
+    if model_key == CLIP_L14_MODEL_KEY:
+        return count_clip_embeddings(conn)
+    row = conn.execute(
+        "SELECT COUNT(*) FROM image_embeddings WHERE model_key = ?", (model_key,)
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def bulk_upsert_image_embeddings(
+    conn: sqlite3.Connection,
+    model_key: str,
+    rows: list[tuple[int, bytes]],
+) -> None:
+    """Insert or replace embeddings for *model_key* in one transaction.
+
+    Args:
+        conn: Open database connection.
+        model_key: Search backbone key.  Must not be :data:`CLIP_L14_MODEL_KEY`
+            (use :func:`bulk_upsert_clip_embeddings` for that).
+        rows: ``(asset_id, float32_blob)`` tuples; every blob must have the
+            same length.
+    """
+    if model_key == CLIP_L14_MODEL_KEY:
+        raise ValueError("CLIP L/14 embeddings belong in clip_embeddings")
+    if not rows:
+        return
+    now = int(time.time())
+    conn.executemany(
+        "INSERT INTO image_embeddings (asset_id, model_key, dim, embedding, computed_at)"
+        " VALUES (?, ?, ?, ?, ?)"
+        " ON CONFLICT(model_key, asset_id) DO UPDATE SET embedding = excluded.embedding,"
+        "   dim = excluded.dim, computed_at = excluded.computed_at",
+        [(aid, model_key, len(blob) // 4, blob, now) for aid, blob in rows],
+    )
+    conn.commit()
+
+
+def list_asset_ids_without_image_embedding(conn: sqlite3.Connection, model_key: str) -> list[int]:
+    """Return IDs of assets with no stored embedding for *model_key*, by ID."""
+    if model_key == CLIP_L14_MODEL_KEY:
+        return list_asset_ids_without_embedding(conn)
+    rows = conn.execute(
+        "SELECT a.id FROM assets a"
+        " WHERE NOT EXISTS ("
+        "   SELECT 1 FROM image_embeddings ie"
+        "   WHERE ie.model_key = ? AND ie.asset_id = a.id"
+        " ) ORDER BY a.id",
+        (model_key,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+# ---------------------------------------------------------------------------
 # CLIP user tags
 # ---------------------------------------------------------------------------
 

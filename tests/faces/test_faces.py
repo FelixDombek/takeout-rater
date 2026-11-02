@@ -821,10 +821,12 @@ class TestFaceSchema:
         assert "face_clusters" in tables
         assert "face_cluster_members" in tables
 
-    def test_schema_version_is_14(self) -> None:
+    def test_schema_version_is_current(self) -> None:
+        from takeout_rater.db.schema import CURRENT_SCHEMA_VERSION
+
         conn = _make_db()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 14
+        assert version == CURRENT_SCHEMA_VERSION
 
     def test_face_tables_in_baseline(self) -> None:
         """Face detection tables should be created in the baseline schema."""

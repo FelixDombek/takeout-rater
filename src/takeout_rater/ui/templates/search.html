@@ -109,6 +109,45 @@
   }
   .empty-state .icon { font-size: 3rem; margin-bottom: 0.5rem; }
 
+  /* Backbone selector + SigLIP 2 upgrade card */
+  .search-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+    color: #555;
+  }
+  .search-options select {
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    background: #fff;
+  }
+  .backbone-card {
+    background: #eef4ff;
+    border: 1px solid #b8cdf5;
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.875rem;
+    color: #24406f;
+  }
+  .backbone-card p { margin: 0 0 0.6rem; }
+  .backbone-card .actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .embed-progress {
+    flex: 1;
+    min-width: 180px;
+    height: 8px;
+    background: #d6e2fa;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .embed-progress > div { height: 100%; width: 0; background: #1a5cdb; transition: width 0.3s; }
+  .embed-msg { font-size: 0.8rem; color: #4a5f86; }
+
   /* Highlight active card when lightbox is open */
   .card.card--active { box-shadow: 0 0 0 3px #7ec8e3, 0 4px 10px rgba(0,0,0,.2); }
 </style>
@@ -119,9 +158,19 @@
 <div class="search-page">
   <h1>🔍 Semantic Search</h1>
   <p class="subtitle">
-    Search your photos by describing what you're looking for. Uses CLIP to match
-    text descriptions against image content.
+    Search your photos by describing what you're looking for. Text is matched
+    against image content with SigLIP 2 (when computed) or CLIP.
   </p>
+
+  <div id="backbone-card" class="backbone-card" style="display:none">
+    <p id="backbone-card-text"></p>
+    <div class="actions">
+      <button type="button" id="btn-siglip-compute" class="btn btn-primary">Compute SigLIP 2 embeddings</button>
+      <button type="button" id="btn-siglip-cancel" class="btn" style="display:none">Cancel</button>
+      <div class="embed-progress" id="embed-progress" style="display:none"><div></div></div>
+      <span class="embed-msg" id="embed-msg"></span>
+    </div>
+  </div>
 
   <div class="search-bar">
     <input type="text"
@@ -129,6 +178,12 @@
            placeholder="e.g. sunset over the ocean, birthday cake, dog playing in snow…"
            autocomplete="off"
            autofocus>
+  </div>
+  <div class="search-options">
+    <label for="search-model">Model</label>
+    <select id="search-model" aria-label="Search model">
+      <option value="auto">Auto (best available)</option>
+    </select>
   </div>
   <p class="search-hint">Results update as you type. Try describing colors, objects, scenes, or activities.</p>
 
@@ -145,6 +200,126 @@
   var currentQuery = '';
   var currentPage = 1;
   var isLoadingMore = false;
+  var modelSel = document.getElementById('search-model');
+  var card = document.getElementById('backbone-card');
+  var cardText = document.getElementById('backbone-card-text');
+  var btnCompute = document.getElementById('btn-siglip-compute');
+  var btnCancel = document.getElementById('btn-siglip-cancel');
+  var progEl = document.getElementById('embed-progress');
+  var progBar = progEl.firstElementChild;
+  var embedMsg = document.getElementById('embed-msg');
+  var SIGLIP_KEY = 'siglip2-so400m-16-256';
+  var backboneLabels = {};
+  var pollTimer = null;
+
+  function fmt(n) { return Number(n).toLocaleString(); }
+
+  function loadBackbones() {
+    return fetch('/api/search/backbones')
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data) return;
+        var saved = null;
+        try { saved = localStorage.getItem('search-model'); } catch (e) { /* ignore */ }
+        var current = modelSel.value || saved || 'auto';
+        while (modelSel.options.length > 1) modelSel.remove(1);
+        var autoLabel = '';
+        data.backbones.forEach(function(b) {
+          backboneLabels[b.key] = b.label;
+          var opt = document.createElement('option');
+          opt.value = b.key;
+          opt.textContent = b.label + ' (' + fmt(b.count) + ' images)';
+          opt.disabled = b.count === 0;
+          modelSel.appendChild(opt);
+          if (b.key === data.auto) autoLabel = b.label;
+        });
+        modelSel.options[0].textContent = 'Auto (' + (autoLabel || 'best available') + ')';
+        var ok = Array.prototype.some.call(modelSel.options, function(o) {
+          return o.value === current && !o.disabled;
+        });
+        modelSel.value = ok ? current : 'auto';
+
+        var sig = data.backbones.filter(function(b) { return b.key === SIGLIP_KEY; })[0];
+        if (!sig) return;
+        var missing = Math.max(0, data.total_assets - sig.count);
+        if (!sig.available) {
+          card.style.display = '';
+          cardText.textContent = 'SigLIP 2 search needs open-clip-torch 2.31 or newer. ' +
+            'Update the environment (run.bat reinstalls dependencies) to enable it.';
+          btnCompute.style.display = 'none';
+        } else if (missing > 0 || pollTimer) {
+          card.style.display = '';
+          cardText.textContent = sig.description + ' ' + fmt(sig.count) + ' of ' +
+            fmt(data.total_assets) + ' photos have SigLIP 2 embeddings.';
+          btnCompute.textContent = sig.count > 0
+            ? 'Embed remaining ' + fmt(missing) + ' photos'
+            : 'Compute SigLIP 2 embeddings';
+        } else {
+          card.style.display = 'none';
+        }
+      })
+      .catch(function() { /* selector stays on auto */ });
+  }
+
+  function setRunning(running) {
+    btnCompute.disabled = running;
+    btnCancel.style.display = running ? '' : 'none';
+    progEl.style.display = running ? '' : 'none';
+  }
+
+  function pollEmbed() {
+    fetch('/api/jobs/status?job_type=embed')
+      .then(function(r) { return r.json(); })
+      .then(function(st) {
+        var isSiglip = st.diagnostics && st.diagnostics.model === SIGLIP_KEY;
+        if (st.running && isSiglip) {
+          setRunning(true);
+          card.style.display = '';
+          var pct = st.total ? Math.round(100 * st.processed / st.total) : 0;
+          progBar.style.width = pct + '%';
+          embedMsg.textContent = st.message;
+          pollTimer = setTimeout(pollEmbed, 2000);
+          return;
+        }
+        var wasPolling = pollTimer !== null;
+        pollTimer = null;
+        setRunning(false);
+        if (isSiglip && st.done) embedMsg.textContent = st.error ? ('✗ ' + st.error) : st.message;
+        if (wasPolling) {
+          loadBackbones().then(function() { if (currentQuery) doSearch(currentQuery, 1); });
+        }
+      })
+      .catch(function() { pollTimer = null; setRunning(false); });
+  }
+
+  btnCompute.addEventListener('click', function() {
+    btnCompute.disabled = true;
+    embedMsg.textContent = 'Starting… (first run downloads the model, about 4.5 GB)';
+    fetch('/api/jobs/embed/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: SIGLIP_KEY }),
+    })
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed to start'); });
+        pollTimer = setTimeout(pollEmbed, 500);
+        setRunning(true);
+      })
+      .catch(function(err) { btnCompute.disabled = false; embedMsg.textContent = '✗ ' + err.message; });
+  });
+
+  btnCancel.addEventListener('click', function() {
+    fetch('/api/jobs/embed/cancel', { method: 'POST' });
+    embedMsg.textContent = 'Cancelling…';
+  });
+
+  modelSel.addEventListener('change', function() {
+    try { localStorage.setItem('search-model', modelSel.value); } catch (e) { /* ignore */ }
+    if (currentQuery) doSearch(currentQuery, 1);
+  });
+
+  loadBackbones();
+  pollEmbed();
 
   function doSearch(query, page) {
     if (!query.trim()) {
@@ -161,7 +336,8 @@
       statusEl.className = 'search-status loading';
     }
 
-    var url = '/api/search?q=' + encodeURIComponent(query) + '&limit=50&page=' + page + '&partial=1';
+    var url = '/api/search?q=' + encodeURIComponent(query) + '&limit=50&page=' + page +
+              '&partial=1&model=' + encodeURIComponent(modelSel.value);
     fetch(url)
       .then(function(r) {
         if (!r.ok) throw new Error('Search failed');
@@ -190,14 +366,18 @@
           var totalEmbedded = meta.getAttribute('data-total-embedded');
           var totalResults = meta.getAttribute('data-total-results');
           var noEmbed = meta.getAttribute('data-no-embeddings');
+          var usedModel = meta.getAttribute('data-model') || '';
           meta.remove();
+          var usedLabel = backboneLabels[usedModel] || usedModel;
 
           if (noEmbed === 'true') {
-            statusEl.innerHTML = '⚠️ No CLIP embeddings computed yet. Re-run the indexer to compute embeddings.';
+            statusEl.textContent = '⚠️ No ' + (usedLabel || 'image') +
+              ' embeddings computed yet. Re-run the indexer (CLIP) or compute SigLIP 2 embeddings above.';
             statusEl.className = 'search-status';
           } else if (totalResults) {
             var shown = resultsEl.querySelectorAll('.card').length;
-            statusEl.textContent = 'Showing ' + shown + ' of ' + totalResults + ' results (from ' + totalEmbedded + ' embedded images)';
+            statusEl.textContent = 'Showing ' + shown + ' of ' + totalResults + ' results (from ' +
+              totalEmbedded + ' embedded images, ' + usedLabel + ')';
             statusEl.className = 'search-status';
           }
         } else if (resultsEl.children.length === 0) {
