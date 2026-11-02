@@ -517,15 +517,23 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         import os
         import time
 
-        from takeout_rater.scoring.pipeline import run_scorer_by_id
+        from takeout_rater.db.connection import enable_bulk_writes
+        from takeout_rater.scoring.pipeline import DEFAULT_SCORE_BATCH_SIZE, run_scorer_by_id
         from takeout_rater.scoring.scorers.registry import list_scorers
 
         worker_conn = _open_worker_conn(request.app)
+        # Score rows are re-creatable, so skip the per-commit fsync.
+        enable_bulk_writes(worker_conn)
         thumbs_dir = _configured_thumbs_dir(request.app)
         try:
-            score_batch_size = max(1, int(os.environ.get("TAKEOUT_RATER_SCORE_BATCH_SIZE", "64")))
+            score_batch_size = max(
+                1,
+                int(
+                    os.environ.get("TAKEOUT_RATER_SCORE_BATCH_SIZE", str(DEFAULT_SCORE_BATCH_SIZE))
+                ),
+            )
         except ValueError:
-            score_batch_size = 64
+            score_batch_size = DEFAULT_SCORE_BATCH_SIZE
         score_job_started = time.perf_counter()
         progress.diagnostics = {
             "score_variants_total": 0,
@@ -1237,7 +1245,7 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
                             from PIL import Image
 
-                            from src.takeout_rater.clustering.phash import (
+                            from takeout_rater.clustering.phash import (
                                 DHASH_ALGO,
                                 compute_dhash_from_image,
                             )
