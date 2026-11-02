@@ -255,29 +255,46 @@ def detect_trips(
     return trips
 
 
+def _trip_index(ts: int, trips: list[DetectedGroup], starts: list[int]) -> int | None:
+    """Index of the trip whose time range contains *ts* (trips sorted, disjoint)."""
+    i = bisect.bisect_right(starts, ts) - 1
+    if i >= 0 and ts <= trips[i].end_ts:
+        return i
+    return None
+
+
 def detect_events(
     points: list[PhotoPoint],
     homes: dict[int, tuple[float, float]],
     default_home: tuple[float, float] | None,
     params: DetectionParams = DEFAULT_PARAMS,
+    trips: list[DetectedGroup] | None = None,
 ) -> list[DetectedGroup]:
     """Split the timeline at gaps longer than ``event_gap_hours``.
 
-    *points* must be sorted by timestamp.  Segments with fewer than
-    ``event_min_photos`` photos are dropped.
+    *points* must be sorted by timestamp.  When *trips* (sorted, disjoint) are
+    given, the timeline is also split at trip boundaries, so an event never
+    straddles a departure or return; events inside a trip are appended to that
+    trip's ``children`` and only the stand-alone events are returned.
+    Segments with fewer than ``event_min_photos`` photos are dropped.
     """
     if not points:
         return []
+    trips = trips or []
+    starts = [t.start_ts for t in trips]
     gap = params.event_gap_hours * 3600
-    segments: list[list[PhotoPoint]] = [[points[0]]]
-    for prev, cur in zip(points, points[1:], strict=False):
-        if cur.ts - prev.ts > gap:
-            segments.append([cur])
-        else:
-            segments[-1].append(cur)
 
-    events: list[DetectedGroup] = []
-    for seg in segments:
+    owners = [_trip_index(p.ts, trips, starts) for p in points]
+    segments: list[tuple[int | None, list[PhotoPoint]]] = [(owners[0], [points[0]])]
+    for i in range(1, len(points)):
+        prev, cur = points[i - 1], points[i]
+        if cur.ts - prev.ts > gap or owners[i] != owners[i - 1]:
+            segments.append((owners[i], [cur]))
+        else:
+            segments[-1][1].append(cur)
+
+    standalone: list[DetectedGroup] = []
+    for owner, seg in segments:
         if len(seg) < params.event_min_photos:
             continue
         clat, clon = _center(seg)
@@ -292,19 +309,21 @@ def detect_events(
             if dists:
                 max_dist = round(max(dists), 1)
         off = _utc_offset_s(clon)
-        events.append(
-            DetectedGroup(
-                kind="event",
-                start_ts=seg[0].ts,
-                end_ts=seg[-1].ts,
-                asset_ids=[p.asset_id for p in seg],
-                center_lat=clat,
-                center_lon=clon,
-                max_distance_km=max_dist,
-                n_days=(seg[-1].ts + off) // _DAY - (seg[0].ts + off) // _DAY + 1,
-            )
+        event = DetectedGroup(
+            kind="event",
+            start_ts=seg[0].ts,
+            end_ts=seg[-1].ts,
+            asset_ids=[p.asset_id for p in seg],
+            center_lat=clat,
+            center_lon=clon,
+            max_distance_km=max_dist,
+            n_days=(seg[-1].ts + off) // _DAY - (seg[0].ts + off) // _DAY + 1,
         )
-    return events
+        if owner is None:
+            standalone.append(event)
+        else:
+            trips[owner].children.append(event)
+    return standalone
 
 
 def detect(points: list[PhotoPoint], params: DetectionParams = DEFAULT_PARAMS) -> DetectionResult:
@@ -312,17 +331,8 @@ def detect(points: list[PhotoPoint], params: DetectionParams = DEFAULT_PARAMS) -
     pts = sorted(points, key=lambda p: (p.ts, p.asset_id))
     homes, default_home = estimate_homes(pts, params)
     trips = detect_trips(pts, homes, default_home, params)
-    events = detect_events(pts, homes, default_home, params)
-
-    standalone: list[DetectedGroup] = []
-    for ev in events:
-        mid = (ev.start_ts + ev.end_ts) // 2
-        parent = next((t for t in trips if t.start_ts <= mid <= t.end_ts), None)
-        if parent is not None:
-            parent.children.append(ev)
-        else:
-            standalone.append(ev)
-    return DetectionResult(trips=trips, events=standalone, homes=homes, default_home=default_home)
+    events = detect_events(pts, homes, default_home, params, trips)
+    return DetectionResult(trips=trips, events=events, homes=homes, default_home=default_home)
 
 
 # ── Naming ────────────────────────────────────────────────────────────────────

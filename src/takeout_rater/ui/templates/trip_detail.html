@@ -74,7 +74,9 @@
     <div class="actions">
       <button class="btn" id="rename-btn" type="button">✏ Rename</button>
       {% if ev.custom_name %}<button class="btn" id="reset-name-btn" type="button">↺ Use detected name</button>{% endif %}
+      {% if ev.map_url %}
       <a class="btn" href="{{ ev.map_url }}">🗺 Show on map</a>
+      {% endif %}
     </div>
   </div>
 </div>

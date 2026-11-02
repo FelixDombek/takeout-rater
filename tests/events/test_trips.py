@@ -249,7 +249,7 @@ def test_trips_page_empty_then_detect(client: tuple[TestClient, sqlite3.Connecti
     resp = c.get("/trips")
     assert "Trip · Jun 2023" in resp.text
     assert "3–7 Jun 2023" in resp.text
-    assert "/map?from=" in resp.text
+    assert "/map?from=" not in resp.text  # no map page in this app → no dead links
 
     resp = c.get("/trips?show=events")
     assert "Trip · Jun 2023" not in resp.text
@@ -279,8 +279,13 @@ def test_api_list_trips(client: tuple[TestClient, sqlite3.Connection]) -> None:
     c.post("/api/trips/detect")
     data = c.get("/api/trips?kind=trip").json()
     assert len(data["items"]) == 1
-    item = data["items"][0]
+    assert data["items"][0]["map_url"] is None
+
+    # Once a /map page exists, trips link to their time range on it.
+    c.app.add_api_route("/map", lambda: {}, methods=["GET"])
+    item = c.get("/api/trips?kind=trip").json()["items"][0]
     assert item["map_url"] == f"/map?from={item['start_ts']}&to={item['end_ts']}"
+    assert "/map?from=" in c.get("/trips").text
     assert c.get("/api/trips?kind=bogus").status_code == 400
 
 
@@ -293,3 +298,18 @@ def test_auto_name_for_events_includes_date() -> None:
     trip = DetectedGroup("trip", _ts(2023, 6, 3), _ts(2023, 6, 9), [1], 38.7, -9.1)
     assert auto_name(trip, "Lisbon, Portugal") == "Lisbon, Portugal"
     assert auto_name(trip, None) == "Trip · Jun 2023"
+
+
+def test_event_crossing_trip_boundary_is_split() -> None:
+    # One home photo at 08:00, then 15 away photos 10:00–12:20, all within the gap.
+    t0 = _ts(2023, 8, 1, 8)
+    pts = [PhotoPoint(i, _ts(2023, 1, 1) + i * DAY, *BERLIN) for i in range(40)]
+    pts.append(PhotoPoint(500, t0, *BERLIN))
+    pts += [PhotoPoint(600 + k, t0 + 2 * HOUR + k * 600, *LISBON) for k in range(15)]
+    result = detect(pts, DetectionParams(event_min_photos=15, trip_min_photos=10))
+    assert len(result.trips) == 1
+    trip = result.trips[0]
+    assert len(trip.asset_ids) == 15
+    assert len(trip.children) == 1
+    assert 500 not in trip.children[0].asset_ids
+    assert set(trip.children[0].asset_ids) <= set(trip.asset_ids)
