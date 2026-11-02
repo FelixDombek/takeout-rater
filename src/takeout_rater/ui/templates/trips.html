@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block title %}Trips & events – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+  .toolbar h1 { font-size: 1.25rem; margin: 0; }
+  .count-badge {
+    display: inline-block; padding: 0.2rem 0.6rem; background: #e8f0fe; color: #1a5cdb;
+    border-radius: 4px; font-size: 0.875rem; font-weight: 600;
+  }
+  .year-heading { font-size: 1.05rem; margin: 1.5rem 0 0.6rem; color: #333; }
+  .year-heading:first-of-type { margin-top: 0; }
+
+  .trip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .trip-card {
+    background: #fff; border-radius: 6px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12); transition: box-shadow 0.15s; position: relative;
+  }
+  .trip-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .trip-card > a { display: block; color: inherit; text-decoration: none; }
+  .trip-thumb { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: #e0e0e0; }
+  .trip-thumb-placeholder {
+    width: 100%; aspect-ratio: 4 / 3; background: #ddd; display: flex; align-items: center;
+    justify-content: center; color: #999; font-size: 2.5rem;
+  }
+  .trip-kind {
+    position: absolute; top: 8px; left: 8px; padding: 1px 7px; border-radius: 10px;
+    font-size: 0.7rem; font-weight: 600; background: rgba(26,26,46,.78); color: #fff;
+  }
+  .trip-body { padding: 0.5rem 0.65rem 0.6rem; font-size: 0.8rem; color: #444; }
+  .trip-name { font-weight: 600; font-size: 0.92rem; color: #1a1a1a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trip-dates { color: #555; margin: 0.1rem 0 0.3rem; }
+  .trip-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .chip {
+    display: inline-block; padding: 0 6px; background: #e8f0fe; color: #1a5cdb;
+    border-radius: 3px; font-size: 0.7rem; font-weight: 600;
+  }
+  .chip.grey { background: #eee; color: #555; }
+  .trip-map-link { position: absolute; top: 8px; right: 8px; padding: 1px 7px; border-radius: 10px;
+    font-size: 0.7rem; background: rgba(255,255,255,.9); color: #1a5cdb; }
+
+  .param-row { display: grid; grid-template-columns: 1fr 70px; align-items: center; gap: 0.4rem; margin-bottom: 0.35rem; font-size: 0.78rem; color: #333; }
+  .param-row input { width: 100%; padding: 0.15rem 0.3rem; font-size: 0.8rem; border: 1px solid #ccc; border-radius: 3px; }
+
+  .empty-state { text-align: center; padding: 4rem 2rem; color: #666; }
+  .empty-state h2 { font-size: 1.3rem; margin-bottom: 0.75rem; color: #333; }
+  .empty-state p { max-width: 520px; margin: 0 auto 1rem; line-height: 1.6; }
+</style>
+{% endblock %}
+
+{% block page_sidebar %}
+<aside class="app-sidebar">
+  <div class="sidebar-section-title">Show</div>
+  <div class="sidebar-radio-group">
+    {% for value, label in [("all", "Trips & events"), ("trips", "Trips only"), ("events", "Events only")] %}
+    <label class="sidebar-radio">
+      <input type="radio" name="show" value="{{ value }}" {% if show == value %}checked{% endif %}
+             onchange="location.href='/trips?show=' + this.value">
+      <span>{{ label }}</span>
+    </label>
+    {% endfor %}
+  </div>
+  <p class="sidebar-note" style="margin-top:0.5rem">
+    Events that happened during a trip are listed on the trip's page.
+  </p>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Detection</div>
+  <p class="sidebar-note" style="margin-bottom:0.6rem">
+    A <b>trip</b> is a run of days where most geotagged photos are far from home
+    (home is wherever you took photos on most days in the surrounding months, so moving house is handled). An <b>event</b> is a burst of photos separated
+    from the rest by a long pause.
+  </p>
+  <form id="detect-form" onsubmit="runDetection(event)">
+    <label class="param-row">Trip: min. distance from home (km)
+      <input type="number" name="trip_min_distance_km" min="1" step="1" value="{{ defaults.trip_min_distance_km | int }}"></label>
+    <label class="param-row">Trip: days without GPS allowed
+      <input type="number" name="trip_max_gap_days" min="0" max="30" value="{{ defaults.trip_max_gap_days }}"></label>
+    <label class="param-row">Trip: max. length (days)
+      <input type="number" name="trip_max_days" min="1" max="3650" value="{{ defaults.trip_max_days }}"></label>
+    <label class="param-row">Trip: min. photos
+      <input type="number" name="trip_min_photos" min="1" value="{{ defaults.trip_min_photos }}"></label>
+    <label class="param-row">Event: pause that splits events (h)
+      <input type="number" name="event_gap_hours" min="0.5" step="0.5" value="{{ defaults.event_gap_hours }}"></label>
+    <label class="param-row">Event: min. photos
+      <input type="number" name="event_min_photos" min="2" value="{{ defaults.event_min_photos }}"></label>
+    <button type="submit" class="btn btn-primary sidebar-apply" id="detect-btn">
+      {{ "Re-detect" if stats.detected_at else "Detect" }} trips &amp; events
+    </button>
+    <button type="button" class="btn sidebar-apply" id="cancel-btn" style="display:none"
+            onclick="cancelDetection()">Cancel</button>
+  </form>
+  <div class="sidebar-status" id="detect-status">
+    {% if stats.detected_at %}Last run {{ stats.detected_at | timestamp_fmt }}{% endif %}
+  </div>
+  <p class="sidebar-note" style="margin-top:0.4rem">
+    Custom names are kept when you re-detect. Place names are used when the
+    library has them; otherwise trips are named by date.
+  </p>
+</aside>
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <h1>🧳 Trips &amp; events</h1>
+  {% if stats.detected_at %}
+  <span class="count-badge">{{ stats.n_trips }} trip{{ 's' if stats.n_trips != 1 else '' }}</span>
+  <span class="count-badge">{{ stats.n_events }} event{{ 's' if stats.n_events != 1 else '' }}</span>
+  {% endif %}
+</div>
+
+{% if years %}
+  {% for year, items in years.items() %}
+  <h2 class="year-heading">{{ year }}</h2>
+  <div class="trip-grid">
+    {% for ev in items %}
+    <div class="trip-card">
+      <a href="/trips/{{ ev.id }}" title="{{ ev.name }}">
+        {% if ev.cover_asset_id is not none %}
+        <img class="trip-thumb" src="/thumbs/{{ ev.cover_asset_id }}" alt="{{ ev.name }}" loading="lazy"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+        <div class="trip-thumb-placeholder" style="display:none">{{ "🧳" if ev.kind == "trip" else "🎉" }}</div>
+        {% else %}
+        <div class="trip-thumb-placeholder">{{ "🧳" if ev.kind == "trip" else "🎉" }}</div>
+        {% endif %}
+        <span class="trip-kind">{{ "Trip" if ev.kind == "trip" else "Event" }}</span>
+        <div class="trip-body">
+          <div class="trip-name">{{ ev.name }}</div>
+          <div class="trip-dates">{{ ev.date_label }}</div>
+          <div class="trip-meta">
+            <span class="chip">{{ ev.n_assets }} photo{{ 's' if ev.n_assets != 1 else '' }}</span>
+            {% if ev.n_days > 1 %}<span class="chip grey">{{ ev.n_days }} days</span>{% endif %}
+            {% if ev.max_distance_km is not none and ev.max_distance_km >= 1 %}
+            <span class="chip grey">{{ ev.max_distance_km | round | int }} km from home</span>
+            {% endif %}
+            {% if ev.n_children %}<span class="chip grey">{{ ev.n_children }} event{{ 's' if ev.n_children != 1 else '' }}</span>{% endif %}
+          </div>
+        </div>
+      </a>
+      <a class="trip-map-link" href="{{ ev.map_url }}" title="Show this time range on the map">🗺 Map</a>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+{% else %}
+<div class="empty-state">
+  {% if stats.detected_at %}
+  <h2>Nothing found with these settings</h2>
+  <p>Try a lower minimum distance or fewer minimum photos in the sidebar.</p>
+  {% else %}
+  <h2>No trips or events detected yet</h2>
+  <p>Trips and events are found from when and where your photos were taken.
+     It takes a few seconds and only reads the index, so it is safe to re-run.</p>
+  <button class="btn btn-primary" onclick="runDetection(event)">Detect trips &amp; events</button>
+  {% endif %}
+</div>
+{% endif %}
+
+<script>
+const PARAMS_KEY = 'trips.detectParams';
+const form = document.getElementById('detect-form');
+const statusEl = document.getElementById('detect-status');
+const detectBtn = document.getElementById('detect-btn');
+const cancelBtn = document.getElementById('cancel-btn');
+
+// Restore the thresholds used last time (per browser), so re-running keeps them.
+try {
+  const saved = JSON.parse(localStorage.getItem(PARAMS_KEY) || '{}');
+  for (const el of form.elements) {
+    if (el.name && saved[el.name] !== undefined) el.value = saved[el.name];
+  }
+} catch (e) { /* storage unavailable: keep defaults */ }
+
+function setStatus(cls, text) {
+  statusEl.className = 'sidebar-status ' + cls;
+  statusEl.textContent = text;
+}
+
+function setRunning(running) {
+  detectBtn.disabled = running;
+  cancelBtn.style.display = running ? '' : 'none';
+}
+
+function pollJob() {
+  fetch('/api/jobs/status?job_type=trips')
+    .then(function (r) { return r.json(); })
+    .then(function (p) {
+      if (p.running) {
+        setRunning(true);
+        setStatus('info', p.message + (p.total ? ' (' + p.processed + '/' + p.total + ')' : ''));
+        setTimeout(pollJob, 500);
+        return;
+      }
+      setRunning(false);
+      if (!p.done) return;
+      if (p.error) {
+        setStatus('error', 'Detection failed');
+        showError('Trip detection failed: ' + p.error);
+      } else {
+        setStatus(p.cancelled ? 'info' : 'ok', p.message);
+        if (!p.cancelled && sessionStorage.getItem('trips.reloadOnDone') === '1') {
+          sessionStorage.removeItem('trips.reloadOnDone');
+          setTimeout(function () { location.reload(); }, 600);
+        }
+      }
+    })
+    .catch(function () { setRunning(false); });
+}
+
+function runDetection(ev) {
+  if (ev) ev.preventDefault();
+  const body = {};
+  for (const el of form.elements) {
+    if (el.name && el.value !== '') body[el.name] = Number(el.value);
+  }
+  try { localStorage.setItem(PARAMS_KEY, JSON.stringify(body)); } catch (e) { /* ignore */ }
+  setRunning(true);
+  setStatus('info', 'Starting…');
+  fetch('/api/jobs/trips/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  })
+    .then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t || r.statusText); });
+      try { sessionStorage.setItem('trips.reloadOnDone', '1'); } catch (e) { /* ignore */ }
+      pollJob();
+    })
+    .catch(function (e) {
+      setRunning(false);
+      setStatus('error', 'Detection failed');
+      showError('Trip detection failed: ' + e.message);
+    });
+}
+
+function cancelDetection() {
+  fetch('/api/jobs/trips/cancel', {method: 'POST'}).catch(function () {});
+}
+
+// Resume showing progress if a detection is already running (e.g. after reload).
+fetch('/api/jobs/status?job_type=trips')
+  .then(function (r) { return r.json(); })
+  .then(function (p) { if (p.running) pollJob(); })
+  .catch(function () {});
+</script>
+{% endblock %}

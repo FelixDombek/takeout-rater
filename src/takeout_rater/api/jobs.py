@@ -21,6 +21,7 @@ POST /api/jobs/score/start       – start scoring (optional scorer_id body fiel
 POST /api/jobs/cluster/start     – start clustering
 POST /api/jobs/export/start      – start best-of-cluster export
 POST /api/jobs/rescan/start      – start library rescan (update indexer_version)
+POST /api/jobs/trips/start       – (re-)detect trips and events
 """
 
 from __future__ import annotations
@@ -35,6 +36,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from takeout_rater.api.trips import TripDetectBody
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
@@ -55,6 +58,7 @@ _JOB_TYPES = (
     "cluster_faces",
     "geocode",
     "ocr",
+    "trips",
 )
 
 
@@ -2236,5 +2240,79 @@ def cancel_ocr_job(request: Request) -> JSONResponse:
     p = jobs.get("ocr")
     if p is None or not p.running:
         raise HTTPException(status_code=404, detail="No OCR job is currently running.")
+    p.cancel_event.set()
+    return JSONResponse({"status": "cancelling"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/trips/start  ·  POST /api/jobs/trips/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/trips/start")
+def start_trips_job(request: Request, body: TripDetectBody | None = None) -> JSONResponse:
+    """Start (re-)detecting trips and events in the background.
+
+    Body fields mirror :class:`takeout_rater.events.detector.DetectionParams`
+    (all optional).  Progress is reported under job type ``"trips"``; the
+    stored trips are only replaced at the very end, so cancelling leaves the
+    previous result intact.  Returns ``409`` if a trips job is already running.
+    """
+    from takeout_rater.events.detector import DetectionParams
+
+    _require_db(request)
+    jobs = _get_jobs(request.app)
+    existing = jobs.get("trips")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="Trip detection is already running.")
+
+    params = DetectionParams(**(body or TripDetectBody()).model_dump())
+    progress = JobProgress(job_type="trips", running=True, message="Starting…")
+    jobs["trips"] = progress
+
+    def _worker() -> None:
+        from takeout_rater.events.service import DetectionCancelled, run_detection
+
+        worker_conn = _open_worker_conn(request.app)
+        try:
+
+            def _cb(message: str, step: int, n_steps: int) -> None:
+                progress.message = message
+                progress.processed = step
+                progress.total = n_steps
+
+            summary = run_detection(
+                worker_conn,
+                params,
+                on_progress=_cb,
+                should_cancel=progress.cancel_event.is_set,
+            )
+            progress.diagnostics = summary
+            progress.processed = progress.total
+            progress.message = (
+                f"Found {summary['n_trips']} trip(s) and {summary['n_events']} event(s) "
+                f"in {summary['elapsed_s']} s."
+            )
+        except DetectionCancelled:
+            progress.message = "Cancelled — previous trips and events kept."
+        except Exception as exc:  # noqa: BLE001
+            _log.exception("Trip detection failed")
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+        finally:
+            progress.running = False
+            progress.done = True
+            worker_conn.close()
+
+    threading.Thread(target=_worker, daemon=True, name="takeout-rater-trips").start()
+    return JSONResponse({"status": "started"})
+
+
+@router.post("/api/jobs/trips/cancel")
+def cancel_trips_job(request: Request) -> JSONResponse:
+    """Request cancellation of a running trip detection job."""
+    p = _get_jobs(request.app).get("trips")
+    if p is None or not p.running:
+        raise HTTPException(status_code=404, detail="No trip detection job is running.")
     p.cancel_event.set()
     return JSONResponse({"status": "cancelling"})

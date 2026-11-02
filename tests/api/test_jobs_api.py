@@ -58,6 +58,7 @@ def test_jobs_status_returns_list_by_default(client_no_db: TestClient) -> None:
         "cluster_faces",
         "geocode",
         "ocr",
+        "trips",
     }
 
 

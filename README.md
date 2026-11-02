@@ -50,6 +50,7 @@ Enter the new path and click **Save & continue**.
 - **Browses** your library via a local web UI with filters and sorting
 - **Maps** geotagged photos with a timeline to explore where you were when
 - **Names places** from GPS (country / region / city, fully offline via GeoNames) so you can filter by place
+- **Finds trips and events** from photo times and GPS (trips away from home, photo bursts), with place names and a cover photo
 - **Exports** your best photos (top-N, or best-of-cluster) to a folder
 
 See [`docs/design.md`](docs/design.md) for the full architecture overview.
