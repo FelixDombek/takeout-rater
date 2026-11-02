@@ -172,7 +172,7 @@
   /** 1 at the chosen date, falling off with distance; 0 for unknown dates. */
   function timeWeight(t) {
     if (settings.mode === 'off') return 1;
-    if (t === null) return 0;
+    if (t === null) return settings.mode === 'filter' ? -1 : 0;
     var w = settings.windowDays * DAY;
     var dt = (t - currentT) / w;
     if (settings.mode === 'filter') return Math.abs(dt) <= 1 ? 1 : -1;
@@ -537,11 +537,15 @@
   var hasRange = rangeFrom > 0 && rangeTo >= rangeFrom;
   if (hasRange) {
     settings.mode = 'filter';
-    settings.windowDays = Math.max(1, Math.ceil((rangeTo - rangeFrom) / 2 / DAY));
+    // Keep the exact interval: the window is a (possibly fractional) half-span in days.
+    settings.windowDays = Math.max(1, rangeTo - rangeFrom) / 2 / DAY;
     currentT = (rangeFrom + rangeTo) / 2;
     var opt = document.createElement('option');
     opt.value = String(settings.windowDays);
-    opt.textContent = '± ' + settings.windowDays + ' day' + (settings.windowDays === 1 ? '' : 's');
+    var halfDays = settings.windowDays;
+    opt.textContent = '± ' + (halfDays >= 1
+      ? Math.round(halfDays * 10) / 10 + ' days'
+      : Math.max(1, Math.round(halfDays * 24 * 60)) + ' min');
     els.windowSel.appendChild(opt);
     els.windowSel.value = opt.value;
     document.querySelectorAll('input[name=time-mode]').forEach(function (r) { r.checked = r.value === 'filter'; });

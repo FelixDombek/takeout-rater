@@ -634,21 +634,23 @@ def list_geotagged_points(
     if favorited is not None:
         conditions.append("COALESCE(favorited, 0) = ?")
         params.append(1 if favorited else 0)
-    where = " AND ".join(conditions)
-
     has_geo = "(geo_lat IS NOT NULL AND geo_lon IS NOT NULL AND (geo_lat != 0 OR geo_lon != 0))"
     has_exif = (
         "(geo_exif_lat IS NOT NULL AND geo_exif_lon IS NOT NULL"
         " AND (geo_exif_lat != 0 OR geo_exif_lon != 0))"
     )
-    source = "assets"
+    conditions.append(f"({has_geo} OR {has_exif})")
+    # Filters are applied *before* picking a duplicate group's representative,
+    # so a group keeps an eligible copy even if its lowest-id copy is filtered out.
+    where = " AND ".join(conditions)
+    source = f"(SELECT * FROM assets WHERE {where})"
     if deduped:
         source = (
-            "(SELECT * FROM ("
-            "  SELECT *, ROW_NUMBER() OVER ("
-            "    PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id"
-            "  ) AS _rn FROM assets"
-            ") WHERE _rn = 1)"
+            f"(SELECT * FROM ("
+            f"  SELECT *, ROW_NUMBER() OVER ("
+            f"    PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id"
+            f"  ) AS _rn FROM assets WHERE {where}"
+            f") WHERE _rn = 1)"
         )
     sql = (  # noqa: S608
         f"SELECT id,"
@@ -656,7 +658,6 @@ def list_geotagged_points(
         f" CASE WHEN {has_geo} THEN geo_lon ELSE geo_exif_lon END AS lon,"
         f" taken_at, COALESCE(favorited, 0) AS fav"
         f" FROM {source}"
-        f" WHERE {where} AND ({has_geo} OR {has_exif})"
         f" ORDER BY taken_at, id"
     )
     return [(r[0], r[1], r[2], r[3], r[4]) for r in conn.execute(sql, params)]

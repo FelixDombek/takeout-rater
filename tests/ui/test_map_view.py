@@ -75,6 +75,17 @@ def test_list_geotagged_points_dedupes_by_sha(geo_conn: sqlite3.Connection) -> N
     assert len(list_geotagged_points(geo_conn, deduped=False)) == 3
 
 
+def test_dedupe_keeps_eligible_copy_when_lowest_id_is_filtered_out(
+    geo_conn: sqlite3.Connection,
+) -> None:
+    # The lowest-id copy (paris) is trashed; the other copy (exif) must still show.
+    geo_conn.execute("UPDATE assets SET trashed = 1 WHERE filename = 'paris.jpg'")
+    geo_conn.execute("UPDATE assets SET sha256 = 'dup' WHERE filename IN ('paris.jpg', 'exif.jpg')")
+    ids = {r[0] for r in list_geotagged_points(geo_conn, deduped=True)}
+    exif = geo_conn.execute("SELECT id FROM assets WHERE filename = 'exif.jpg'").fetchone()[0]
+    assert exif in ids
+
+
 def test_map_points_endpoint(geo_conn: sqlite3.Connection, tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path, geo_conn, db_root=tmp_path))
     resp = client.get("/api/map/points")
