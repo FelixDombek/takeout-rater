@@ -1,4 +1,4 @@
--- Migration: version 14 → 15
+-- Migration: version 16 → 17
 -- OCR text extracted from photos (RapidOCR) plus an FTS5 index for text search.
 --
 -- ocr_text holds one row per processed asset.  Assets in which no text was found
@@ -43,4 +43,4 @@ CREATE TRIGGER IF NOT EXISTS ocr_text_au AFTER UPDATE ON ocr_text BEGIN
     INSERT INTO ocr_text_fts (rowid, text_folded) VALUES (new.asset_id, new.text_folded);
 END;
 
-PRAGMA user_version = 15;
+PRAGMA user_version = 17;

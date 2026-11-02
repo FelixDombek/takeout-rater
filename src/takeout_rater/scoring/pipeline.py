@@ -394,14 +394,21 @@ def run_scorer_by_id(
     if env_batch_size and batch_size == 32:
         with contextlib.suppress(ValueError):
             batch_size = max(1, int(env_batch_size))
-    return run_scorer(
-        conn,
-        scorer,
-        thumbs_dir,
-        asset_ids=asset_ids,
-        batch_size=batch_size,
-        skip_existing=skip_existing,
-        on_progress=on_progress,
-        on_diagnostics=on_diagnostics,
-        cancel_check=cancel_check,
-    )
+    try:
+        return run_scorer(
+            conn,
+            scorer,
+            thumbs_dir,
+            asset_ids=asset_ids,
+            batch_size=batch_size,
+            skip_existing=skip_existing,
+            on_progress=on_progress,
+            on_diagnostics=on_diagnostics,
+            cancel_check=cancel_check,
+        )
+    finally:
+        # Scorers that hold heavy resources (models in VRAM, thread pools)
+        # may expose close(); release them as soon as the run ends.
+        close = getattr(scorer, "close", None)
+        if callable(close):
+            close()

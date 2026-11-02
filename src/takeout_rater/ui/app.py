@@ -20,8 +20,10 @@ from takeout_rater.api.clusters import router as clusters_router
 from takeout_rater.api.config_routes import router as config_router
 from takeout_rater.api.faces import router as faces_router
 from takeout_rater.api.jobs import router as jobs_router
+from takeout_rater.api.map_routes import router as map_router
 from takeout_rater.api.presets import router as presets_router
 from takeout_rater.api.search import router as search_router
+from takeout_rater.db.queries import asset_location
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -52,6 +54,7 @@ def _make_templates(templates_dir: Path) -> Environment:
 
     env.filters["timestamp_fmt"] = timestamp_fmt
     env.filters["filesizeformat"] = filesizeformat
+    env.globals["asset_location"] = asset_location
 
     # Expose a TemplateResponse helper that mimics Starlette's Jinja2Templates
     class _TemplateResponder:
@@ -131,6 +134,7 @@ def create_app(
     app.include_router(search_router)
     app.include_router(clip_router)
     app.include_router(faces_router)
+    app.include_router(map_router)
 
     @app.get("/")
     def redirect_to_browse(request: Request) -> RedirectResponse:
@@ -182,7 +186,7 @@ def create_app(
         return templates.TemplateResponse("scoring.html", {"request": request})
 
     @app.get("/search", response_class=HTMLResponse)
-    def search_page(request: Request, q: str = "", mode: str = "clip") -> HTMLResponse:
+    def search_page(request: Request, q: str = "", mode: str = "visual") -> HTMLResponse:
         if request.app.state.db_conn is None:
             from fastapi.responses import RedirectResponse as _RR
 
@@ -190,7 +194,7 @@ def create_app(
         templates = request.app.state.templates
         return templates.TemplateResponse(
             "search.html",
-            {"request": request, "query": q, "mode": "text" if mode == "text" else "clip"},
+            {"request": request, "query": q, "mode": "text" if mode == "text" else "visual"},
         )
 
     @app.get("/clip", response_class=HTMLResponse)

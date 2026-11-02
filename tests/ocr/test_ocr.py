@@ -1,7 +1,7 @@
 """Tests for OCR text extraction and FTS5 text search.
 
 Covers:
-- schema migration v14 → v15 (ocr_text + ocr_text_fts + triggers)
+- schema migration to v17 (ocr_text + ocr_text_fts + triggers)
 - OCR DB queries (upsert keeps FTS in sync, search ranking, query escaping)
 - OcrEngine result filtering (with a fake RapidOCR backend)
 - /api/jobs/ocr/start with a fake engine, /api/search?mode=text, /api/ocr/status
@@ -77,19 +77,19 @@ class TestSchema:
         }
         assert {"ocr_text", "ocr_text_fts", "ocr_text_ai", "ocr_text_ad", "ocr_text_au"} <= names
 
-    def test_incremental_migration_from_v14(self, tmp_path: Path) -> None:
+    def test_incremental_ocr_migration(self, tmp_path: Path) -> None:
         import sqlite3
 
         from takeout_rater.db.schema import CURRENT_SCHEMA_VERSION, migrate
 
         db = sqlite3.connect(tmp_path / "lib.sqlite")
         migrate(db)
-        # Roll the fresh DB back to a v14 shape.
+        # Roll the fresh DB back to the version just before the OCR migration.
         for trig in ("ocr_text_ai", "ocr_text_ad", "ocr_text_au"):
             db.execute(f"DROP TRIGGER {trig}")
         db.execute("DROP TABLE ocr_text_fts")
         db.execute("DROP TABLE ocr_text")
-        db.execute("PRAGMA user_version = 14")
+        db.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION - 1}")
         db.commit()
 
         migrate(db)

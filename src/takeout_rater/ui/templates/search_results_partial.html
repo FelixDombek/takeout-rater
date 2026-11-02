@@ -1,6 +1,7 @@
 <div data-search-meta
      data-total-embedded="{{ total_embedded }}"
      data-total-results="{{ total_results|default(0) }}"
+     data-model="{{ model|default('') }}"
      {% if no_embeddings|default(false) %}data-no-embeddings="true"{% endif %}
      {% if no_ocr|default(false) %}data-no-ocr="true"{% endif %}
      style="display:none"></div>

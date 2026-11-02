@@ -8,7 +8,7 @@ and exports, and it will give you access to tools such as:
 
  - Library and album browsing
  - Several aesthetics scorers
- - CLIP-based semantic search
+ - Semantic search with SigLIP 2 (multilingual, opt-in embedding pass from the Search page) or CLIP ViT-L/14
  - Text-in-photo search (OCR with RapidOCR + SQLite FTS5)
  - Face detection and grouping
 
@@ -48,6 +48,7 @@ Enter the new path and click **Save & continue**.
 - **Indexes** your photo library in place (read-only)
 - **Scores** photos using pluggable scorers (aesthetic quality, media type, …)
 - **Browses** your library via a local web UI with filters and sorting
+- **Maps** geotagged photos with a timeline to explore where you were when
 - **Exports** your best photos (top-N, or best-of-cluster) to a folder
 
 See [`docs/design.md`](docs/design.md) for the full architecture overview.
@@ -61,6 +62,8 @@ See [`docs/design.md`](docs/design.md) for the full architecture overview.
 | [![Browse](docs/screenshots/browse.png)](docs/screenshots/browse.png) | [![Clusters](docs/screenshots/clusters.png)](docs/screenshots/clusters.png) |
 | **🎯 Scoring** | **⚙ Jobs** |
 | [![Scoring](docs/screenshots/scoring.png)](docs/screenshots/scoring.png) | [![Jobs](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) |
+| **🗺️ Map** | |
+| [![Map](docs/screenshots/map.png)](docs/screenshots/map.png) | |
 
 ---
 
