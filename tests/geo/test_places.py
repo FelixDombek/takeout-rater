@@ -178,6 +178,16 @@ def test_geocode_library_missing_only_skips_done_and_redoes_moved(
     assert geocode_library(geo_db, missing_only=False).processed == 4
 
 
+def test_geocode_library_removes_place_when_gps_cleared(geo_db: sqlite3.Connection) -> None:
+    geocode_library(geo_db)
+    aid = geo_db.execute("SELECT id FROM assets WHERE filename='city1.jpg'").fetchone()[0]
+    geo_db.execute("UPDATE assets SET geo_lat = 0, geo_lon = 0 WHERE id = ?", (aid,))
+    result = geocode_library(geo_db)
+    assert result.removed == 1
+    assert get_asset_place(geo_db, aid) is None
+    assert count_asset_places(geo_db) == 3
+
+
 def test_place_filter_on_listing_queries(geo_db: sqlite3.Connection) -> None:
     geocode_library(geo_db)
     xa = PlaceFilter(country_code="XA")

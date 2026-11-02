@@ -6,7 +6,11 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from takeout_rater.db.queries import list_assets_for_geocoding, upsert_asset_places
+from takeout_rater.db.queries import (
+    delete_stale_asset_places,
+    list_assets_for_geocoding,
+    upsert_asset_places,
+)
 from takeout_rater.geo.places import GEOCODER_VERSION, asset_coords, reverse_geocode_many
 
 _BATCH_SIZE = 5000
@@ -19,6 +23,7 @@ class GeocodeResult:
     candidates: int = 0  # assets with usable coordinates
     processed: int = 0  # assets looked up in this run
     named: int = 0  # of those, assets that got a place name
+    removed: int = 0  # stale rows deleted (coordinates no longer usable)
     cancelled: bool = False
 
 
@@ -41,6 +46,7 @@ def geocode_library(
     """
     todo: list[tuple[int, float, float]] = []
     candidates = 0
+    usable_ids: set[int] = set()
     for row in list_assets_for_geocoding(conn):
         coords = asset_coords(
             row["geo_lat"], row["geo_lon"], row["geo_exif_lat"], row["geo_exif_lon"]
@@ -48,6 +54,7 @@ def geocode_library(
         if coords is None:
             continue
         candidates += 1
+        usable_ids.add(row["id"])
         if (
             missing_only
             and row["p_lat"] is not None
@@ -58,7 +65,10 @@ def geocode_library(
             continue
         todo.append((row["id"], coords[0], coords[1]))
 
-    result = GeocodeResult(candidates=candidates)
+    # Drop places of assets whose coordinates were cleared (or deleted assets).
+    removed = delete_stale_asset_places(conn, usable_ids)
+
+    result = GeocodeResult(candidates=candidates, removed=removed)
     total = len(todo)
     if on_progress is not None:
         on_progress(0, total)

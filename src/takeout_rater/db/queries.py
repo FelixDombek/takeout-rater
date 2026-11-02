@@ -2695,6 +2695,22 @@ def upsert_asset_places(
     conn.commit()
 
 
+def delete_stale_asset_places(conn: sqlite3.Connection, keep_ids: set[int]) -> int:
+    """Delete ``asset_places`` rows whose asset is not in *keep_ids*; return count.
+
+    Used to drop stored places of assets whose GPS coordinates were cleared.
+    """
+    stale = [
+        (r[0],)
+        for r in conn.execute("SELECT asset_id FROM asset_places").fetchall()
+        if r[0] not in keep_ids
+    ]
+    if stale:
+        conn.executemany("DELETE FROM asset_places WHERE asset_id = ?", stale)
+        conn.commit()
+    return len(stale)
+
+
 def get_asset_places(conn: sqlite3.Connection, asset_ids: list[int]) -> dict[int, Any]:
     """Return ``{asset_id: Place}`` for assets that have a named place.
 
