@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS face_cluster_members (
     PRIMARY KEY (cluster_id, face_id)
 );
 
--- Trips and events (schema v16)
+-- Trips and events (schema v17)
 CREATE TABLE IF NOT EXISTS events (
     id               INTEGER PRIMARY KEY,
     kind             TEXT NOT NULL CHECK (kind IN ('trip', 'event')),
@@ -233,4 +233,22 @@ CREATE INDEX IF NOT EXISTS idx_face_clusters_run_id     ON face_clusters(run_id)
 CREATE INDEX IF NOT EXISTS idx_face_cluster_members_face_id ON face_cluster_members(face_id);
 CREATE INDEX IF NOT EXISTS idx_image_embeddings_asset_id ON image_embeddings (asset_id);
 
-PRAGMA user_version = 16;
+-- Reverse-geocoded place names (added in schema v16, see 0010_asset_places.sql)
+CREATE TABLE IF NOT EXISTS asset_places (
+    asset_id         INTEGER PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+    lat              REAL NOT NULL,         -- coordinates the lookup used
+    lon              REAL NOT NULL,
+    country_code     TEXT,                  -- ISO 3166-1 alpha-2, e.g. 'PT'
+    country          TEXT,                  -- English name, e.g. 'Portugal'
+    admin1           TEXT,                  -- state / region / province
+    admin2           TEXT,                  -- county / district
+    city             TEXT,                  -- populated place (districts merged into cities)
+    distance_km      REAL,                  -- distance to the nearest gazetteer entry
+    geocoder_version INTEGER NOT NULL,
+    geocoded_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_places_place ON asset_places (country_code, admin1, city);
+CREATE INDEX IF NOT EXISTS idx_asset_places_city  ON asset_places (city);
+
+PRAGMA user_version = 17;

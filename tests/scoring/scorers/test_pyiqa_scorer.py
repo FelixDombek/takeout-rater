@@ -225,3 +225,22 @@ def test_topiq_variant_passthrough(tmp_path: Path) -> None:
     scorer = _make_mock_scorer(raw_score=0.85, variant_id="topiq_nr")
     results = scorer.score_batch([img_path])
     assert results[0]["iqa_quality"] == pytest.approx(0.85, abs=1e-4)
+
+
+def test_score_batch_mixed_sizes_batches_by_shape(tmp_path: Path) -> None:
+    """Thumbnails of different aspect ratios are batched per shape, not one by one."""
+    import torch
+    from PIL import Image
+
+    paths = []
+    for i, size in enumerate([(64, 48), (48, 64), (64, 48), (48, 64)]):
+        p = tmp_path / f"img{i}.jpg"
+        Image.new("RGB", size).save(p, "JPEG")
+        paths.append(p)
+
+    scorer = PyIQAScorer.create(variant_id="musiq")
+    scorer._metric = MagicMock(side_effect=lambda t: torch.full((t.shape[0], 1), 50.0))
+    results = scorer.score_batch(paths)
+
+    assert len(results) == 4
+    assert [c.args[0].shape[0] for c in scorer._metric.call_args_list] == [2, 2]

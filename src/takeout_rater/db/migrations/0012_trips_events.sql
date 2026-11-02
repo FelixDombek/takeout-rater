@@ -1,4 +1,4 @@
--- Migration: version 15 → 16
+-- Migration: version 16 → 17
 -- Trips and events detected from photo timestamps and GPS (takeout_rater.events).
 -- The tables are fully rebuilt on every detection run; only custom_name is
 -- carried over to the matching re-detected trip/event.
@@ -31,4 +31,4 @@ CREATE INDEX IF NOT EXISTS idx_events_start_ts        ON events (start_ts);
 CREATE INDEX IF NOT EXISTS idx_events_parent_id       ON events (parent_id);
 CREATE INDEX IF NOT EXISTS idx_event_assets_asset_id  ON event_assets (asset_id);
 
-PRAGMA user_version = 16;
+PRAGMA user_version = 17;

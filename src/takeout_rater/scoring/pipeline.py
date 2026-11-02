@@ -32,6 +32,14 @@ from takeout_rater.scoring.scorers.base import BaseScorer
 
 _logger = logging.getLogger(__name__)
 
+#: Default number of assets handed to one ``score_batch()`` call.  Scorers split
+#: this into their own GPU-sized chunks and decode chunk N+1 while chunk N runs
+#: on the GPU (see ``_run_pipelined_batches``); that overlap only happens when a
+#: call spans several chunks, so this is deliberately much larger than the
+#: per-model batch sizes.  It also sets how often progress is reported and
+#: scores are committed.
+DEFAULT_SCORE_BATCH_SIZE = 256
+
 
 def _score_batch_with_context(
     scorer: BaseScorer,
@@ -88,7 +96,7 @@ def run_scorer(
     thumbs_dir: Path,
     *,
     asset_ids: list[int] | None = None,
-    batch_size: int = 32,
+    batch_size: int = DEFAULT_SCORE_BATCH_SIZE,
     skip_existing: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
     on_diagnostics: Callable[[dict[str, object]], None] | None = None,
@@ -110,7 +118,8 @@ def run_scorer(
         asset_ids: Explicit list of asset IDs to score.  When ``None``
             (default), all assets that lack a score for this scorer/metric
             are scored.
-        batch_size: Number of images per ``score_batch()`` call (default 32).
+        batch_size: Number of images per ``score_batch()`` call (default
+            :data:`DEFAULT_SCORE_BATCH_SIZE`).
         skip_existing: When ``True`` (default) and ``asset_ids`` is ``None``,
             skip assets that already have a score for the *first* metric in
             the variant spec. For single-metric variants this is equivalent to
@@ -352,7 +361,7 @@ def run_scorer_by_id(
     *,
     variant_id: str | None = None,
     asset_ids: list[int] | None = None,
-    batch_size: int = 32,
+    batch_size: int = DEFAULT_SCORE_BATCH_SIZE,
     skip_existing: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
     on_diagnostics: Callable[[dict[str, object]], None] | None = None,
@@ -391,7 +400,7 @@ def run_scorer_by_id(
         )
     scorer = cls.create(variant_id=variant_id)
     env_batch_size = os.environ.get("TAKEOUT_RATER_SCORE_BATCH_SIZE")
-    if env_batch_size and batch_size == 32:
+    if env_batch_size and batch_size == DEFAULT_SCORE_BATCH_SIZE:
         with contextlib.suppress(ValueError):
             batch_size = max(1, int(env_batch_size))
     try:

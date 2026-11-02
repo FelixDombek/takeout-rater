@@ -132,6 +132,15 @@ def test_format_date_range() -> None:
 # ── Database + service ────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _no_geocoder(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep date-based fallback names deterministic unless a test opts in."""
+    if "reverse_geocoding" not in request.node.name:
+        monkeypatch.setattr(
+            "takeout_rater.events.service._reverse_geocode_center", lambda lat, lon: None
+        )
+
+
 def _make_db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -209,19 +218,27 @@ def test_run_detection_stores_trip_with_cover_and_keeps_custom_name() -> None:
 def test_run_detection_uses_asset_places_when_present() -> None:
     conn = _make_db()
     _populate(conn)
+    # Fake names prove they come from asset_places, not the geocoder fallback.
     conn.execute(
-        "CREATE TABLE asset_places (asset_id INTEGER PRIMARY KEY, country_code TEXT,"
-        " country TEXT, admin1 TEXT, city TEXT)"
-    )
-    conn.execute(
-        "INSERT INTO asset_places SELECT id, 'PT', 'Portugal', 'Lisbon', 'Lisbon'"
+        "INSERT INTO asset_places (asset_id, lat, lon, country_code, country, admin1, city,"
+        " geocoder_version, geocoded_at)"
+        " SELECT id, geo_lat, geo_lon, 'XX', 'Testland', 'Region', 'Testville', 1, 0"
         " FROM assets WHERE geo_lat BETWEEN 38 AND 39"
     )
     conn.commit()
     run_detection(conn)
     trip = eq.list_events(conn, kind="trip")[0]
-    assert trip["name"] == "Lisbon, Portugal"
-    assert trip["place_label"] == "Lisbon, Portugal"
+    assert trip["name"] == "Testville, Testland"
+    assert trip["place_label"] == "Testville, Testland"
+
+
+def test_unnamed_groups_fall_back_to_reverse_geocoding_their_centre() -> None:
+    pytest.importorskip("reverse_geocode")
+    conn = _make_db()
+    _populate(conn)  # asset_places stays empty
+    run_detection(conn)
+    trip = eq.list_events(conn, kind="trip")[0]
+    assert "Portugal" in trip["name"]
 
 
 # ── Web UI ────────────────────────────────────────────────────────────────────

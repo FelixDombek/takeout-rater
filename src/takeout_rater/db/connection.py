@@ -49,11 +49,16 @@ def library_db_path(db_root: Path) -> Path:
     return db_root / _STATE_DIR / _DB_FILENAME
 
 
-def open_db(db_path: Path) -> sqlite3.Connection:
+def open_db(db_path: Path, *, bulk_writes: bool = False) -> sqlite3.Connection:
     """Open an existing SQLite database at *db_path* without running migrations.
 
     This is intended for per-request connections where migrations have already
     been applied by :func:`open_library_db`.
+
+    Args:
+        db_path: Path to the SQLite database file.
+        bulk_writes: Set for connections that write large, re-creatable
+            batches (indexer, scorer).  See :func:`enable_bulk_writes`.
 
     Returns:
         An open :class:`sqlite3.Connection` with ``row_factory`` set to
@@ -67,7 +72,27 @@ def open_db(db_path: Path) -> sqlite3.Connection:
     # The default (0 ms) causes immediate OperationalError under concurrent
     # writers, which can crash background worker threads.
     conn.execute("PRAGMA busy_timeout=30000")
+    # Larger page cache (negative = KiB), in-memory temp tables for sorts, and
+    # memory-mapped reads speed up the large browse/scoring queries.
+    conn.execute("PRAGMA cache_size=-65536")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA mmap_size=268435456")
+    if bulk_writes:
+        enable_bulk_writes(conn)
     return conn
+
+
+def enable_bulk_writes(conn: sqlite3.Connection) -> None:
+    """Relax fsync on a connection that only writes re-creatable data.
+
+    With WAL, ``synchronous=NORMAL`` fsyncs at checkpoints instead of on every
+    commit.  The database stays consistent after a crash or power loss, but
+    the last few commits can be lost.  That is fine for index and score rows,
+    which the next indexing/scoring run recomputes, but not for user edits, so
+    API request connections keep the default ``FULL``.  The setting is per
+    connection and does not affect other connections.
+    """
+    conn.execute("PRAGMA synchronous=NORMAL")
 
 
 def open_library_db(db_root: Path) -> sqlite3.Connection:
