@@ -67,6 +67,15 @@ def open_db(db_path: Path) -> sqlite3.Connection:
     # The default (0 ms) causes immediate OperationalError under concurrent
     # writers, which can crash background worker threads.
     conn.execute("PRAGMA busy_timeout=30000")
+    # WAL + NORMAL only fsyncs at checkpoints instead of on every commit.  The
+    # database stays consistent after a crash; at worst the last few commits
+    # are lost, which a re-run of the indexer/scorer redoes.
+    conn.execute("PRAGMA synchronous=NORMAL")
+    # Larger page cache (negative = KiB), in-memory temp tables for sorts, and
+    # memory-mapped reads speed up the large browse/scoring queries.
+    conn.execute("PRAGMA cache_size=-65536")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA mmap_size=268435456")
     return conn
 
 

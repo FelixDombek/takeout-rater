@@ -728,7 +728,7 @@ def get_similar_assets(
 
     On error an ``"error"`` key is added: ``"no_embedding"`` or ``"no_phash"``.
     """
-    from src.takeout_rater.clustering.similarity import find_similar_by_asset
+    from takeout_rater.clustering.similarity import find_similar_by_asset
 
     if method not in ("clip", "phash"):
         method = "clip"
@@ -816,10 +816,10 @@ async def search_by_image(
     base = {"method": method, "metric": metric if method == "clip" else None}
 
     if method == "phash":
-        from src.takeout_rater.clustering.phash import (
+        from takeout_rater.clustering.phash import (
             compute_dhash_from_image,
         )
-        from src.takeout_rater.clustering.similarity import (
+        from takeout_rater.clustering.similarity import (
             find_similar_by_phash_hex,
         )
 
@@ -857,7 +857,7 @@ async def search_by_image(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"CLIP embedding failed: {exc}") from exc
 
-    from src.takeout_rater.clustering.similarity import (
+    from takeout_rater.clustering.similarity import (
         find_similar_by_embedding,
     )
 
@@ -943,7 +943,7 @@ async def analyze_uploaded_image(
 
     # ── pHash ──────────────────────────────────────────────────────────────
     try:
-        from src.takeout_rater.clustering.phash import compute_dhash_from_image
+        from takeout_rater.clustering.phash import compute_dhash_from_image
 
         result["phash"] = compute_dhash_from_image(img)
     except Exception:  # noqa: BLE001

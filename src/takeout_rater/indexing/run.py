@@ -45,6 +45,9 @@ from takeout_rater.db.queries import CURRENT_INDEXER_VERSION as _CURRENT_INDEXER
 
 _log = logging.getLogger(__name__)
 
+#: Minimum seconds between progress callbacks during the processing phase.
+_PROGRESS_EMIT_INTERVAL = 0.25
+
 
 def _compute_sha256(path: Path) -> str:
     """Return the hex-encoded SHA-256 digest of the file at *path*."""
@@ -151,7 +154,7 @@ def run_index(
     import queue
     import threading
 
-    from src.takeout_rater.clustering.phash import (
+    from takeout_rater.clustering.phash import (
         DHASH_ALGO,
         compute_dhash_from_image,
     )
@@ -286,22 +289,18 @@ def run_index(
     def _diag_set(key: str, value: int | float | str) -> None:
         with _diagnostics_lock:
             _diagnostics[key] = value
-            progress.diagnostics = dict(_diagnostics)
 
     def _diag_add(key: str, seconds: float) -> None:
         with _diagnostics_lock:
             _diagnostics[key] = float(_diagnostics.get(key, 0.0)) + seconds
-            progress.diagnostics = dict(_diagnostics)
 
     def _diag_inc(key: str, amount: int = 1) -> None:
         with _diagnostics_lock:
             _diagnostics[key] = int(_diagnostics.get(key, 0)) + amount
-            progress.diagnostics = dict(_diagnostics)
 
     def _diag_max(key: str, value: int) -> None:
         with _diagnostics_lock:
             _diagnostics[key] = max(int(_diagnostics.get(key, 0)), value)
-            progress.diagnostics = dict(_diagnostics)
 
     progress.diagnostics = _diag_snapshot()
 
@@ -403,6 +402,7 @@ def run_index(
     )
 
     _progress_lock = threading.Lock()
+    _last_progress_emit = 0.0
     # CLIP image preprocessing runs on a small CPU worker pool and feeds one
     # dedicated GPU/DB writer thread that forms inference batches. Calling
     # encode_image() from many Python workers can deadlock PyTorch's thread
@@ -777,11 +777,10 @@ def run_index(
             except queue.Full:
                 continue
 
-    # SQLite writes are serialized through one writer thread. Asset claims are
-    # still decided and committed one by one on that connection to preserve the
-    # hash lookup/upsert atomicity; pHash writes are batched behind them.
-    _phash_write_batch_size = 256
-    _phash_write_batch_wait = 0.005
+    # SQLite writes are serialized through one writer thread.  Claims and pHash
+    # rows that are queued together are committed in one transaction; the
+    # single writer keeps each hash lookup/upsert atomic.
+    _db_write_batch_max = 512
     _db_queue: queue.Queue[object] = queue.Queue(maxsize=max(256, num_workers * 8))
     _db_sentinel = object()
 
@@ -852,33 +851,84 @@ def run_index(
             (asset_id, dhash_hex, DHASH_ALGO, int(time.time())),
         )
 
-    def _handle_claim_item(wconn: sqlite3.Connection, item: object) -> None:
-        future = item["future"]  # type: ignore[index]
+    def _apply_claim_item(wconn: sqlite3.Connection, item: object) -> tuple[int, bool]:
+        asset_id, is_new = _upsert_asset_claim_no_commit(wconn, item["asset"])  # type: ignore[index]
+        for relpath_for_album in item["album_relpaths"]:  # type: ignore[index]
+            parts = Path(relpath_for_album).parts
+            if len(parts) > 1:
+                album_name = parts[0]
+                album_id = _upsert_album_no_commit(wconn, album_name, album_name)
+                _link_asset_to_album_no_commit(wconn, album_id, asset_id)
+        return asset_id, is_new
+
+    def _write_db_batch(wconn: sqlite3.Connection, batch: list[object]) -> None:
+        """Apply a batch of claim/pHash items in one transaction.
+
+        Each claim runs inside its own SAVEPOINT so a failing claim is rolled
+        back on its own without discarding the rest of the batch.  Claim
+        futures are only resolved after the whole batch has been committed, so
+        a worker never proceeds with an asset id that is not yet durable in
+        the database.  Because there is a single writer thread, the hash
+        lookup + upsert of every claim remains atomic with respect to all other
+        claims (later claims in the batch see earlier ones on this connection).
+        """
+        claim_results: list[tuple[Future, tuple[int, bool] | BaseException]] = []
+        n_claims = 0
+        n_phash = 0
+        writer_start = time.perf_counter()
         try:
-            writer_start = time.perf_counter()
-            asset_id, is_new = _upsert_asset_claim_no_commit(wconn, item["asset"])  # type: ignore[index]
-            for relpath_for_album in item["album_relpaths"]:  # type: ignore[index]
-                parts = Path(relpath_for_album).parts
-                if len(parts) > 1:
-                    album_name = parts[0]
-                    album_id = _upsert_album_no_commit(wconn, album_name, album_name)
-                    _link_asset_to_album_no_commit(wconn, album_id, asset_id)
-            _diag_add("db_claim_writer_seconds", time.perf_counter() - writer_start)
+            wconn.execute("BEGIN")
+            for item in batch:
+                kind = item["kind"]  # type: ignore[index]
+                if kind == "claim":
+                    n_claims += 1
+                    wconn.execute("SAVEPOINT claim")
+                    try:
+                        result = _apply_claim_item(wconn, item)
+                    except Exception as exc:  # noqa: BLE001
+                        wconn.execute("ROLLBACK TO SAVEPOINT claim")
+                        wconn.execute("RELEASE SAVEPOINT claim")
+                        claim_results.append((item["future"], exc))  # type: ignore[index]
+                    else:
+                        wconn.execute("RELEASE SAVEPOINT claim")
+                        claim_results.append((item["future"], result))  # type: ignore[index]
+                elif kind == "phash":
+                    n_phash += 1
+                    try:
+                        _upsert_phash_no_commit(
+                            wconn,
+                            item["asset_id"],  # type: ignore[index]
+                            item["dhash_hex"],  # type: ignore[index]
+                        )
+                    except Exception:  # noqa: BLE001
+                        _log.warning("pHash write failed", exc_info=True)
+            write_seconds = time.perf_counter() - writer_start
             commit_start = time.perf_counter()
             wconn.commit()
-            _diag_add("db_claim_commit_seconds", time.perf_counter() - commit_start)
-            _diag_inc("db_claims_committed")
-            future.set_result((asset_id, is_new))
+            commit_seconds = time.perf_counter() - commit_start
         except Exception as exc:  # noqa: BLE001
-            wconn.rollback()
-            future.set_exception(exc)
+            with contextlib.suppress(Exception):
+                wconn.rollback()
+            _log.warning("Index DB writer batch failed", exc_info=True)
+            for item in batch:
+                if item["kind"] == "claim":  # type: ignore[index]
+                    fut = item["future"]  # type: ignore[index]
+                    if not fut.done():
+                        fut.set_exception(exc)
+            return
 
-    def _handle_db_item(wconn: sqlite3.Connection, item: object) -> None:
-        kind = item["kind"]  # type: ignore[index]
-        if kind == "claim":
-            _handle_claim_item(wconn, item)
-        elif kind == "phash":
-            _upsert_phash_no_commit(wconn, item["asset_id"], item["dhash_hex"])  # type: ignore[index]
+        _diag_add("db_claim_writer_seconds", write_seconds)
+        _diag_add("db_claim_commit_seconds", commit_seconds)
+        if n_claims:
+            _diag_inc("db_claims_committed", n_claims)
+        if n_phash:
+            _diag_add("phash_write_seconds", write_seconds + commit_seconds)
+            _diag_inc("phash_commits")
+        for fut, outcome in claim_results:
+            if isinstance(outcome, BaseException):
+                fut.set_exception(outcome)
+            else:
+                fut.set_result(outcome)
 
     def _db_writer() -> None:
         wconn = open_db(db_path)
@@ -888,48 +938,26 @@ def run_index(
                 if item is _db_sentinel:
                     _db_queue.task_done()
                     break
-                if item["kind"] == "claim":  # type: ignore[index]
-                    try:
-                        _handle_claim_item(wconn, item)
-                    except Exception:  # noqa: BLE001
-                        _log.warning("Index DB writer claim failed", exc_info=True)
-                    finally:
-                        _db_queue.task_done()
-                    continue
-
+                # Group whatever is already queued into one transaction.  No
+                # extra waiting: under load the queue refills while we commit,
+                # so batches grow naturally; when idle a claim commits alone.
                 batch = [item]
                 saw_sentinel = False
-                while len(batch) < _phash_write_batch_size:
+                while len(batch) < _db_write_batch_max:
                     try:
-                        next_item = _db_queue.get(timeout=_phash_write_batch_wait)
+                        next_item = _db_queue.get_nowait()
                     except queue.Empty:
                         break
                     if next_item is _db_sentinel:
                         _db_queue.task_done()
                         saw_sentinel = True
                         break
-                    if next_item["kind"] == "claim":  # type: ignore[index]
-                        _handle_claim_item(wconn, next_item)
-                        _db_queue.task_done()
-                        continue
                     batch.append(next_item)
-
                 try:
-                    writer_start = time.perf_counter()
-                    for batch_item in batch:
-                        _handle_db_item(wconn, batch_item)
-                    _diag_add("phash_write_seconds", time.perf_counter() - writer_start)
-                    commit_start = time.perf_counter()
-                    wconn.commit()
-                    _diag_add("phash_write_seconds", time.perf_counter() - commit_start)
-                    _diag_inc("phash_commits")
-                except Exception:  # noqa: BLE001
-                    wconn.rollback()
-                    _log.warning("Index DB writer batch failed", exc_info=True)
+                    _write_db_batch(wconn, batch)
                 finally:
                     for _ in batch:
                         _db_queue.task_done()
-
                 if saw_sentinel:
                     break
         finally:
@@ -970,6 +998,7 @@ def run_index(
             _log.exception("Unexpected error processing asset %r – skipping", relpath)
 
     def _process_one_inner(asset_file: object, relpath: str) -> None:  # noqa: PLR0912,PLR0915
+        nonlocal _last_progress_emit
         # Step 1: Read file bytes + compute sha256 (parallel, no locking)
         sha256: str | None = None
         file_bytes: bytes | None = None
@@ -1042,13 +1071,22 @@ def run_index(
         _diag_inc("assets_new" if is_new else "assets_existing")
         _log.debug("Claimed asset %r → id=%d is_new=%s", relpath, asset_id, is_new)
 
-        # Update progress (guarded by separate lock)
+        # Update progress (guarded by separate lock).  The diagnostics snapshot
+        # and the progress callback are throttled: copying ~70 counters and
+        # notifying the job for every single asset costs more than the UI,
+        # which polls a few times per second, can use.
         with _progress_lock:
             progress.indexed += 1
             _diag_set("assets_indexed", progress.indexed)
-            progress.diagnostics = _diag_snapshot()
-            if on_progress:
-                on_progress(progress)
+            now_perf = time.perf_counter()
+            if (
+                now_perf - _last_progress_emit >= _PROGRESS_EMIT_INTERVAL
+                or progress.indexed >= progress.found
+            ):
+                _last_progress_emit = now_perf
+                progress.diagnostics = _diag_snapshot()
+                if on_progress:
+                    on_progress(progress)
 
         # Step 4: Thumbnail first, then phash + CLIP on the thumbnail image.
         #
