@@ -64,6 +64,8 @@ if len(ids) < n_sample:
 bursts: list[list[int]] = []
 try:
     face_assets = {r[0] for r in conn.execute("SELECT DISTINCT asset_id FROM face_embeddings")}
+    if not face_assets:  # face detection not run yet: consider every asset
+        face_assets = {r[0] for r in conn.execute("SELECT id FROM assets")}
     seq = conn.execute(
         "SELECT id, taken_at FROM assets WHERE taken_at IS NOT NULL ORDER BY taken_at, id"
     ).fetchall()
@@ -82,7 +84,8 @@ try:
 except sqlite3.Error:
     pass
 random.shuffle(bursts)
-bursts = [b[:8] for b in bursts[:12]]
+bursts = bursts[:60]  # analysed below; rows without faces are dropped
+bursts = [b[:8] for b in bursts]
 print("bursts:", len(bursts))
 burst_ids = [a for b in bursts for a in b]
 
@@ -198,6 +201,7 @@ random.shuffle(subj)
 sheet("random_faces", subj[:48])
 
 # Burst sheets: whole thumbnails in a row, annotated, best (face_quality) marked.
+bursts = [b for b in bursts if sum(bool(images[a][1]) for a in b if a in images) >= 2][:12]
 for bi, b in enumerate(bursts):
     tiles = []
     best = max((images[a][2].get("face_quality", -1), a) for a in b if a in images)[1]
