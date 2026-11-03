@@ -18,6 +18,7 @@ from takeout_rater.scoring.scorers.base import BaseScorer, ScorerSpec
 from takeout_rater.scoring.scorers.brisque import BRISQUEScorer
 from takeout_rater.scoring.scorers.cafe_style import CafeStyleScorer
 from takeout_rater.scoring.scorers.clip_iqa import CLIPIQAScorer
+from takeout_rater.scoring.scorers.face_quality import FaceQualityScorer
 from takeout_rater.scoring.scorers.laion import AestheticScorer
 from takeout_rater.scoring.scorers.nima import NIMAScorer
 from takeout_rater.scoring.scorers.nsfw import NSFWScorer
@@ -34,6 +35,7 @@ _SCORER_CLASSES: list[type[BaseScorer]] = [
     NIMAScorer,
     PyIQAScorer,
     CafeStyleScorer,
+    FaceQualityScorer,
 ]
 
 
