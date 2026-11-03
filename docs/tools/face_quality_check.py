@@ -147,7 +147,8 @@ summary = dict(
 print(summary)
 (out / "summary.json").write_text(json.dumps(summary, indent=2))
 with open(out / "faces.csv", "w", newline="") as fh:
-    w = csv.DictWriter(fh, fieldnames=list(records[0]))
+    face_fields = list(records[0]) if records else ["asset_id", "face"]
+    w = csv.DictWriter(fh, fieldnames=face_fields)
     w.writeheader()
     w.writerows(records)
 keys = sorted({k for r in photo_rows for k in r})
