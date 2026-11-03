@@ -27,10 +27,14 @@ FER+ expression model into a handful of 0–1 *face quality* dimensions:
     penalty for a low detection score, which is what partly hidden faces
     (hands, hair, another head) typically produce.
 
-Known limits, checked on a real library: eyes looking down (phone, mirror
-selfie) narrow the lid gap and rate as half-open; eyes behind sunglasses are
-not seen and count as open; masks are not detected as such; statues,
-paintings and posters are rated like faces.
+Known limits, checked on ~600 photos of a real library (2026-11): eyes
+looking down (phone, mirror selfie) narrow the lid gap and rate as closed or
+half-open; an occasional squeezed-shut laugh is missed; eyes behind
+sunglasses count as open; masks are not detected as such; cartoons, statues,
+paintings and posters are rated like real faces (pets, food and patterns
+mostly fall below the detection-score cut).  Sharpness is a coarse Laplacian
+measure: its low end catches blur, but some sharp low-texture faces land
+mid-range.
 
 ``quality`` combines them per face; closed eyes multiply the quality down so
 that a blink cannot be made up for by a smile.  :func:`aggregate_faces` then
@@ -91,7 +95,7 @@ PITCH_SIGMA_DEG: float = 25.0
 #: :data:`SHARPNESS_MIN_CROP_PX`) so that upsampling a small, but sharp, face
 #: does not make it look blurry.
 SHARPNESS_CROP_PX: int = 48
-SHARPNESS_MIN_CROP_PX: int = 24
+SHARPNESS_MIN_CROP_PX: int = 32
 #: Raw sharpness values mapped to 0 and 1 (log scale in between).  Sharp faces
 #: measure ≈ 0.6–1.5, a blur of ~5 % of the face width ≈ 0.15, heavy motion or
 #: focus blur ≤ 0.05.
