@@ -111,7 +111,7 @@ _METRICS: tuple[MetricSpec, ...] = (
         display_name="Facing camera",
         description=(
             "How directly the faces point at the camera, from head pose (1 = straight "
-            "on, ~0.4 at a 40° head turn)."
+            "on, ~0.5 at a 40° head turn)."
         ),
     ),
     MetricSpec(
@@ -190,9 +190,9 @@ class FaceQualityScorer(BaseScorer):
                 "InsightFace buffalo_l SCRFD detection + 2d106det landmarks (eye aspect "
                 "ratio) + 1k3d68 (head yaw/pitch); FER+ (emotion-ferplus-8) happiness "
                 "probability for smiles; contrast-normalised Laplacian variance on a "
-                "48 px aligned face crop for sharpness; in-frame landmark/box fraction "
+                "≤48 px aligned face crop for sharpness; in-frame landmark fraction "
                 "and detection score for cut-off/occlusion. Faces < 35 % of the largest "
-                "face's height are ignored. Per photo: worst face for eyes and "
+                "face's height or with detection score < 0.6 are ignored. Per photo: worst face for eyes and "
                 "visibility, mean for the rest."
             ),
             version="1",

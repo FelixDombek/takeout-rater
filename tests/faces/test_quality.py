@@ -71,7 +71,7 @@ def test_facing_camera_score_falls_off_with_yaw() -> None:
     s20 = fq.facing_camera_score(fq.PITCH_OFFSET_DEG, 20.0)
     s60 = fq.facing_camera_score(fq.PITCH_OFFSET_DEG, -60.0)
     assert 0.7 < s20 < 0.9
-    assert s60 < 0.2
+    assert s60 < 0.3
 
 
 def test_smile_score() -> None:
@@ -87,12 +87,28 @@ def test_sharpness_score_mapping() -> None:
 
 
 def test_in_frame_fraction_detects_cut_off_face() -> None:
-    lm = _landmarks(6.0, centre=(100.0, 100.0))
-    assert fq.in_frame_fraction((60, 60, 140, 140), lm, 400, 400) == pytest.approx(1.0)
-    # Same face with the frame edge running through its middle.
-    shifted = lm - np.array([100.0, 0.0])
-    frac = fq.in_frame_fraction((-40, 60, 40, 140), shifted, 400, 400)
+    xs, ys = np.meshgrid(np.linspace(60, 140, 11), np.linspace(70, 140, 10))
+    grid = np.column_stack([xs.ravel(), ys.ravel()])[:106]
+    grid = np.vstack([grid, grid[: 106 - len(grid)]])
+    assert fq.in_frame_fraction((60, 40, 140, 140), grid, 400, 400) == pytest.approx(1.0)
+    # Forehead/hair past the top edge, but brows-to-chin landmarks inside.
+    assert fq.in_frame_fraction((60, -30, 140, 140), grid, 400, 400) == pytest.approx(1.0)
+    # The frame edge running through the middle of the face.
+    shifted = grid - np.array([100.0, 0.0])
+    frac = fq.in_frame_fraction((-40, 40, 40, 140), shifted, 400, 400)
     assert 0.3 < frac < 0.7
+
+
+def test_laughing_squint_is_not_a_blink() -> None:
+    ear = 0.13
+    assert fq.eye_open_score(ear, smile=1.0) > fq.eye_open_score(ear, smile=0.0)
+    assert fq.eye_open_score(0.06, smile=1.0) == 0.0
+
+
+def test_low_confidence_detections_are_not_subjects() -> None:
+    real = _face()
+    junk = fq.FaceQuality(**{**real.__dict__, "det_score": 0.5})
+    assert fq.select_subject_faces([real, junk]) == [real]
 
 
 def test_visibility_score() -> None:

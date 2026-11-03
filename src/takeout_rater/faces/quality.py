@@ -19,13 +19,18 @@ FER+ expression model into a handful of 0–1 *face quality* dimensions:
     the camera, falling off smoothly as the head turns away.  This is head
     orientation, not eye gaze.
 ``sharpness``
-    Contrast-normalised Laplacian variance of the face, measured on an
-    aligned 48×48 crop so that the value does not depend on how large the face
-    is in the frame.
+    Contrast-normalised Laplacian variance of the face on an aligned crop of
+    at most 48×48 px (smaller faces at about their own size), so the value
+    depends little on how large the face is in the frame.
 ``visible``
-    How much of the face is inside the frame (landmarks and bounding box), with
-    a mild penalty for a low detection score, which is what partly hidden
-    faces (hands, hair, another head) typically produce.
+    How much of the face (brows to chin) is inside the frame, with a mild
+    penalty for a low detection score, which is what partly hidden faces
+    (hands, hair, another head) typically produce.
+
+Known limits, checked on a real library: eyes looking down (phone, mirror
+selfie) narrow the lid gap and rate as half-open; eyes behind sunglasses are
+not seen and count as open; masks are not detected as such; statues,
+paintings and posters are rated like faces.
 
 ``quality`` combines them per face; closed eyes multiply the quality down so
 that a blink cannot be made up for by a smile.  :func:`aggregate_faces` then
@@ -59,12 +64,16 @@ EYE_106_IMAGE_RIGHT: tuple[tuple[int, int], ...] = ((95, 90), (94, 87), (96, 91)
 # Calibration constants
 # ---------------------------------------------------------------------------
 
-#: EAR at or below which an eye counts as fully closed.  Closed eyes measure
-#: ≈ 0.06–0.15; open eyes ≈ 0.20–0.35 (5th percentile of open, smiling
-#: CelebA faces ≈ 0.20).
-EAR_CLOSED: float = 0.12
+#: EAR at or below which an eye counts as fully closed.  Blinks measure
+#: ≈ 0.06–0.10; open eyes ≈ 0.20–0.35 (5th percentile of open, smiling
+#: CelebA faces ≈ 0.20).  Eyes looking down (phone, mirror selfie) narrow the
+#: lid gap to ≈ 0.13–0.16, so the ramp is kept low to rate those half-open
+#: rather than closed.
+EAR_CLOSED: float = 0.10
 #: EAR at or above which an eye counts as fully open.
-EAR_OPEN: float = 0.20
+EAR_OPEN: float = 0.18
+#: A broad smile squints the eyes; at smile = 1 both thresholds drop by this.
+EAR_SMILE_RELIEF: float = 0.03
 
 #: Yaw beyond which only the eye nearer to the camera is used.
 YAW_ONE_EYE_DEG: float = 40.0
@@ -72,21 +81,25 @@ YAW_ONE_EYE_DEG: float = 40.0
 #: InsightFace's 3D-landmark pitch reads a few degrees negative for faces that
 #: look straight into the camera; this offset re-centres it.
 PITCH_OFFSET_DEG: float = -4.0
-#: Gaussian fall-off widths of the facing-camera score.  Yaw 20° → ≈ 0.8,
-#: 40° → ≈ 0.4, 60° → ≈ 0.14.
-YAW_SIGMA_DEG: float = 30.0
+#: Gaussian fall-off widths of the facing-camera score.  Yaw 20° → ≈ 0.85,
+#: 40° → ≈ 0.5, 60° → ≈ 0.23.
+YAW_SIGMA_DEG: float = 35.0
 PITCH_SIGMA_DEG: float = 25.0
 
-#: Side of the aligned crop the sharpness is measured on.
+#: Largest side of the aligned crop the sharpness is measured on.  Smaller
+#: faces use a crop of about their own size (down to
+#: :data:`SHARPNESS_MIN_CROP_PX`) so that upsampling a small, but sharp, face
+#: does not make it look blurry.
 SHARPNESS_CROP_PX: int = 48
+SHARPNESS_MIN_CROP_PX: int = 24
 #: Raw sharpness values mapped to 0 and 1 (log scale in between).  Sharp faces
 #: measure ≈ 0.6–1.5, a blur of ~5 % of the face width ≈ 0.15, heavy motion or
 #: focus blur ≤ 0.05.
 SHARPNESS_RAW_LOW: float = 0.05
-SHARPNESS_RAW_HIGH: float = 0.9
+SHARPNESS_RAW_HIGH: float = 0.8
 
-#: In-frame fraction mapped to 0 (and 1 at 1.0).  Faces cut in half at the
-#: frame edge measure ≈ 0.55–0.6.
+#: In-frame fraction (share of the 106 landmarks inside the image) mapped to
+#: 0 (and 1 at 1.0).  Faces cut in half at the frame edge measure ≈ 0.6.
 IN_FRAME_LOW: float = 0.6
 #: Detection scores mapped to the occlusion factor 0 and 1.  Clear faces score
 #: ≈ 0.8–0.9; partly hidden ones drop towards 0.6.
@@ -99,13 +112,17 @@ SUBJECT_RELATIVE_SIZE: float = 0.35
 #: Faces smaller than this (in pixels of the analysed image) are ignored —
 #: landmarks on them are too unreliable to rate.
 MIN_FACE_PX: float = 20.0
+#: Faces detected with less confidence are ignored.  Real faces score
+#: ≈ 0.75–0.9; pets, food, flowers and patterns mistaken for faces mostly
+#: score lower.
+MIN_SUBJECT_DET_SCORE: float = 0.6
 
 #: Weights of the dimensions that make up the base of a face's quality.
 QUALITY_WEIGHTS: dict[str, float] = {
     "facing_camera": 0.35,
     "sharpness": 0.30,
     "visible": 0.20,
-    "smile": 0.15,
+    "smile": 0.10,
 }
 #: Quality multiplier for fully closed eyes (fully open = 1).
 CLOSED_EYES_FACTOR: float = 0.3
@@ -141,12 +158,19 @@ def eye_aspect_ratio(landmarks_106: np.ndarray, eye: Sequence[tuple[int, int]]) 
     return float(np.mean(vertical)) / horizontal
 
 
-def eye_open_score(ear: float) -> float:
-    """Map an eye aspect ratio to 0 (closed) … 1 (open)."""
-    return _ramp(ear, EAR_CLOSED, EAR_OPEN)
+def eye_open_score(ear: float, smile: float = 0.0) -> float:
+    """Map an eye aspect ratio to 0 (closed) … 1 (open).
+
+    A broad *smile* lowers the thresholds by up to :data:`EAR_SMILE_RELIEF`,
+    because laughing narrows the eyes without closing them.
+    """
+    relief = EAR_SMILE_RELIEF * _clip01(smile)
+    return _ramp(ear, EAR_CLOSED - relief, EAR_OPEN - relief)
 
 
-def eyes_open_score(landmarks_106: np.ndarray, yaw_deg: float = 0.0) -> tuple[float, float, float]:
+def eyes_open_score(
+    landmarks_106: np.ndarray, yaw_deg: float = 0.0, smile: float = 0.0
+) -> tuple[float, float, float]:
     """Return ``(score, ear_image_left, ear_image_right)`` for a face.
 
     The score is the *worse* eye, so a wink or a half blink still counts.
@@ -156,7 +180,7 @@ def eyes_open_score(landmarks_106: np.ndarray, yaw_deg: float = 0.0) -> tuple[fl
     """
     ear_l = eye_aspect_ratio(landmarks_106, EYE_106_IMAGE_LEFT)
     ear_r = eye_aspect_ratio(landmarks_106, EYE_106_IMAGE_RIGHT)
-    s_l, s_r = eye_open_score(ear_l), eye_open_score(ear_r)
+    s_l, s_r = eye_open_score(ear_l, smile), eye_open_score(ear_r, smile)
     score = max(s_l, s_r) if abs(yaw_deg) > YAW_ONE_EYE_DEG else min(s_l, s_r)
     return score, ear_l, ear_r
 
@@ -186,8 +210,12 @@ def sharpness_raw(image_bgr: np.ndarray, kps: np.ndarray) -> float:
     import cv2
     from insightface.utils import face_align
 
-    size = SHARPNESS_CROP_PX
-    matrix = face_align.estimate_norm(np.asarray(kps, dtype=np.float32), image_size=112)
+    kps_arr = np.asarray(kps, dtype=np.float32)
+    eye_dist = float(np.linalg.norm(kps_arr[1] - kps_arr[0]))
+    # The 112 px ArcFace template has ~38 px between the eyes, ~0.75 of a face.
+    native = eye_dist / 38.0 * 112.0 * 0.75
+    size = int(np.clip(round(native), SHARPNESS_MIN_CROP_PX, SHARPNESS_CROP_PX))
+    matrix = face_align.estimate_norm(kps_arr, image_size=112)
     matrix = matrix * (size / 112.0)
     crop = cv2.warpAffine(image_bgr, matrix, (size, size), flags=cv2.INTER_AREA)
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -213,9 +241,11 @@ def in_frame_fraction(
 ) -> float:
     """Return the fraction of the face inside the image.
 
-    The minimum of the bounding-box area inside the frame and the share of
-    106-point landmarks inside the frame.  The detector extrapolates boxes and
-    landmarks past the image edge for faces that are cut off.
+    The share of 106-point landmarks inside the frame; the detector
+    extrapolates landmarks past the image edge for faces that are cut off.
+    The landmarks span brows to chin, so a close-up whose forehead or hair
+    touches the edge still counts as fully in frame.  Without landmarks the
+    bounding-box area inside the frame is used.
     """
     x1, y1, x2, y2 = (float(v) for v in bbox)
     area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
@@ -235,7 +265,7 @@ def in_frame_fraction(
             & (pts[:, 1] <= height - 1)
         )
     )
-    return _clip01(min(box_frac, lm_frac))
+    return _clip01(lm_frac)
 
 
 def visibility_score(in_frame: float, det_score: float) -> float:
@@ -322,8 +352,8 @@ def build_face_quality(
         width, height: Image size in pixels.
     """
     pitch, yaw = (float(pose[0]), float(pose[1])) if pose is not None else (PITCH_OFFSET_DEG, 0.0)
-    eyes, ear_l, ear_r = eyes_open_score(landmarks_106, yaw)
     smile = smile_score(expression_probs)
+    eyes, ear_l, ear_r = eyes_open_score(landmarks_106, yaw, smile)
     facing = facing_camera_score(pitch, yaw)
     sharp = sharpness_score(sharpness_raw_value)
     frame = in_frame_fraction(bbox, landmarks_106, width, height)
@@ -349,10 +379,11 @@ def build_face_quality(
 def select_subject_faces(faces: Sequence[FaceQuality]) -> list[FaceQuality]:
     """Drop tiny and background faces, keeping the photo's subjects.
 
-    A face is a subject when it is at least :data:`MIN_FACE_PX` tall and at
-    least :data:`SUBJECT_RELATIVE_SIZE` of the largest face's height.
+    A face is a subject when it is at least :data:`MIN_FACE_PX` tall, was
+    detected with at least :data:`MIN_SUBJECT_DET_SCORE` confidence and is at
+    least :data:`SUBJECT_RELATIVE_SIZE` of the largest such face's height.
     """
-    sized = [f for f in faces if f.height >= MIN_FACE_PX]
+    sized = [f for f in faces if f.height >= MIN_FACE_PX and f.det_score >= MIN_SUBJECT_DET_SCORE]
     if not sized:
         return []
     largest = max(f.height for f in sized)
