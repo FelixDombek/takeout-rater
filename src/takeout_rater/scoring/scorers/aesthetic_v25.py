@@ -37,7 +37,6 @@ Performance notes (see the 2026-11 performance audit):
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -142,8 +141,15 @@ def _load_model() -> tuple[Any, Any, Any]:
     import torch
     from aesthetic_predictor_v2_5 import AestheticPredictorV2_5Model
     from aesthetic_predictor_v2_5.siglip_v2_5 import URL as HEAD_URL
+    from transformers import SiglipVisionConfig
 
-    model = AestheticPredictorV2_5Model.from_pretrained(_ENCODER_MODEL, low_cpu_mem_usage=True)
+    # The checkpoint is a full SigLIP (text + vision) model.  transformers 5
+    # no longer extracts the vision part on its own and fails with
+    # "'SiglipConfig' object has no attribute 'hidden_size'", so pass it.
+    vision_config = SiglipVisionConfig.from_pretrained(_ENCODER_MODEL)
+    model = AestheticPredictorV2_5Model.from_pretrained(
+        _ENCODER_MODEL, config=vision_config, low_cpu_mem_usage=True
+    )
     head_state = torch.hub.load_state_dict_from_url(HEAD_URL, map_location="cpu")
     model.layers.load_state_dict(head_state)
 
@@ -254,8 +260,12 @@ class AestheticV25Scorer(BaseScorer):
                 torch.cuda.empty_cache()
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup
-        with contextlib.suppress(Exception):
+        # Plain try/except: at interpreter shutdown module globals such as
+        # ``contextlib`` may already be None.
+        try:  # noqa: SIM105
             self.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------
     # Scoring
