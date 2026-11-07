@@ -48,6 +48,7 @@ takeout-rater/
 | `scoring/scorers/nima.py` | NIMA aesthetic/technical scorer (MobileNet-V2, 1–10) |
 | `scoring/scorers/pyiqa_adapter.py` | PyIQA scorer: MUSIQ, TOPIQ, NIQE (0–1 normalised) |
 | `scoring/scorers/cafe_style.py` | CafeAI style classifier: photo/anime/illustration/3D/CGI probabilities (0–1 each) |
+| `scoring/scorers/face_quality.py` | Face quality scorer: eyes open, smile, facing camera, face sharpness, face fully visible, worst face (InsightFace landmarks + FER+, 0–1) |
 | **Indexing** | |
 | `indexing/scanner.py` | `scan_takeout()` — walk Takeout tree, enumerate `AssetFile` objects |
 | `indexing/sidecar.py` | `parse_sidecar()` — parse `*.supplemental-metadata.json` → `SidecarData` |

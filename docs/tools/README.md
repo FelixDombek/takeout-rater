@@ -1,5 +1,19 @@
 # Tools
 
+## Face quality check
+
+`face_quality_check.py` runs the `face_quality` scorer on a sample of the
+current library's thumbnails (faces stratified by count, plus a few bursts of
+photos taken within 3 s) without writing to the database.  It writes per-face
+and per-photo CSVs, timing, contact sheets of face crops sorted by each
+dimension (`eyes_lowest.jpg`, `smile_highest.jpg`, …) and annotated burst rows
+to the output folder — handy for checking or recalibrating the thresholds in
+`takeout_rater/faces/quality.py`.
+
+```bash
+python docs/tools/face_quality_check.py face-check-out 400
+```
+
 ## Infer Takeout sidecar schema
 
 `infer_takeout_sidecar_schema.py` walks a Google Photos Takeout folder, reads
