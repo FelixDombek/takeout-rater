@@ -22,6 +22,7 @@ POST /api/jobs/cluster/start     – start clustering
 POST /api/jobs/export/start      – start best-of-cluster export
 POST /api/jobs/rescan/start      – start library rescan (update indexer_version)
 POST /api/jobs/trips/start       – (re-)detect trips and events
+POST /api/jobs/smart_albums/start – (re-)suggest smart albums from CLIP clusters
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from takeout_rater.api.smart_albums import SmartAlbumsBody
 from takeout_rater.api.trips import TripDetectBody
 
 router = APIRouter()
@@ -59,6 +61,7 @@ _JOB_TYPES = (
     "geocode",
     "ocr",
     "trips",
+    "smart_albums",
 )
 
 
@@ -2314,5 +2317,80 @@ def cancel_trips_job(request: Request) -> JSONResponse:
     p = _get_jobs(request.app).get("trips")
     if p is None or not p.running:
         raise HTTPException(status_code=404, detail="No trip detection job is running.")
+    p.cancel_event.set()
+    return JSONResponse({"status": "cancelling"})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/smart_albums/start  ·  POST /api/jobs/smart_albums/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/jobs/smart_albums/start")
+def start_smart_albums_job(request: Request, body: SmartAlbumsBody | None = None) -> JSONResponse:
+    """Cluster CLIP embeddings into named album suggestions in the background.
+
+    Progress is reported under job type ``"smart_albums"``.  Suggestions are
+    only replaced at the very end, so cancelling keeps the previous ones; kept
+    albums are never touched.  Returns ``409`` if the job is already running.
+    """
+    from takeout_rater.smart_albums.suggest import SuggestParams
+
+    _require_db(request)
+    jobs = _get_jobs(request.app)
+    existing = jobs.get("smart_albums")
+    if existing is not None and existing.running:
+        raise HTTPException(status_code=409, detail="Album suggestion is already running.")
+
+    params = SuggestParams(**(body or SmartAlbumsBody()).model_dump())
+    progress = JobProgress(job_type="smart_albums", running=True, message="Starting…")
+    jobs["smart_albums"] = progress
+    encoder = getattr(request.app.state, "smart_albums_text_encoder", None)  # tests
+
+    def _worker() -> None:
+        from takeout_rater.smart_albums.service import SuggestionCancelled, run_suggestions
+
+        worker_conn = _open_worker_conn(request.app)
+        try:
+
+            def _cb(message: str, step: int, n_steps: int) -> None:
+                progress.message = message
+                progress.processed = step
+                progress.total = n_steps
+
+            summary = run_suggestions(
+                worker_conn,
+                params,
+                encode_texts=encoder,
+                on_progress=_cb,
+                should_cancel=progress.cancel_event.is_set,
+            )
+            progress.diagnostics = summary
+            progress.processed = progress.total
+            progress.message = (
+                f"Suggested {summary['n_albums']} album(s) from "
+                f"{summary['n_photos']:,} photos in {summary['elapsed_s']} s."
+            )
+        except SuggestionCancelled:
+            progress.message = "Cancelled — previous suggestions kept."
+        except Exception as exc:  # noqa: BLE001
+            _log.exception("Smart album suggestion failed")
+            progress.error = str(exc)
+            progress.message = f"Error: {exc}"
+        finally:
+            progress.running = False
+            progress.done = True
+            worker_conn.close()
+
+    threading.Thread(target=_worker, daemon=True, name="takeout-rater-smart-albums").start()
+    return JSONResponse({"status": "started"})
+
+
+@router.post("/api/jobs/smart_albums/cancel")
+def cancel_smart_albums_job(request: Request) -> JSONResponse:
+    """Request cancellation of a running smart album suggestion job."""
+    p = _get_jobs(request.app).get("smart_albums")
+    if p is None or not p.running:
+        raise HTTPException(status_code=404, detail="No album suggestion job is running.")
     p.cancel_event.set()
     return JSONResponse({"status": "cancelling"})

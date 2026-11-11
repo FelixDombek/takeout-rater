@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+
+{% block title %}{{ album.name }} – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  main { max-width: none; }
+  .back-link { margin-bottom: 1rem; display: inline-block; }
+  .sa-header { display: flex; gap: 1.25rem; align-items: flex-start; margin-bottom: 1.25rem; flex-wrap: wrap; }
+  .sa-cover { width: 220px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; background: #e0e0e0; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .sa-info h1 { font-size: 1.35rem; margin: 0 0 0.15rem; display: flex; align-items: center; gap: 0.5rem; }
+  .sa-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0.4rem 0 0.75rem; }
+  .chip { display: inline-block; padding: 0.1rem 0.55rem; background: #e8f0fe; color: #1a5cdb; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+  .chip.grey { background: #eee; color: #555; }
+  .chip.term { background: #f3eefe; color: #5b2bbf; }
+  .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .auto-name { font-size: 0.78rem; color: #777; }
+  .terms-label { font-size: 0.78rem; color: #666; margin-right: 0.2rem; }
+  #rename-input { font-size: 1.1rem; padding: 0.15rem 0.4rem; min-width: 18rem; }
+
+  .grid-toolbar { display: flex; align-items: center; gap: 0.5rem; margin: 1.25rem 0 0.5rem; }
+  .grid-toolbar h2 { font-size: 1rem; margin: 0 auto 0 0; }
+  .grid-toolbar a, .grid-toolbar span { font-size: 0.82rem; padding: 0.15rem 0.55rem; border-radius: 4px; text-decoration: none; }
+  .grid-toolbar a { background: #f1f4fb; color: #1a5cdb; }
+  .grid-toolbar span { background: #1a5cdb; color: #fff; }
+
+  .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+  .card { background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.12); cursor: pointer; }
+  .card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .card--active { box-shadow: 0 0 0 2px #1a5cdb, 0 2px 6px rgba(0,0,0,.15) !important; }
+  .card a { display: block; color: inherit; text-decoration: none; }
+  .card-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: #e0e0e0; pointer-events: none; }
+  .card-thumb-placeholder { width: 100%; aspect-ratio: 1; background: #ddd; display: flex; align-items: center; justify-content: center; color: #999; font-size: 2rem; pointer-events: none; }
+  .card-body { padding: 0.3rem 0.45rem; font-size: 0.72rem; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; display: flex; justify-content: space-between; gap: 0.3rem; }
+  .card.is-cover { box-shadow: 0 0 0 2px #f0a500; }
+
+  .pagination { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1.5rem; flex-wrap: wrap; }
+  .pagination .btn { min-width: 2.2rem; text-align: center; }
+  .pagination .btn.active { background: #1a5cdb; color: #fff; border-color: #1a5cdb; }
+  .pagination-info { font-size: 0.82rem; color: #666; }
+</style>
+<link rel="stylesheet" href="/static/lightbox.css">
+{% endblock %}
+
+{% block content %}
+<a class="btn back-link" href="/smart-albums">← All smart albums</a>
+
+<div class="sa-header">
+  {% if album.cover_asset_id is not none %}
+  <img class="sa-cover" src="/thumbs/{{ album.cover_asset_id }}" alt="Cover photo">
+  {% endif %}
+  <div class="sa-info">
+    <h1>
+      <span>✨</span>
+      <span id="album-name">{{ album.name }}</span>
+      <input id="rename-input" type="text" value="{{ album.name }}" maxlength="200" style="display:none"
+             aria-label="Name">
+    </h1>
+    {% if album.custom_name %}<div class="auto-name">Suggested name: {{ album.auto_name }}</div>{% endif %}
+    <div class="sa-meta">
+      <span class="chip">{{ total }} photo{{ 's' if total != 1 else '' }}</span>
+      {% if album.cohesion is not none %}
+      <span class="chip grey" title="Mean similarity of the photos to the album centre">{{ (album.cohesion * 100) | round | int }}% alike</span>
+      {% endif %}
+      <span class="chip grey">{{ "★ Kept" if album.kept else "Suggestion" }}</span>
+    </div>
+    {% if album.terms %}
+    <div class="sa-meta">
+      <span class="terms-label">Matched words:</span>
+      {% for t in album.terms %}<a class="chip term" href="/search?q={{ t.term | urlencode }}" title="Search for “{{ t.term }}”">{{ t.term }}</a>{% endfor %}
+    </div>
+    {% endif %}
+    <div class="actions">
+      {% if album.kept %}
+      <button class="btn" id="keep-btn" type="button" data-kept="0">Un-keep</button>
+      {% else %}
+      <button class="btn btn-primary" id="keep-btn" type="button" data-kept="1">★ Keep album</button>
+      {% endif %}
+      <button class="btn" id="rename-btn" type="button">✏ Rename</button>
+      {% if album.custom_name %}<button class="btn" id="reset-name-btn" type="button">↺ Use suggested name</button>{% endif %}
+      <button class="btn" id="delete-btn" type="button">{{ "Delete album" if album.kept else "Dismiss" }}</button>
+    </div>
+  </div>
+</div>
+
+<div class="grid-toolbar">
+  <h2>Photos</h2>
+  {% for value, label in [("typical", "Most typical first"), ("date", "By date")] %}
+  {% if sort == value %}<span>{{ label }}</span>
+  {% else %}<a href="/smart-albums/{{ album.id }}?sort={{ value }}">{{ label }}</a>{% endif %}
+  {% endfor %}
+</div>
+<div class="photo-grid" id="photo-grid">
+  {% for asset in assets %}
+  <div class="card{% if asset.id == album.cover_asset_id %} is-cover{% endif %}"
+       data-lb-id="{{ asset.id }}"
+       data-lb-src="/image/{{ asset.id }}"
+       data-lb-title="{{ asset.title or asset.filename }}">
+    <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
+      <img class="card-thumb" src="/thumbs/{{ asset.id }}" alt="{{ asset.title or asset.filename }}" loading="lazy"
+           onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+      <div class="card-thumb-placeholder" style="display:none">🖼</div>
+      <div class="card-body">
+        <span>{% if asset.favorited %}⭐{% endif %}{{ asset.taken_at | timestamp_fmt }}</span>
+        <span title="Similarity to the album centre">{{ (asset.similarity * 100) | round | int }}%</span>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}<a class="btn" href="/smart-albums/{{ album.id }}?sort={{ sort }}&page={{ page - 1 }}">‹ Prev</a>{% endif %}
+  {% for p in range(1, total_pages + 1) %}
+  {% if p == page %}
+  <span class="btn active">{{ p }}</span>
+  {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+  <a class="btn" href="/smart-albums/{{ album.id }}?sort={{ sort }}&page={{ p }}">{{ p }}</a>
+  {% elif p == page - 3 or p == page + 3 %}
+  <span class="pagination-info">…</span>
+  {% endif %}
+  {% endfor %}
+  {% if page < total_pages %}<a class="btn" href="/smart-albums/{{ album.id }}?sort={{ sort }}&page={{ page + 1 }}">Next ›</a>{% endif %}
+  <span class="pagination-info">Page {{ page }} of {{ total_pages }}</span>
+</div>
+{% endif %}
+
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" aria-hidden="true">
+  <div class="lb-container">
+    <div class="lb-img-col">
+      <button id="lb-close" class="lb-close" aria-label="Close viewer">✕</button>
+      <button id="lb-prev" class="lb-prev" aria-label="Previous image">‹</button>
+      <button id="lb-next" class="lb-next" aria-label="Next image">›</button>
+      <img id="lb-img" src="" alt="" tabindex="0">
+      <div class="lb-footer">
+        <span id="lb-title"></span>
+        <span id="lb-counter"></span>
+        <a id="lb-link" href="" class="btn lb-detail-btn">Open page →</a>
+      </div>
+    </div>
+    <div class="lb-details-col" id="lb-details">
+      <div class="lb-details-loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/lightbox.js"></script>
+<script>
+SharedLightbox.init({
+  gridEl: document.getElementById('photo-grid'),
+  cardSelector: '.card[data-lb-id]',
+});
+
+(function () {
+  const albumId = {{ album.id }};
+  const nameEl = document.getElementById('album-name');
+  const input = document.getElementById('rename-input');
+  const btn = document.getElementById('rename-btn');
+  const resetBtn = document.getElementById('reset-name-btn');
+  const keepBtn = document.getElementById('keep-btn');
+  const deleteBtn = document.getElementById('delete-btn');
+
+  function post(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    }).then(function (r) {
+      if (!r.ok) throw new Error(r.statusText);
+      location.reload();
+    }).catch(function (e) { showError('Update failed: ' + e.message); });
+  }
+
+  function save(name) { return post('/api/smart-albums/' + albumId + '/rename', {name: name}); }
+
+  btn.addEventListener('click', function () {
+    if (input.style.display === 'none') {
+      nameEl.style.display = 'none';
+      input.style.display = '';
+      input.focus();
+      input.select();
+      btn.textContent = '✔ Save';
+    } else {
+      save(input.value);
+    }
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') save(input.value);
+    if (e.key === 'Escape') location.reload();
+  });
+  if (resetBtn) resetBtn.addEventListener('click', function () { save(null); });
+  keepBtn.addEventListener('click', function () {
+    post('/api/smart-albums/' + albumId + '/keep', {kept: keepBtn.dataset.kept === '1'});
+  });
+  deleteBtn.addEventListener('click', function () {
+    fetch('/api/smart-albums/' + albumId, {method: 'DELETE'}).then(function (r) {
+      if (!r.ok) throw new Error(r.statusText);
+      location.href = '/smart-albums';
+    }).catch(function (e) { showError('Could not remove album: ' + e.message); });
+  });
+})();
+</script>
+{% endblock %}

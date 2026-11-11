@@ -12,6 +12,10 @@
     flex-wrap: wrap;
   }
   .toolbar h1 { font-size: 1.25rem; margin: 0; }
+  .album-tabs { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
+  .album-tabs a, .album-tabs span { padding: 0.2rem 0.7rem; border-radius: 4px; font-size: 0.85rem; text-decoration: none; }
+  .album-tabs a { color: #1a5cdb; background: #f1f4fb; }
+  .album-tabs span { background: #1a5cdb; color: #fff; font-weight: 600; }
   .album-count-badge {
     display: inline-block;
     padding: 0.2rem 0.6rem;
@@ -90,6 +94,7 @@
 {% block content %}
 <div class="toolbar">
   <h1>🗂 Albums</h1>
+  <div class="album-tabs"><span>Folders</span><a href="/smart-albums">✨ Smart albums</a></div>
   {% if albums %}
   <span class="album-count-badge">{{ albums | length }} album{{ 's' if albums | length != 1 else '' }}</span>
   {% endif %}

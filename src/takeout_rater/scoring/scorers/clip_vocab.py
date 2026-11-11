@@ -413,6 +413,13 @@ CLIP_VOCAB_TERMS: list[str] = (
     + _WEATHER_TIME
 )
 
+# Terms that say *what* a photo shows (place, thing, activity, genre) rather
+# than how it looks (style, mood, colour, light, weather).  Smart album names
+# lead with one of these so albums read "Beach · Sunset", not "Moody · Grey".
+CLIP_VOCAB_SUBJECT_TERMS: frozenset[str] = frozenset(
+    _SCENES + _OBJECTS + _ACTIVITIES + _PHOTOGRAPHY_SUBJECTS
+) - {"abstract"}  # also listed as a style
+
 # De-duplicate while preserving order
 _seen: set[str] = set()
 _deduped: list[str] = []

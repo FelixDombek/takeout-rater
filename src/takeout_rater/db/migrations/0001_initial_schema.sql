@@ -250,6 +250,28 @@ CREATE INDEX IF NOT EXISTS idx_events_start_ts        ON events (start_ts);
 CREATE INDEX IF NOT EXISTS idx_events_parent_id       ON events (parent_id);
 CREATE INDEX IF NOT EXISTS idx_event_assets_asset_id  ON event_assets (asset_id);
 
+-- Smart album suggestions (schema v19, see 0013_smart_albums.sql)
+CREATE TABLE IF NOT EXISTS smart_albums (
+    id              INTEGER PRIMARY KEY,
+    auto_name       TEXT NOT NULL,
+    custom_name     TEXT,                       -- user rename; NULL = use auto_name
+    terms           TEXT NOT NULL DEFAULT '[]', -- JSON [[term, score], ...], best first
+    kept            INTEGER NOT NULL DEFAULT 0, -- 1 = saved by the user, survives re-runs
+    n_assets        INTEGER NOT NULL,
+    cohesion        REAL,                       -- mean cosine similarity of members to centroid
+    cover_asset_id  INTEGER REFERENCES assets(id) ON DELETE SET NULL,
+    created_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS smart_album_assets (
+    smart_album_id  INTEGER NOT NULL REFERENCES smart_albums(id) ON DELETE CASCADE,
+    asset_id        INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    similarity      REAL NOT NULL,              -- cosine similarity to the album centroid
+    PRIMARY KEY (smart_album_id, asset_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_smart_album_assets_asset_id ON smart_album_assets (asset_id);
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_assets_taken_at         ON assets (taken_at);
 CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
@@ -283,4 +305,4 @@ CREATE TABLE IF NOT EXISTS asset_places (
 CREATE INDEX IF NOT EXISTS idx_asset_places_place ON asset_places (country_code, admin1, city);
 CREATE INDEX IF NOT EXISTS idx_asset_places_city  ON asset_places (city);
 
-PRAGMA user_version = 18;
+PRAGMA user_version = 19;
