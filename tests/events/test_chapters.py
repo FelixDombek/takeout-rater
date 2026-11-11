@@ -158,10 +158,14 @@ def test_label_chapters_prefers_distinctive_terms() -> None:
         emb[i + 1] = _shot(rng, beach if i < 15 else city, noise=0.2)
     story = ch.split_chapters(photos, emb)
     assert len(story.chapters) == 2
-    labels = ch.label_chapters(story.chapters, vocab, terms, allowed={"beach", "street", "mixed"})
+    allowed = {"beach", "street", "mixed"}
+    labels = ch.label_chapters(story.chapters, vocab, terms, allowed=allowed, second_margin=1.0)
     assert labels[0][0] == "beach"
     assert labels[1][0] == "street"
     assert ch.chapter_title(labels[0]) == "Beach & " + labels[0][1]
+    # With the default margin, a much weaker second term is left out.
+    strict = ch.label_chapters(story.chapters, vocab, terms, allowed=allowed)
+    assert strict[0] == ["beach"]
     assert ch.chapter_title([]) == ""
 
 
@@ -169,7 +173,8 @@ def test_label_terms_are_concrete() -> None:
     terms = ch.label_terms()
     assert "beach" in terms
     assert "abstract" not in terms
-    assert not {"Christmas", "face"} & terms
+    assert not {"Christmas", "face", "tiger", "whale"} & terms
+    assert "cat" in terms
 
 
 def test_min_chapter_size_is_capped_for_long_trips() -> None:

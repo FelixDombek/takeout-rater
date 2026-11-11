@@ -59,9 +59,9 @@ class ChapterParams:
 
 #: Presets offered in the UI.
 SENSITIVITY: dict[str, ChapterParams] = {
-    "fewer": ChapterParams(mad_k=2.5, min_score=0.42),
+    "fewer": ChapterParams(mad_k=2.5, min_score=0.42, photos_per_extra_chapter=45),
     "normal": ChapterParams(),
-    "more": ChapterParams(mad_k=0.75, min_score=0.25),
+    "more": ChapterParams(mad_k=0.75, min_score=0.25, photos_per_extra_chapter=20),
 }
 _MIN_PHOTOS_SCALE = {"fewer": 2.0, "normal": 1.0, "more": 0.5}
 
@@ -285,8 +285,10 @@ def label_terms() -> set[str]:
     """Vocabulary terms that make good chapter titles (places, things, activities)."""
     from takeout_rater.scoring.scorers import clip_vocab as v
 
-    # Generic or holiday terms that CLIP over-uses on ordinary photos (a real
-    # library got "Christmas" on summer trips and "face" on screenshots).
+    # Terms CLIP over-uses on ordinary photos (seen on a real library:
+    # "Christmas" on summer trips, "face" on screenshots, and a pet cat
+    # pulling in tiger, lion, whale and "wildlife").  People words say
+    # nothing about the chapter, so they go too.
     skip = {
         "documentary",
         "abstract",
@@ -296,10 +298,30 @@ def label_terms() -> set[str]:
         "landscape",
         "christmas",
         "halloween",
-        "face",
         "wedding",
         "wedding photography",
         "birthday party",
+        "face",
+        "person",
+        "couple",
+        "baby",
+        "child",
+        "portrait",
+        "selfie",
+        "wildlife",
+        "lion",
+        "tiger",
+        "elephant",
+        "giraffe",
+        "monkey",
+        "shark",
+        "whale",
+        "dolphin",
+        "wolf",
+        "bear",
+        "fox",
+        "jungle",
+        "helicopter",
     }
     terms = v._SCENES + v._ACTIVITIES + v._OBJECTS + v._PHOTOGRAPHY_SUBJECTS
     return {t for t in terms if t.lower() not in skip}
@@ -313,6 +335,7 @@ def label_chapters(
     allowed: set[str] | None = None,
     n_terms: int = 2,
     shortlist: int = 12,
+    second_margin: float = 0.015,
 ) -> list[list[str]]:
     """Name each chapter by the vocabulary terms that set it apart from the rest of the trip.
 
@@ -341,7 +364,15 @@ def label_chapters(
         sims = vocab @ ch.centroid
         top = np.argsort(-sims)[:shortlist]
         ranked = sorted(top, key=lambda i: (-(sims[i] - trip_sims[i]), -sims[i]))
-        out.append([kept_terms[i] for i in ranked[:n_terms]])
+        # Further terms only when CLIP is about as sure of them as of the
+        # first one; a mixed chapter otherwise gets a noisy second word.
+        picked = [ranked[0]]
+        for i in ranked[1:]:
+            if len(picked) >= n_terms:
+                break
+            if sims[i] >= sims[ranked[0]] - second_margin:
+                picked.append(i)
+        out.append([kept_terms[i] for i in picked])
     return out
 
 
