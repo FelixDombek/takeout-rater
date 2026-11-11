@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.shared_decode import open_rgb
 
 if TYPE_CHECKING:
     import torch
@@ -55,6 +56,8 @@ _PREFETCH_BATCHES = 2
 #: 64 is well within the VRAM budget of an 8 GB GPU (CLIP ViT-L/14 uses ~1.8 GB,
 #: leaving ample headroom).  Tune down if you hit VRAM OOM errors.
 _SCORE_BATCH_SIZE = 64
+#: Rows per MLP call when scoring stored embeddings (no images involved).
+_EMBEDDING_BATCH_SIZE = 4096
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +126,8 @@ class AestheticScorer(BaseScorer):
         pip install takeout-rater[aesthetic]
     """
 
+    consumes_clip_embeddings = True
+
     def __init__(self, variant_id: str | None = None, **kwargs: Any) -> None:
         super().__init__(variant_id=variant_id, **kwargs)
         # Lazy-loaded state — populated by _ensure_loaded()
@@ -152,7 +157,7 @@ class AestheticScorer(BaseScorer):
                 "trained on LAION, SAC, and AVA datasets. Scores range from 0 (poor) "
                 "to 10 (excellent)."
             ),
-            version="1",
+            version="2",
             variants=(
                 VariantSpec(
                     variant_id="laion_v2",
@@ -179,6 +184,15 @@ class AestheticScorer(BaseScorer):
             default_variant_id="laion_v2",
             requires_extras=(),
         )
+
+    @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        # CLIP ViT-L/14 in fp32 (shared with CLIP-IQA) plus the tiny MLP.
+        return 1750
+
+    @classmethod
+    def gpu_memory_share_key(cls, variant_id: str | None = None) -> str | None:
+        return "clip-vit-l-14"
 
     @classmethod
     def is_available(cls) -> bool:
@@ -251,11 +265,31 @@ class AestheticScorer(BaseScorer):
         ):
             return  # already loaded
 
+        from takeout_rater.scoring.scorers.clip_backbone import (
+            get_clip_model,
+            preprocess_clip_image_fast,
+        )
+
+        clip_model, _preprocess, _tokenizer, device = get_clip_model()
+        self._ensure_mlp(device)
+        self._clip_model = clip_model
+        # Same resize/crop/normalise as the importer that fills clip_embeddings,
+        # so scores from images and from stored embeddings agree.
+        self._preprocess = preprocess_clip_image_fast
+
+    def _ensure_mlp(self, device: Any = None) -> None:
+        """Load only the aesthetic MLP (enough for stored CLIP embeddings).
+
+        Scoring from ``clip_embeddings`` never needs the ~900 MB CLIP
+        backbone, so it is not loaded here.
+        """
+        if self._mlp is not None and self._device is not None:
+            return
+
         import torch
 
-        from takeout_rater.scoring.scorers.clip_backbone import get_clip_model
-
-        clip_model, preprocess, _tokenizer, device = get_clip_model()
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Download and load the aesthetic MLP weights
         weights_path = self._download_mlp_weights()
@@ -266,8 +300,6 @@ class AestheticScorer(BaseScorer):
         mlp.to(device)
 
         self._device = device
-        self._clip_model = clip_model
-        self._preprocess = preprocess
         self._mlp = mlp
 
     # ------------------------------------------------------------------
@@ -287,13 +319,12 @@ class AestheticScorer(BaseScorer):
             where image loading failed (``OSError``, ``ValueError``).
         """
         import torch
-        from PIL import Image
 
         tensors: list[Any] = []
         failed: set[int] = set()
         for i, path in enumerate(chunk):
             try:
-                img = Image.open(path).convert("RGB")
+                img = open_rgb(path)
                 tensors.append(self._preprocess(img))
             except (OSError, ValueError):
                 failed.add(i)
@@ -306,6 +337,27 @@ class AestheticScorer(BaseScorer):
 
         padded: list[Any] = [t if t is not None else torch.zeros(valid_shape) for t in tensors]
         return torch.stack(padded), failed
+
+    def score_clip_embeddings(self, embeddings: Any) -> list[dict[str, float]]:
+        """Score from stored, L2-normalised CLIP ViT-L/14 embeddings.
+
+        This is the same MLP step as :meth:`score_batch`, minus decoding and
+        the CLIP forward pass: the importer already stored exactly this
+        normalised 768-d vector in ``clip_embeddings``.
+        """
+        if len(embeddings) == 0:
+            return []
+
+        import torch
+
+        self._ensure_mlp()
+        results: list[dict[str, float]] = []
+        for start in range(0, len(embeddings), _EMBEDDING_BATCH_SIZE):
+            chunk = torch.as_tensor(embeddings[start : start + _EMBEDDING_BATCH_SIZE])
+            with torch.no_grad():
+                raw_scores = self._mlp(chunk.float().to(self._device)).reshape(-1).tolist()
+            results.extend({"aesthetic": max(0.0, min(10.0, float(raw)))} for raw in raw_scores)
+        return results
 
     def score_batch(
         self,
@@ -343,7 +395,6 @@ class AestheticScorer(BaseScorer):
             return []
 
         import torch
-        from PIL import Image
 
         self._ensure_loaded()
 
@@ -412,7 +463,7 @@ class AestheticScorer(BaseScorer):
                             results.append({"aesthetic": 0.0})
                             continue
                         try:
-                            img = Image.open(path).convert("RGB")
+                            img = open_rgb(path)
                             tensor = self._preprocess(img).unsqueeze(0).to(self._device)
                             with torch.no_grad():
                                 embedding = self._clip_model.encode_image(tensor)

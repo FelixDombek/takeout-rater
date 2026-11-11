@@ -100,8 +100,9 @@ def preprocess_image(path: Path) -> Any:
     import numpy as np
     from PIL import Image
 
-    with Image.open(path) as img:
-        rgb = img.convert("RGB")
+    from takeout_rater.scoring.shared_decode import open_rgb
+
+    rgb = open_rgb(path)
     resized = rgb.resize((INPUT_SIZE, INPUT_SIZE), resample=Image.Resampling.BICUBIC)
     return np.array(resized, dtype=np.uint8)
 
@@ -224,6 +225,10 @@ class AestheticV25Scorer(BaseScorer):
             default_variant_id="siglip_so400m",
             requires_extras=(),
         )
+
+    @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        return 1700  # SigLIP so400m vision tower + head
 
     @classmethod
     def is_available(cls) -> bool:

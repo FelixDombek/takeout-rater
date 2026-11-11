@@ -169,6 +169,9 @@ def _decode(path: Path) -> Any:
 class FaceQualityScorer(BaseScorer):
     """Per-face eyes / smile / pose / sharpness / visibility, aggregated per photo."""
 
+    #: Decodes with OpenCV (calibrated on cv2 pixels), not the shared Pillow decode.
+    uses_shared_decode = False
+
     def __init__(self, variant_id: str | None = None, **kwargs: Any) -> None:
         super().__init__(variant_id=variant_id, **kwargs)
         self._app: Any = None
@@ -210,6 +213,10 @@ class FaceQualityScorer(BaseScorer):
             default_variant_id="buffalo_l",
             requires_extras=(),
         )
+
+    @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        return 700  # InsightFace buffalo_l + FER+ on ONNX Runtime
 
     @classmethod
     def is_available(cls) -> bool:

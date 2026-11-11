@@ -24,6 +24,7 @@ from takeout_rater.scoring.scorers.base import (
     VariantSpec,
     _run_pipelined_batches,
 )
+from takeout_rater.scoring.shared_decode import open_rgb
 
 # ---------------------------------------------------------------------------
 # Model identifier
@@ -110,6 +111,10 @@ class NSFWScorer(BaseScorer):
         )
 
     @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        return 400  # ViT-base classifier
+
+    @classmethod
     def is_available(cls) -> bool:
         """Return ``True`` when required runtime dependencies are importable."""
         try:
@@ -175,8 +180,6 @@ class NSFWScorer(BaseScorer):
         if not image_paths:
             return []
 
-        from PIL import Image
-
         self._ensure_loaded()
 
         chunks = [
@@ -189,7 +192,7 @@ class NSFWScorer(BaseScorer):
             failed: set[int] = set()
             for i, path in enumerate(chunk):
                 try:
-                    images.append(Image.open(path).convert("RGB"))
+                    images.append(open_rgb(path))
                 except (OSError, ValueError, RuntimeError):
                     failed.add(i)
                     images.append(None)

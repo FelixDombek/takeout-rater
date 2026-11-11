@@ -83,7 +83,7 @@ class MyScorer(BaseScorer):
         results: list[dict[str, float]] = []
         for path in image_paths:
             try:
-                img = Image.open(path).convert("RGB")
+                img = open_rgb(path)  # from takeout_rater.scoring.shared_decode
                 score = 0.0  # TODO: compute actual score
             except (OSError, ValueError):
                 score = 0.0
@@ -189,7 +189,7 @@ class MyMLScorer(BaseScorer):
         results: list[dict[str, float]] = []
         for path in image_paths:
             try:
-                img = Image.open(path).convert("RGB")
+                img = open_rgb(path)  # from takeout_rater.scoring.shared_decode
                 score = float(self._model(img))  # TODO: adapt to your model's API
             except (OSError, ValueError, RuntimeError):
                 score = 0.0
@@ -267,3 +267,6 @@ See `docs/agents/definition-of-done.md` before opening a PR.
 - Multi-metric scorers should document what each metric measures in the `MetricSpec.description`.
 - `score_batch` must **always** return a list of the same length as `image_paths`, even when individual images fail.  Use a safe default (typically `0.0`) and catch `(OSError, ValueError, RuntimeError)`.
 - Scorers are run via the scoring pipeline (`takeout_rater.scoring.pipeline.run_scorer`).  They do not need to know about DB internals.
+- Load images with `takeout_rater.scoring.shared_decode.open_rgb(path)`, not `Image.open(path)`.  "Score all" runs several variants in one shared-decode pass (`run_scorer_group`) and decodes each thumbnail once for all of them; `open_rgb` returns that decoded image, and simply reads the file otherwise.  Set `uses_shared_decode = False` if the scorer must decode with another library.
+- Override `gpu_memory_estimate_mb(variant_id)` with the rough VRAM held by the loaded weights (`0` for CPU-only scorers).  It decides which variants stay loaded together in one pass (budget: half the GPU's memory, or `TAKEOUT_RATER_SCORE_GROUP_MB`; `0` turns shared passes off).
+- Scorers that only need the CLIP ViT-L/14 image embedding set `consumes_clip_embeddings = True` and implement `score_clip_embeddings(matrix)`; the pipeline then reads `clip_embeddings` instead of decoding and re-encoding the thumbnail, and falls back to `score_batch` for assets without one.

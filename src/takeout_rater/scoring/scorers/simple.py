@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.shared_decode import open_rgb
 
 # ---------------------------------------------------------------------------
 # Algorithm constants (kept identical to the original individual scorers)
@@ -127,6 +128,10 @@ class SimpleScorer(BaseScorer):
         )
 
     @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        return 0  # CPU only (Pillow)
+
+    @classmethod
     def is_available(cls) -> bool:
         try:
             from PIL import Image, ImageChops, ImageFilter, ImageStat  # noqa: F401
@@ -170,12 +175,12 @@ class SimpleScorer(BaseScorer):
 
     @staticmethod
     def _score_blur(image_paths: list[Path]) -> list[dict[str, float]]:
-        from PIL import Image, ImageFilter, ImageStat
+        from PIL import ImageFilter, ImageStat
 
         results: list[dict[str, float]] = []
         for path in image_paths:
             try:
-                img = Image.open(path).convert("L")
+                img = open_rgb(path).convert("L")
                 edges = img.filter(ImageFilter.FIND_EDGES)
                 stat = ImageStat.Stat(edges)
                 raw_var: float = stat.var[0]
@@ -187,12 +192,12 @@ class SimpleScorer(BaseScorer):
 
     @staticmethod
     def _score_luminosity(image_paths: list[Path]) -> list[dict[str, float]]:
-        from PIL import Image, ImageStat
+        from PIL import ImageStat
 
         results: list[dict[str, float]] = []
         for path in image_paths:
             try:
-                img = Image.open(path).convert("L")
+                img = open_rgb(path).convert("L")
                 stat = ImageStat.Stat(img)
                 mean: float = stat.mean[0]
                 stddev: float = stat.stddev[0]
@@ -206,12 +211,12 @@ class SimpleScorer(BaseScorer):
 
     @staticmethod
     def _score_noise(image_paths: list[Path]) -> list[dict[str, float]]:
-        from PIL import Image, ImageChops, ImageFilter, ImageStat
+        from PIL import ImageChops, ImageFilter, ImageStat
 
         results: list[dict[str, float]] = []
         for path in image_paths:
             try:
-                img = Image.open(path).convert("L")
+                img = open_rgb(path).convert("L")
                 blurred = img.filter(ImageFilter.GaussianBlur(radius=1))
                 diff = ImageChops.difference(img, blurred)
                 rms: float = ImageStat.Stat(diff).rms[0]

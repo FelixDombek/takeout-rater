@@ -35,6 +35,7 @@ from takeout_rater.scoring.scorers.base import (
     _run_pipelined_batches,
     group_indices_by_shape,
 )
+from takeout_rater.scoring.shared_decode import open_rgb
 
 # ---------------------------------------------------------------------------
 # Variant definitions
@@ -228,6 +229,11 @@ class NIMAScorer(BaseScorer):
         )
 
     @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        # vgg16 is ~530 MB of weights; inception_resnet_v2 ~220 MB.
+        return 600 if (variant_id or cls.spec().default_variant_id) == "aesthetic-vgg16" else 300
+
+    @classmethod
     def is_available(cls) -> bool:
         """Return ``True`` when required dependencies are importable."""
         try:
@@ -303,7 +309,6 @@ class NIMAScorer(BaseScorer):
             return []
 
         import torch
-        from PIL import Image
         from torchvision.transforms.functional import to_tensor
 
         self._ensure_loaded()
@@ -330,7 +335,7 @@ class NIMAScorer(BaseScorer):
             failed: set[int] = set()
             for i, path in enumerate(chunk):
                 try:
-                    img = Image.open(path).convert("RGB")
+                    img = open_rgb(path)
                     tensors.append(to_tensor(img))
                 except (OSError, ValueError):
                     failed.add(i)

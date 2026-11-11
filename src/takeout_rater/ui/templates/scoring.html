@@ -236,6 +236,17 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  .score-diagnostics-row {
+    min-width: 0;
+  }
+  .score-diagnostics-row span:first-child {
+    flex: none;
+  }
+  .score-diagnostics-row .score-diagnostics-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
 
   .run-all-options {
     display: flex;
@@ -572,6 +583,7 @@
 
     var counts = [
       ['Variants', 'score_variants_completed', 'score_variants_total'],
+      ['Passes', 'score_passes_completed', 'score_passes_total'],
       ['Assets total', 'score_assets_total'],
       ['Assets seen', 'score_assets_seen'],
       ['With thumbnails', 'score_assets_with_thumbnails'],
@@ -579,20 +591,23 @@
       ['Batches', 'score_batches'],
       ['Batch target', 'score_batch_size'],
       ['Rows written', 'score_rows_written'],
+      ['Shared decodes', 'score_shared_decodes'],
+      ['From CLIP embeddings', 'score_from_clip_embeddings'],
       ['Metrics written', 'score_metrics_written']
     ];
     var details = [
-      ['Scorer', 'scorer_id'],
-      ['Variant', 'variant_id'],
+      ['Scorer(s)', 'scorer_id'],
+      ['Variant(s)', 'variant_id'],
       ['CUDA', 'torch_cuda_available'],
       ['CUDA device', 'torch_cuda_device']
     ];
     var timings = [
       ['Job time', 'score_job_seconds'],
-      ['Variant time', 'score_total_seconds'],
+      ['Pass time', 'score_total_seconds'],
       ['Target select', 'score_target_select_seconds'],
       ['Path build', 'score_path_build_seconds'],
       ['Thumb exists', 'score_thumbnail_exists_seconds'],
+      ['Decode wait', 'score_decode_wait_seconds'],
       ['Score batches', 'score_batch_seconds'],
       ['DB writes', 'score_db_write_seconds']
     ];
@@ -620,7 +635,9 @@
       var left = document.createElement('span');
       var right = document.createElement('span');
       left.textContent = label;
-      if (item.length === 3 && key === 'score_variants_completed') {
+      var isFraction = key === 'score_variants_completed' || key === 'score_passes_completed';
+      if (key === 'score_passes_completed' && diagnostics[key] === undefined) return;
+      if (isFraction) {
         right.textContent = formatDiagCount(diagnostics[key]) + ' / ' +
           formatDiagCount(diagnostics[item[2]]);
       } else if (idx < counts.length) {
@@ -633,6 +650,11 @@
         right.textContent = formatDiagSeconds(diagnostics[key]);
       } else {
         right.textContent = formatDiagMs(diagnostics[key]);
+      }
+      if (idx >= counts.length && idx < counts.length + details.length) {
+        // Long lists (all variants of a shared pass) must not spill into the next cell.
+        right.className = 'score-diagnostics-text';
+        right.title = right.textContent;
       }
       row.appendChild(left);
       row.appendChild(right);
@@ -656,6 +678,9 @@
     var running = data.running;
     var activeSid = data.current_scorer_id || '';
     var activeVid = data.current_variant_id || '';
+    // Several scorers can share one decode pass; all of them show as running.
+    var activeSids = data.current_scorer_ids && data.current_scorer_ids.length
+      ? data.current_scorer_ids : (activeSid ? [activeSid] : []);
     var cancelled = data.cancelled || false;
     renderScoreDiagnostics(data.diagnostics || {});
 
@@ -676,7 +701,7 @@
       // variants, the elapsed time includes the previous variant's runtime
       // and the rate/ETA calculations become wildly inaccurate.
       var scoreStats = _jobStats.score;
-      var activeKey = activeSid + ':' + activeVid;
+      var activeKey = activeSids.join(',') + ':' + activeVid;
       if (!scoreStats || scoreStats.activeKey !== activeKey || data.processed <= scoreStats.startProcessed) {
         _jobStats.score = { startTime: Date.now(), startProcessed: data.processed, activeKey: activeKey };
       }
@@ -713,7 +738,7 @@
 
     // Update each scorer card
     scorers.forEach(function (s) {
-      var isThisScorer = running && activeSid === s.id;
+      var isThisScorer = running && activeSids.indexOf(s.id) !== -1;
       var btn = document.getElementById('btn-' + s.id);
       var cancelBtn = document.getElementById('cancel-btn-' + s.id);
       var badge = document.getElementById('badge-' + s.id);
