@@ -240,3 +240,30 @@ def test_score_one(tmp_path: Path) -> None:
     result = scorer.score_one(p)
     assert "clip_quality" in result
     assert 0.0 <= result["clip_quality"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# score_clip_embeddings — stored embeddings give the same score as images
+# ---------------------------------------------------------------------------
+
+
+def test_consumes_clip_embeddings() -> None:
+    assert CLIPIQAScorer.consumes_clip_embeddings is True
+
+
+def test_score_clip_embeddings_matches_image_path(tmp_path: Path) -> None:
+    import numpy as np
+    from PIL import Image
+
+    img_path = tmp_path / "img.jpg"
+    Image.new("RGB", (64, 64)).save(img_path, "JPEG")
+    scorer = _make_mock_scorer(good_prob=0.8)
+
+    from_image = scorer.score_batch([img_path])[0]["clip_quality"]
+    emb = np.zeros((2, 16), dtype=np.float32)
+    emb[:, 0] = 1.0  # the same unit vector the mocked encode_image returns
+    from_embedding = scorer.score_clip_embeddings(emb)
+
+    assert from_image == pytest.approx(0.8, abs=1e-5)
+    assert [r["clip_quality"] for r in from_embedding] == [pytest.approx(from_image, abs=1e-6)] * 2
+    scorer._clip_model.encode_image.assert_called_once()  # only by score_batch

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.shared_decode import open_rgb
 
 # ---------------------------------------------------------------------------
 # Model identifier
@@ -171,6 +172,10 @@ class CafeStyleScorer(BaseScorer):
         )
 
     @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        return 800  # BEiT classifier
+
+    @classmethod
     def is_available(cls) -> bool:
         """Return ``True`` when required runtime dependencies are importable."""
         try:
@@ -238,15 +243,13 @@ class CafeStyleScorer(BaseScorer):
         if not image_paths:
             return []
 
-        from PIL import Image
-
         self._ensure_loaded()
 
         # Pre-load all images; keep input positions so failures can stay zeroed.
         imgs: list[Any] = []
         for path in image_paths:
             try:
-                imgs.append(Image.open(path).convert("RGB"))
+                imgs.append(open_rgb(path))
             except (OSError, ValueError, RuntimeError):
                 imgs.append(None)
 

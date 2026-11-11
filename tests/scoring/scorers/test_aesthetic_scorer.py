@@ -472,3 +472,60 @@ def test_score_batch_encode_image_called_once_per_chunk(tmp_path: Path) -> None:
     assert len(results) == n
     # Two chunks → encode_image must have been called exactly twice.
     assert scorer._clip_model.encode_image.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# score_clip_embeddings — stored embeddings give the same score as images
+# ---------------------------------------------------------------------------
+
+
+def test_consumes_clip_embeddings() -> None:
+    assert AestheticScorer.consumes_clip_embeddings is True
+
+
+def test_score_clip_embeddings_matches_image_path(tmp_path: Path) -> None:
+    """An embedding read from the DB must score exactly like encoding the image."""
+    import numpy as np
+    import torch
+
+    torch.manual_seed(0)
+    scorer = _make_mock_scorer(tmp_path)
+    mlp = _build_mlp(_EMBEDDING_DIM)
+    mlp.eval()
+    scorer._mlp = mlp
+    vec = torch.randn(_EMBEDDING_DIM)
+    vec = vec / vec.norm()
+    scorer._clip_model.encode_image.side_effect = lambda batch: vec.repeat(batch.shape[0], 1)
+
+    from_image = scorer.score_batch([tmp_path / "test.jpg"])[0]["aesthetic"]
+    from_embedding = scorer.score_clip_embeddings(np.asarray([vec.numpy()], dtype=np.float32))
+    assert from_embedding == [{"aesthetic": pytest.approx(from_image, abs=1e-6)}]
+
+
+def test_score_clip_embeddings_does_not_load_clip(monkeypatch) -> None:
+    """Scoring stored embeddings only needs the MLP, never the CLIP backbone."""
+    import numpy as np
+    import torch
+
+    from takeout_rater.scoring.scorers import clip_backbone
+
+    def _fail() -> None:
+        raise AssertionError("CLIP backbone must not load for stored embeddings")
+
+    monkeypatch.setattr(clip_backbone, "get_clip_model", _fail)
+    mlp = _build_mlp(_EMBEDDING_DIM)
+    monkeypatch.setattr(AestheticScorer, "_download_mlp_weights", classmethod(lambda cls: None))
+    monkeypatch.setattr(torch, "load", lambda *a, **k: mlp.state_dict())
+
+    scorer = AestheticScorer.create()
+    out = scorer.score_clip_embeddings(np.zeros((3, _EMBEDDING_DIM), dtype=np.float32))
+    assert len(out) == 3
+    assert all(0.0 <= r["aesthetic"] <= 10.0 for r in out)
+    assert scorer._clip_model is None
+
+
+def test_score_clip_embeddings_empty() -> None:
+    import numpy as np
+
+    scorer = AestheticScorer.create()
+    assert scorer.score_clip_embeddings(np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)) == []

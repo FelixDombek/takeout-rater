@@ -39,9 +39,15 @@ class SearchBackbone:
 
 
 def _load_clip() -> tuple[Any, Any, Any, Any]:
-    from takeout_rater.scoring.scorers.clip_backbone import get_clip_model
+    from takeout_rater.scoring.scorers.clip_backbone import (
+        get_clip_model,
+        preprocess_clip_image_fast,
+    )
 
-    return get_clip_model()
+    # Every writer of clip_embeddings (indexer, rescan, this embed job) uses the
+    # importer's preprocessing, so the LAION / CLIP-IQA scorers can reuse rows.
+    model, _preprocess, tokenizer, device = get_clip_model()
+    return model, preprocess_clip_image_fast, tokenizer, device
 
 
 @functools.cache

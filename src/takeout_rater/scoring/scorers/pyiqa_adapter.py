@@ -39,6 +39,7 @@ from takeout_rater.scoring.scorers.base import (
     _run_pipelined_batches,
     group_indices_by_shape,
 )
+from takeout_rater.scoring.shared_decode import open_rgb
 
 # ---------------------------------------------------------------------------
 # Variant definitions
@@ -198,6 +199,11 @@ class PyIQAScorer(BaseScorer):
         )
 
     @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        vid = variant_id or cls.spec().default_variant_id
+        return {"musiq": 200, "topiq_nr": 300, "niqe": 100}.get(vid, 300)
+
+    @classmethod
     def is_available(cls) -> bool:
         """Return ``True`` when ``pyiqa`` and its core dependencies are importable."""
         try:
@@ -271,7 +277,6 @@ class PyIQAScorer(BaseScorer):
             return []
 
         import torch
-        from PIL import Image
         from torchvision.transforms.functional import to_tensor
 
         self._ensure_loaded()
@@ -286,7 +291,7 @@ class PyIQAScorer(BaseScorer):
             failed: set[int] = set()
             for i, path in enumerate(chunk):
                 try:
-                    img = Image.open(path).convert("RGB")
+                    img = open_rgb(path)
                     tensors.append(to_tensor(img))
                 except (OSError, ValueError):
                     failed.add(i)

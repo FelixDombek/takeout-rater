@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -84,6 +85,8 @@ class JobProgress:
         current_variant_id: For the ``"score"`` job, the variant of the scorer
             currently being run.  Empty string when no variant is active or the
             scorer does not use variants.
+        current_scorer_ids: For the ``"score"`` job, every scorer in the
+            current shared-decode pass (several variants run together).
         job_type: One of ``"index"``, ``"score"``, ``"cluster"``,
             ``"export"``, ``"rescan"``.
         cancel_event: Set this event to request cancellation of the running
@@ -103,6 +106,7 @@ class JobProgress:
     current_item: str = ""
     current_scorer_id: str = ""
     current_variant_id: str = ""
+    current_scorer_ids: list[str] = field(default_factory=list)
     diagnostics: dict[str, object] = field(default_factory=dict)
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
@@ -128,6 +132,7 @@ def _job_status_dict(p: JobProgress) -> dict:
         "current_item": p.current_item,
         "current_scorer_id": p.current_scorer_id,
         "current_variant_id": p.current_variant_id,
+        "current_scorer_ids": p.current_scorer_ids,
         "diagnostics": p.diagnostics,
         "cancelled": p.cancel_event.is_set(),
     }
@@ -528,6 +533,25 @@ class _ScoreStartBody(BaseModel):
     rerun: bool = False
 
 
+def _close_scorers(scorers: list[object]) -> None:
+    """Close and drop every scorer so its models are freed before the next pass.
+
+    Runs in its own frame so no loop variable or bound ``close`` method keeps
+    the last scorer (and its GPU weights) alive while the next pass loads.
+    """
+    for scorer in scorers:
+        close = getattr(scorer, "close", None)
+        if callable(close):
+            close()
+    scorers.clear()
+    torch_mod = sys.modules.get("torch")
+    if torch_mod is not None and torch_mod.cuda.is_available():
+        import gc
+
+        gc.collect()
+        torch_mod.cuda.empty_cache()
+
+
 @router.post("/api/jobs/score/start")
 def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     """Start a background scoring run.
@@ -555,7 +579,12 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
         import time
 
         from takeout_rater.db.connection import enable_bulk_writes
-        from takeout_rater.scoring.pipeline import DEFAULT_SCORE_BATCH_SIZE, run_scorer_by_id
+        from takeout_rater.scoring.pipeline import (
+            DEFAULT_SCORE_BATCH_SIZE,
+            default_group_budget_mb,
+            plan_scorer_groups,
+            run_scorer_group,
+        )
         from takeout_rater.scoring.scorers.registry import list_scorers
 
         worker_conn = _open_worker_conn(request.app)
@@ -621,51 +650,80 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
 
             total_pairs = len(scorer_variants)
             progress.diagnostics["score_variants_total"] = total_pairs
-            for idx, (sid, vid, display_name) in enumerate(scorer_variants):
+            cls_by_id = {cls.spec().scorer_id: cls for cls in list_scorers()}
+            for sid, _vid, _name in scorer_variants:
+                if not cls_by_id[sid].is_available():
+                    raise RuntimeError(
+                        f"Scorer {sid!r} is not available. Install the required "
+                        f"extras: {cls_by_id[sid].spec().requires_extras}"
+                    )
+
+            # Variants whose models fit in memory together share one pass, so
+            # each thumbnail is decoded once per pass instead of once per variant.
+            def _cost(item: tuple[str, str, str]) -> tuple[int, str | None]:
+                cls = cls_by_id[item[0]]
+                return cls.gpu_memory_estimate_mb(item[1]), cls.gpu_memory_share_key(item[1])
+
+            groups = plan_scorer_groups(scorer_variants, _cost, default_group_budget_mb())
+            progress.diagnostics["score_passes_total"] = len(groups)
+            completed = 0
+            for g_idx, group in enumerate(groups):
                 if progress.cancel_event.is_set():
                     break
-                _scorer_label = f"{display_name} ({idx + 1}/{total_pairs})"
-                progress.current_scorer_id = sid
-                progress.current_variant_id = vid or ""
-                progress.message = f"Scoring with {_scorer_label}…"
+                names = ", ".join(name for _sid, _vid, name in group)
+                _pass_label = (
+                    f"pass {g_idx + 1}/{len(groups)}: {names}" if len(groups) > 1 else names
+                )
+                progress.current_scorer_id = group[0][0]
+                progress.current_variant_id = group[0][1] or ""
+                progress.current_scorer_ids = list(dict.fromkeys(sid for sid, _v, _n in group))
+                progress.message = f"Scoring {_pass_label}…"
                 progress.processed = 0
                 progress.total = 0
                 progress.diagnostics.update(
                     {
-                        "score_variants_completed": idx,
+                        "score_variants_completed": completed,
+                        "score_passes_completed": g_idx,
                         "score_job_seconds": time.perf_counter() - score_job_started,
-                        "scorer_id": sid,
-                        "variant_id": vid or "",
                     }
                 )
 
-                def _cb(scored: int, total: int, _label: str = _scorer_label) -> None:
+                def _cb(scored: int, total: int, _label: str = _pass_label) -> None:
                     progress.processed = scored
                     progress.total = total
-                    progress.message = f"Scoring with {_label}… {scored}\u202f/\u202f{total}"
+                    progress.message = f"Scoring {_label}… {scored}\u202f/\u202f{total}"
 
-                def _diag_cb(diagnostics: dict[str, object], _idx: int = idx) -> None:
+                def _diag_cb(diagnostics: dict[str, object], _done: int = completed) -> None:
                     progress.diagnostics.update(diagnostics)
                     progress.diagnostics["score_variants_total"] = total_pairs
-                    progress.diagnostics["score_variants_completed"] = _idx
+                    progress.diagnostics["score_variants_completed"] = _done
                     progress.diagnostics["score_job_seconds"] = (
                         time.perf_counter() - score_job_started
                     )
 
-                run_scorer_by_id(
-                    worker_conn,
-                    sid,
-                    thumbs_dir,
-                    variant_id=vid,
-                    batch_size=score_batch_size,
-                    skip_existing=not rerun,
-                    on_progress=_cb,
-                    on_diagnostics=_diag_cb,
-                    cancel_check=progress.cancel_event.is_set,
-                )
-                progress.diagnostics["score_variants_completed"] = idx + 1
+                scorers = []
+                try:
+                    for sid, vid, _name in group:
+                        scorers.append(cls_by_id[sid].create(variant_id=vid))
+                    run_scorer_group(
+                        worker_conn,
+                        scorers,
+                        thumbs_dir,
+                        batch_size=score_batch_size,
+                        skip_existing=not rerun,
+                        on_progress=_cb,
+                        on_diagnostics=_diag_cb,
+                        cancel_check=progress.cancel_event.is_set,
+                    )
+                finally:
+                    # Release models (VRAM, thread pools) before the next pass.
+                    _close_scorers(scorers)
+                completed += len(group)
+                progress.diagnostics["score_variants_completed"] = completed
+                progress.diagnostics["score_passes_completed"] = g_idx + 1
                 progress.diagnostics["score_job_seconds"] = time.perf_counter() - score_job_started
 
+            progress.current_scorer_ids = []
             progress.current_scorer_id = ""
             progress.current_variant_id = ""
             if progress.cancel_event.is_set():
@@ -681,6 +739,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
             progress.current_item = ""
             progress.current_scorer_id = ""
             progress.current_variant_id = ""
+            progress.current_scorer_ids = []
             progress.running = False
             progress.done = True
         finally:
@@ -1310,13 +1369,18 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
                             from takeout_rater.scoring.scorers.clip_backbone import (
                                 get_clip_model,
+                                preprocess_clip_image_fast,
                             )
 
                             if _clip_bundle is None:
                                 _clip_bundle = get_clip_model()
-                            model, preprocess, _tokenizer, device = _clip_bundle
+                            model, _preprocess, _tokenizer, device = _clip_bundle
                             thumb_img = Image.open(io.BytesIO(thumb.read_bytes())).convert("RGB")
-                            img_tensor = preprocess(thumb_img).unsqueeze(0).to(device)
+                            # Same preprocessing as the indexer, so the LAION and
+                            # CLIP-IQA scorers can reuse this row.
+                            img_tensor = (
+                                preprocess_clip_image_fast(thumb_img).unsqueeze(0).to(device)
+                            )
                             with torch.no_grad():
                                 embedding = model.encode_image(img_tensor)
                                 embedding = embedding / embedding.norm(dim=-1, keepdim=True)

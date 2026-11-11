@@ -23,6 +23,7 @@ from takeout_rater.scoring.scorers.base import (
     VariantSpec,
     _run_pipelined_batches,
 )
+from takeout_rater.scoring.shared_decode import open_rgb
 
 if TYPE_CHECKING:
     pass
@@ -47,6 +48,8 @@ _CLIP_PRETRAINED = "openai"
 #: 64 fits comfortably within the VRAM budget of an 8 GB GPU alongside
 #: the ViT-L/14 weights (~900 MB).  Tune down if you hit VRAM OOM errors.
 _SCORE_BATCH_SIZE = 64
+#: Rows per similarity call when scoring stored embeddings.
+_EMBEDDING_BATCH_SIZE = 4096
 
 #: Number of preprocessed batches to keep ready ahead of GPU inference.
 _PREFETCH_BATCHES = 2
@@ -62,6 +65,8 @@ class CLIPIQAScorer(BaseScorer):
     No separate model download is required beyond the CLIP ViT-L/14 backbone
     that is already used by the aesthetic scorer.
     """
+
+    consumes_clip_embeddings = True
 
     def __init__(self, variant_id: str | None = None, **kwargs: Any) -> None:
         super().__init__(variant_id=variant_id, **kwargs)
@@ -92,7 +97,7 @@ class CLIPIQAScorer(BaseScorer):
                 "similarity. The score is the softmax probability that the image "
                 "matches 'Good photo.' over 'Bad photo.' using CLIP ViT-L/14."
             ),
-            version="2",
+            version="3",
             variants=(
                 VariantSpec(
                     variant_id="vit_l14_openai",
@@ -119,6 +124,15 @@ class CLIPIQAScorer(BaseScorer):
             default_variant_id="vit_l14_openai",
             requires_extras=(),
         )
+
+    @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        # The CLIP ViT-L/14 singleton in fp32 (shared with LAION).
+        return 1750
+
+    @classmethod
+    def gpu_memory_share_key(cls, variant_id: str | None = None) -> str | None:
+        return "clip-vit-l-14"
 
     @classmethod
     def is_available(cls) -> bool:
@@ -149,9 +163,12 @@ class CLIPIQAScorer(BaseScorer):
 
         import torch
 
-        from takeout_rater.scoring.scorers.clip_backbone import get_clip_model
+        from takeout_rater.scoring.scorers.clip_backbone import (
+            get_clip_model,
+            preprocess_clip_image_fast,
+        )
 
-        clip_model, preprocess, tokenizer, device = get_clip_model()
+        clip_model, _preprocess, tokenizer, device = get_clip_model()
 
         tokens = tokenizer([_PROMPT_GOOD, _PROMPT_BAD]).to(device)
         with torch.no_grad():
@@ -160,7 +177,9 @@ class CLIPIQAScorer(BaseScorer):
 
         self._device = device
         self._clip_model = clip_model
-        self._preprocess = preprocess
+        # Same resize/crop/normalise as the importer that fills clip_embeddings,
+        # so scores from images and from stored embeddings agree.
+        self._preprocess = preprocess_clip_image_fast
         self._text_features = text_features  # shape (2, D), float
         # CLIP's learned temperature: multiplying similarities by logit_scale
         # before softmax separates "Good photo" vs "Bad photo" probabilities
@@ -170,6 +189,40 @@ class CLIPIQAScorer(BaseScorer):
     # ------------------------------------------------------------------
     # Scoring
     # ------------------------------------------------------------------
+
+    def _probabilities(self, img_features: Any) -> list[float]:
+        """Return P("Good photo.") for L2-normalised image features ``(N, D)``."""
+        import torch
+
+        # sims: (N, 2) — column 0 = "Good photo.", column 1 = "Bad photo."
+        # Apply logit_scale (CLIP's learned temperature) so that small
+        # cosine-similarity differences between the two prompts are
+        # amplified into a meaningful probability spread.
+        sims = self._logit_scale * (img_features @ self._text_features.T)
+        probs = torch.softmax(sims, dim=-1)  # (N, 2)
+        return [max(0.0, min(1.0, float(v))) for v in probs[:, 0].tolist()]
+
+    def score_clip_embeddings(self, embeddings: Any) -> list[dict[str, float]]:
+        """Score from stored, L2-normalised CLIP ViT-L/14 embeddings.
+
+        CLIP-IQA is two dot products and a softmax on the image embedding,
+        which the importer already stored, so no image is decoded and the
+        vision tower never runs.
+        """
+        if len(embeddings) == 0:
+            return []
+
+        import torch
+
+        self._ensure_loaded()
+        text_features = self._text_features
+        results: list[dict[str, float]] = []
+        for start in range(0, len(embeddings), _EMBEDDING_BATCH_SIZE):
+            chunk = torch.as_tensor(embeddings[start : start + _EMBEDDING_BATCH_SIZE])
+            with torch.no_grad():
+                feats = chunk.to(device=self._device, dtype=text_features.dtype)
+                results.extend({"clip_quality": p} for p in self._probabilities(feats))
+        return results
 
     def score_batch(
         self,
@@ -205,7 +258,6 @@ class CLIPIQAScorer(BaseScorer):
             return []
 
         import torch
-        from PIL import Image
 
         self._ensure_loaded()
 
@@ -219,7 +271,7 @@ class CLIPIQAScorer(BaseScorer):
             failed: set[int] = set()
             for i, path in enumerate(chunk):
                 try:
-                    img = Image.open(path).convert("RGB")
+                    img = open_rgb(path)
                     tensors.append(self._preprocess(img))
                 except (OSError, ValueError):
                     failed.add(i)
@@ -253,7 +305,7 @@ class CLIPIQAScorer(BaseScorer):
                     for _j, idx in enumerate(valid_indices):
                         path = chunk[idx]
                         try:
-                            img = Image.open(path).convert("RGB")
+                            img = open_rgb(path)
                             tensor = self._preprocess(img).unsqueeze(0).to(self._device)
                             with torch.no_grad():
                                 img_feat = self._clip_model.encode_image(tensor)

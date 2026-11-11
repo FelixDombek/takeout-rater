@@ -215,6 +215,17 @@ class BaseScorer(ABC):
             spec's ``default_variant_id`` when ``None`` is passed.
     """
 
+    #: ``True`` for scorers that only need the stored CLIP ViT-L/14 image
+    #: embedding (``clip_embeddings``).  The pipeline then calls
+    #: :meth:`score_clip_embeddings` for assets that have one and falls back
+    #: to :meth:`score_batch` on the thumbnail for the rest.
+    consumes_clip_embeddings: bool = False
+
+    #: ``False`` for scorers that decode images with something other than
+    #: :func:`takeout_rater.scoring.shared_decode.open_rgb` (e.g. OpenCV), so
+    #: a shared pass does not decode thumbnails on their behalf.
+    uses_shared_decode: bool = True
+
     def __init__(self, variant_id: str | None = None, **kwargs: Any) -> None:
         self.variant_id = variant_id or self.spec().default_variant_id
         super().__init__(**kwargs)
@@ -246,6 +257,27 @@ class BaseScorer(ABC):
         """
         return cls(variant_id=variant_id, **kwargs)  # type: ignore[call-arg]
 
+    @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        """Rough GPU memory held by this variant's loaded model(s), in MiB.
+
+        Used only to decide which scorer variants can stay loaded together
+        in one shared-decode pass (see
+        :func:`takeout_rater.scoring.pipeline.plan_scorer_groups`).  It should
+        cover the weights (activations are freed between scorers).  CPU-only
+        scorers return ``0``.  The default is deliberately conservative.
+        """
+        return 1024
+
+    @classmethod
+    def gpu_memory_share_key(cls, variant_id: str | None = None) -> str | None:
+        """Key of a model shared with other scorers, counted once per group.
+
+        LAION and CLIP-IQA both use the CLIP ViT-L/14 singleton, so loading
+        both costs the backbone only once.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Instance API
     # ------------------------------------------------------------------
@@ -268,6 +300,19 @@ class BaseScorer(ABC):
             ``metric_key`` → ``float`` value.  Keys must be a subset of
             those declared by the active :class:`VariantSpec`.
         """
+
+    def score_clip_embeddings(self, embeddings: Any) -> list[dict[str, float]]:
+        """Score assets from their stored, L2-normalised CLIP ViT-L/14 embeddings.
+
+        Only called when :attr:`consumes_clip_embeddings` is ``True``.
+
+        Args:
+            embeddings: ``numpy`` float32 array of shape ``(N, 768)``.
+
+        Returns:
+            One metric dict per row, like :meth:`score_batch`.
+        """
+        raise NotImplementedError
 
     def score_one(
         self,

@@ -471,3 +471,14 @@ class TestEmbedJobForBackbone:
 
     def test_cancel_without_job_404(self, client) -> None:
         assert client.post("/api/jobs/embed/cancel").status_code == 404
+
+
+def test_clip_l14_loader_uses_importer_preprocessing(monkeypatch) -> None:
+    """clip_embeddings rows from the embed job must match the indexer's preprocessing."""
+    from takeout_rater.embeddings import search_backbones
+    from takeout_rater.scoring.scorers import clip_backbone
+
+    monkeypatch.setattr(clip_backbone, "get_clip_model", lambda: ("m", "open_clip", "t", "d"))
+    model, preprocess, tokenizer, device = search_backbones._load_clip()
+    assert (model, tokenizer, device) == ("m", "t", "d")
+    assert preprocess is clip_backbone.preprocess_clip_image_fast

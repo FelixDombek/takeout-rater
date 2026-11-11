@@ -2085,6 +2085,29 @@ def get_clip_embedding_for_asset(conn: sqlite3.Connection, asset_id: int) -> byt
     return row[0] if row else None
 
 
+def get_clip_embeddings_for_assets(
+    conn: sqlite3.Connection, asset_ids: list[int]
+) -> dict[int, bytes]:
+    """Return ``{asset_id: embedding_blob}`` for the given assets that have one.
+
+    Only CLIP ViT-L/14 (OpenAI) rows are returned; assets without a stored
+    embedding are simply absent from the result.  IDs are queried in chunks
+    so the statement stays below SQLite's bound-parameter limit.
+    """
+    out: dict[int, bytes] = {}
+    chunk_size = 900
+    for start in range(0, len(asset_ids), chunk_size):
+        chunk = asset_ids[start : start + chunk_size]
+        placeholders = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            "SELECT asset_id, embedding FROM clip_embeddings"
+            f" WHERE asset_id IN ({placeholders}) AND model_id = 'ViT-L-14/openai'",
+            chunk,
+        ).fetchall()
+        out.update((int(row[0]), row[1]) for row in rows)
+    return out
+
+
 def load_clip_embeddings_with_relpaths(
     conn: sqlite3.Connection,
 ) -> list[tuple[int, bytes, str]]:

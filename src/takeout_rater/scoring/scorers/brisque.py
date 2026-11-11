@@ -19,6 +19,7 @@ import logging
 from pathlib import Path
 
 from takeout_rater.scoring.scorers.base import BaseScorer, MetricSpec, ScorerSpec, VariantSpec
+from takeout_rater.scoring.shared_decode import open_rgb
 
 _logger = logging.getLogger(__name__)
 
@@ -78,6 +79,10 @@ class BRISQUEScorer(BaseScorer):
         )
 
     @classmethod
+    def gpu_memory_estimate_mb(cls, variant_id: str | None = None) -> int:
+        return 0  # CPU only (piq on CPU tensors)
+
+    @classmethod
     def is_available(cls) -> bool:
         try:
             import PIL  # noqa: F401
@@ -117,13 +122,12 @@ class BRISQUEScorer(BaseScorer):
         """
         import piq
         import torch
-        from PIL import Image
         from torchvision.transforms.functional import to_tensor
 
         results: list[dict[str, float]] = []
         for path in image_paths:
             try:
-                img = Image.open(path).convert("RGB")
+                img = open_rgb(path)
                 # piq.brisque expects a float32 tensor in [0, 1] with shape (1, C, H, W)
                 tensor: torch.Tensor = to_tensor(img).unsqueeze(0)
                 raw: float = float(piq.brisque(tensor, data_range=1.0).item())

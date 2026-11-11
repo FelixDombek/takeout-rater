@@ -199,6 +199,67 @@ def test_score_worker_runs_to_completion_with_empty_library(tmp_path: Path) -> N
     assert jobs["score"].error is None
 
 
+def test_score_worker_runs_variants_in_one_shared_pass(tmp_path: Path) -> None:
+    """All three simple variants fit one pass: one decode per thumbnail, all scored."""
+    import threading
+    import time
+
+    from PIL import Image
+
+    import takeout_rater.api.jobs as jobs_mod
+    from takeout_rater.db.connection import open_library_db
+    from takeout_rater.db.queries import upsert_asset
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
+    from takeout_rater.ui.app import create_app
+
+    conn = open_library_db(tmp_path)
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    thumbs_dir = tmp_path / "thumbs"
+    app.state.thumbs_dir = thumbs_dir
+    for i in range(3):
+        aid = upsert_asset(
+            conn,
+            {
+                "relpath": f"p/{i}.jpg",
+                "filename": f"{i}.jpg",
+                "ext": ".jpg",
+                "size_bytes": 1,
+                "mime": "image/jpeg",
+                "indexed_at": int(time.time()),
+            },
+        )
+        thumb = thumb_path_for_id(thumbs_dir, aid)
+        thumb.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (20, 10), color=(i * 40, 50, 60)).save(thumb, "JPEG")
+    conn.commit()
+    client = TestClient(app, follow_redirects=False)
+
+    threads: list[threading.Thread] = []
+    original_thread = threading.Thread
+
+    class _TrackingThread(original_thread):
+        def start(self) -> None:
+            threads.append(self)
+            super().start()
+
+    jobs_mod.threading.Thread = _TrackingThread  # type: ignore[assignment]
+    try:
+        resp = client.post("/api/jobs/score/start", json={"scorer_id": "simple"})
+        assert resp.status_code == 200
+    finally:
+        jobs_mod.threading.Thread = original_thread  # type: ignore[assignment]
+    threads[0].join(timeout=10)
+
+    job = app.state.jobs["score"]  # type: ignore[union-attr]
+    assert job.error is None and job.done is True
+    assert job.current_scorer_ids == []
+    assert job.diagnostics["score_passes_total"] == 1
+    assert job.diagnostics["score_variants_completed"] == 3
+    assert job.diagnostics["score_shared_decodes"] == 3
+    n = conn.execute("SELECT COUNT(DISTINCT variant_id) FROM asset_scores").fetchone()[0]
+    assert n == 3
+
+
 # ---------------------------------------------------------------------------
 # POST /api/jobs/cluster/start
 # ---------------------------------------------------------------------------
@@ -977,3 +1038,21 @@ def test_run_index_fills_missing_phash_for_existing_asset(
     phash_count = check_conn.execute("SELECT COUNT(*) FROM phash").fetchone()[0]
     check_conn.close()
     assert phash_count == 1, "phash must be computed even for assets already in the DB"
+
+
+def test_close_scorers_closes_and_drops_all() -> None:
+    import takeout_rater.api.jobs as jobs_mod
+
+    closed: list[int] = []
+
+    class _S:
+        def __init__(self, n: int) -> None:
+            self.n = n
+
+        def close(self) -> None:
+            closed.append(self.n)
+
+    scorers: list[object] = [_S(1), object(), _S(2)]
+    jobs_mod._close_scorers(scorers)
+    assert closed == [1, 2]
+    assert scorers == []
