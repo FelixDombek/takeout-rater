@@ -1091,10 +1091,18 @@ function savePreset() {
     clearTimeout(urlTimer);
     urlTimer = setTimeout(function () {
       const p = firstVisiblePage();
-      const offset = Math.round(-anchorTop(p));
+      // Remember the first card on screen and where it sits; restoring by
+      // card is immune to day headers appearing or vanishing above it.
+      const card = Array.from(grid.querySelectorAll('.card[data-lb-id][data-page="' + p + '"],'
+                                                    + '.card[data-lb-id][data-page="' + (p + 1) + '"]'))
+        .find(function (c) { return c.getBoundingClientRect().bottom > 0; });
       const url = new URL(window.location.href);
       if (p > 1) url.searchParams.set('page', p); else url.searchParams.delete('page');
-      const state = Object.assign({}, history.state, { vsPage: p, vsOffset: offset });
+      const state = Object.assign({}, history.state, {
+        vsPage: p,
+        vsCard: card ? card.dataset.lbId : null,
+        vsCardTop: card ? Math.round(card.getBoundingClientRect().top) : 0,
+      });
       history.replaceState(state, '', url.toString());
     }, 250);
   }
@@ -1133,13 +1141,21 @@ function savePreset() {
 
   // ── Boot ──────────────────────────────────────────────────────────────
   initFirstPage();
-  const st = history.state;
-  if (st && st.vsPage === START_PAGE && typeof st.vsOffset === 'number') {
-    // Returning via back/forward or reload: restore the offset within the page.
-    window.scrollTo(0, anchors.get(START_PAGE).getBoundingClientRect().top
-                       + window.scrollY + st.vsOffset);
-  }
   maintainBuffer();
+  const st = history.state;
+  if (st && st.vsPage === START_PAGE && st.vsCard) {
+    // Returning via back/forward or reload: put the remembered card back
+    // where it was.  It may sit on the next page, and near the end of a page
+    // the target can lie past the end of the document until the next page
+    // has loaded, so re-apply once it has.
+    const restore = function () {
+      const card = grid.querySelector('.card[data-lb-id="' + st.vsCard + '"]');
+      if (card) window.scrollBy(0, card.getBoundingClientRect().top - st.vsCardTop);
+    };
+    restore();
+    ensurePage(START_PAGE + 1, restore);
+    scheduleBuffer();
+  }
   // Re-run after layout settles so height measurements are accurate.
   setTimeout(maintainBuffer, 150);
 })();
