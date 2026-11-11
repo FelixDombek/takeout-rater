@@ -211,6 +211,15 @@ def test_run_suggestions_stores_albums_and_keeps_kept_ones() -> None:
     assert [a["id"] for a in sq.get_smart_albums_for_asset(conn, member)] == [dog["id"]]
 
 
+def test_album_ids_are_not_reused_across_runs() -> None:
+    conn = _make_db()
+    _populate(conn)
+    run_suggestions(conn, _PARAMS, encode_texts=_fake_encoder)
+    first = {a["id"] for a in sq.list_smart_albums(conn)}
+    run_suggestions(conn, _PARAMS, encode_texts=_fake_encoder)
+    assert first.isdisjoint(a["id"] for a in sq.list_smart_albums(conn))
+
+
 def test_run_suggestions_without_embeddings_explains() -> None:
     conn = _make_db()
     with pytest.raises(ValueError, match="No CLIP embeddings"):

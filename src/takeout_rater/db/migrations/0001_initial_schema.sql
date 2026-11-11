@@ -252,7 +252,7 @@ CREATE INDEX IF NOT EXISTS idx_event_assets_asset_id  ON event_assets (asset_id)
 
 -- Smart album suggestions (schema v19, see 0013_smart_albums.sql)
 CREATE TABLE IF NOT EXISTS smart_albums (
-    id              INTEGER PRIMARY KEY,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,  -- never reused: stale pages must not hit a new album
     auto_name       TEXT NOT NULL,
     custom_name     TEXT,                       -- user rename; NULL = use auto_name
     terms           TEXT NOT NULL DEFAULT '[]', -- JSON [[term, score], ...], best first
