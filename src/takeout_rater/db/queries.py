@@ -623,6 +623,40 @@ def get_taken_at_range(
     return row[0], row[1]
 
 
+def load_dated_asset_ids(conn: sqlite3.Connection) -> tuple[Any, Any]:
+    """Return ``(asset_ids, taken_at)`` for every dated, non-trashed photo.
+
+    Only one asset per SHA-256 group is kept (as in :func:`list_assets_deduped`),
+    so exact duplicates are not counted twice by time-based aggregations such
+    as the mood timeline.
+
+    Returns:
+        Two ``int64`` numpy arrays of equal length, ordered by asset id.
+    """
+    import numpy as np
+
+    source = _deduped_assets_sql("WHERE COALESCE(trashed, 0) = 0 AND taken_at IS NOT NULL")
+    rows = conn.execute(f"SELECT id, taken_at FROM {source} ORDER BY id").fetchall()  # noqa: S608
+    if not rows:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+    arr = np.asarray(rows, dtype=np.int64)
+    return arr[:, 0].copy(), arr[:, 1].copy()
+
+
+def dated_assets_fingerprint(conn: sqlite3.Connection) -> tuple:
+    """Return a cheap fingerprint of what :func:`load_dated_asset_ids` depends on.
+
+    It changes when photos are added or removed, re-dated, (un)trashed or
+    re-hashed, so callers can tell when a cached result is stale without
+    reloading every row.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*), TOTAL(taken_at), TOTAL(COALESCE(trashed, 0) * id), COUNT(sha256)"
+        " FROM assets"
+    ).fetchone()
+    return tuple(row)
+
+
 def count_assets_newer_than(
     conn: sqlite3.Connection,
     timestamp: int,
