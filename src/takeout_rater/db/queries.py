@@ -965,7 +965,9 @@ def list_assets_by_score(
         f" FROM assets a"
         f" JOIN asset_scores s ON s.asset_id = a.id"
         f" {where}"
-        f" ORDER BY s.value {order}, a.id {order}"
+        # s.asset_id (= a.id) as tie-breaker: stable pages, and the order
+        # matches idx_asset_scores_metric_value so no sort is needed.
+        f" ORDER BY s.value {order}, s.asset_id {order}"
         f" LIMIT ? OFFSET ?"
     )
     params.extend([limit, offset])

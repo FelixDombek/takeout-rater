@@ -560,3 +560,29 @@ def test_list_assets_orders_equal_timestamps_by_id() -> None:
     pages = [list_assets(conn, limit=3, offset=o) for o in range(0, 12, 3)]
     ids = [a.id for page in pages for a in page]
     assert ids == list(range(10, 0, -1))
+
+
+def test_migration_19_adds_score_value_index() -> None:
+    conn = sqlite3.connect(":memory:")
+    migrate(conn)
+    # Put the database back into its v18 shape, then migrate forward.
+    conn.execute("DROP INDEX idx_asset_scores_metric_value")
+    conn.execute(
+        "CREATE INDEX idx_asset_scores_scorer ON asset_scores (scorer_id, variant_id, metric_key)"
+    )
+    conn.execute("PRAGMA user_version = 18")
+    migrate(conn)
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "idx_asset_scores_metric_value" in names
+    assert "idx_asset_scores_scorer" not in names
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+    plan = " ".join(
+        str(r[3])
+        for r in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT s.asset_id FROM asset_scores s"
+            " WHERE s.scorer_id = 'x' AND s.variant_id = 'y' AND s.metric_key = 'z'"
+            " ORDER BY s.value DESC, s.asset_id DESC LIMIT 5"
+        )
+    )
+    assert "idx_asset_scores_metric_value" in plan
+    assert "TEMP B-TREE" not in plan

@@ -171,7 +171,11 @@ def _populate(conn: sqlite3.Connection) -> None:
 def test_migration_from_v14_adds_tables() -> None:
     conn = sqlite3.connect(":memory:")
     conn.executescript(
-        "CREATE TABLE clustering_runs (id INTEGER PRIMARY KEY); PRAGMA user_version = 13;"
+        "CREATE TABLE clustering_runs (id INTEGER PRIMARY KEY);"
+        # Every real v13+ library has asset_scores (migration 19 indexes it).
+        " CREATE TABLE asset_scores (asset_id INTEGER, scorer_id TEXT, variant_id TEXT,"
+        " metric_key TEXT, value REAL);"
+        " PRAGMA user_version = 13;"
     )
     migrate(conn)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION

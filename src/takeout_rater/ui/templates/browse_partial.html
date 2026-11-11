@@ -9,7 +9,7 @@
   <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
     <img
       class="card-thumb"
-      src="/thumbs/{{ asset.id }}"
+      src="/thumbs/{{ asset.id }}{% if asset.id in thumb_v %}?v={{ thumb_v[asset.id] }}{% endif %}"
       alt="{{ asset.title or asset.filename }}"
       loading="lazy"
       onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"

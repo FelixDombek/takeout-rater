@@ -1508,3 +1508,30 @@ def test_browse_deep_page_renders_its_own_page_number(tmp_path: Path) -> None:
     assert 'data-page-anchor="3"' in html
     assert 'data-page="3"' in html
     assert 'data-page="1"' not in html
+
+
+def test_browse_thumbnails_use_versioned_cacheable_urls(tmp_path: Path) -> None:
+    """Browse links thumbs with ?v=<mtime>; that URL is cacheable, others revalidate."""
+    import re
+
+    from takeout_rater.db.connection import library_state_dir
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
+
+    conn = _make_db()
+    asset_id = _add_asset(conn, "Photos/img.jpg")
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    thumb = thumb_path_for_id(library_state_dir(tmp_path) / "thumbs", asset_id)
+    thumb.parent.mkdir(parents=True, exist_ok=True)
+    thumb.write_bytes(b"\xff\xd8\xff\xd9")
+    client = TestClient(app, follow_redirects=True)
+
+    html = client.get("/assets").text
+    match = re.search(rf'src="/thumbs/{asset_id}\?v=([0-9a-f]+)"', html)
+    assert match, "browse card should link a versioned thumbnail"
+    partial = client.get("/assets?partial=1").text
+    assert f"/thumbs/{asset_id}?v={match.group(1)}" in partial
+
+    cached = client.get(f"/thumbs/{asset_id}?v={match.group(1)}")
+    assert "immutable" in cached.headers["cache-control"]
+    assert client.get(f"/thumbs/{asset_id}").headers["cache-control"] == "no-cache"
+    assert client.get(f"/thumbs/{asset_id}?v=stale").headers["cache-control"] == "no-cache"

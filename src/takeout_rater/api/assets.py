@@ -87,6 +87,25 @@ def _get_thumbs_dir(request: Request) -> Path:
     return thumbs_dir
 
 
+def _thumb_versions(thumbs_dir: Path | None, asset_ids: list[int]) -> dict[int, str]:
+    """Return a cache-busting version token per asset: its thumbnail's mtime.
+
+    Browse pages link thumbnails as ``/thumbs/<id>?v=<token>`` so the browser
+    may cache them for good: a rebuilt library or regenerated thumbnail gets a
+    new mtime and therefore a new URL.  Missing thumbnails get no token.
+    """
+    if thumbs_dir is None:
+        return {}
+    versions: dict[int, str] = {}
+    for asset_id in asset_ids:
+        try:
+            mtime_ns = thumb_path_for_id(thumbs_dir, asset_id).stat().st_mtime_ns
+        except OSError:
+            continue
+        versions[asset_id] = format(mtime_ns, "x")
+    return versions
+
+
 def _read_sidecar_json(photos_root: Path | None, asset: AssetRow) -> str | None:
     """Return the pretty-printed raw sidecar JSON for *asset*, or ``None``.
 
@@ -415,6 +434,7 @@ def browse_assets(
 
     has_more = len(assets) > _PAGE_SIZE
     assets = assets[:_PAGE_SIZE]
+    thumb_v = _thumb_versions(request.app.state.thumbs_dir, [a.id for a in assets])
 
     if is_partial:
         templates = request.app.state.templates
@@ -426,6 +446,7 @@ def browse_assets(
                 "page": page,
                 "has_more": has_more,
                 "score_map": score_map,
+                "thumb_v": thumb_v,
             },
         )
 
@@ -498,6 +519,7 @@ def browse_assets(
             "sort_desc": eff_desc,
             "sort_options": sort_options,
             "score_map": score_map,
+            "thumb_v": thumb_v,
             "min_score": eff_min,
             "max_score": eff_max,
             # Extra sort criteria passed as a list of (sort_by, min, max, descending) tuples
@@ -1108,26 +1130,38 @@ async def analyze_uploaded_image(
 def serve_thumbnail(
     asset_id: int,
     request: Request,
+    v: str | None = None,
     thumbs_dir: Path = Depends(_get_thumbs_dir),  # noqa: B008
 ) -> FileResponse:
     """Serve the JPEG thumbnail for an asset.
 
     Returns 404 if the thumbnail has not been generated yet.
 
-    ``Cache-Control: no-cache`` is set so that browsers always revalidate
-    against the server's ``ETag`` before using a cached thumbnail.  Without
-    this directive, browsers apply heuristic freshness and can serve a stale
-    cached thumbnail after a full database rebuild where the same asset ID
-    maps to a completely different photo.
+    Without ``v``, ``Cache-Control: no-cache`` is set so that browsers always
+    revalidate against the server's ``ETag`` before using a cached thumbnail.
+    Otherwise browsers apply heuristic freshness and can serve a stale cached
+    thumbnail after a full database rebuild where the same asset ID maps to a
+    completely different photo.
+
+    With ``v`` equal to the file's current version (its mtime, see
+    :func:`_thumb_versions`) the response is cacheable for a year: a rebuilt
+    or regenerated thumbnail changes the version and therefore the URL.
     """
     thumb = thumb_path_for_id(thumbs_dir, asset_id)
-    if not thumb.exists():
-        raise HTTPException(status_code=404, detail=f"Thumbnail for asset {asset_id} not found")
-    return FileResponse(
-        str(thumb),
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-cache"},
-    )
+    try:
+        mtime_ns = thumb.stat().st_mtime_ns
+    except OSError:
+        raise HTTPException(
+            status_code=404, detail=f"Thumbnail for asset {asset_id} not found"
+        ) from None
+    # A URL carrying the thumbnail's current version (see _thumb_versions)
+    # names exactly this file, so the browser may keep it without asking
+    # again.  Unversioned or stale URLs keep revalidating.
+    if v is not None and v == format(mtime_ns, "x"):
+        cache = "public, max-age=31536000, immutable"
+    else:
+        cache = "no-cache"
+    return FileResponse(str(thumb), media_type="image/jpeg", headers={"Cache-Control": cache})
 
 
 @router.get("/image/{asset_id}")
