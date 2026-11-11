@@ -28,7 +28,7 @@ from takeout_rater.db.queries import (
     upsert_asset_scores,
 )
 from takeout_rater.indexing.thumbnailer import thumb_path_for_id
-from takeout_rater.scoring.scorers.base import BaseScorer
+from takeout_rater.scoring.scorers.base import BaseScorer, LibraryScorer
 
 _logger = logging.getLogger(__name__)
 
@@ -88,6 +88,52 @@ def _score_batch_with_context(
             f"Scorer {scorer_id!r} (variant {variant_id!r}) failed on "
             f"{len(paths)} asset(s) [{asset_summary}]: {exc}"
         ) from exc
+
+
+def _run_library_scorer(
+    conn: sqlite3.Connection,
+    scorer: LibraryScorer,
+    *,
+    skip_existing: bool,
+    diagnostics: dict[str, object],
+    emit_diagnostics: Callable[[], None],
+    on_progress: Callable[[int, int], None] | None,
+    cancel_check: Callable[[], bool] | None,
+) -> int:
+    """Run a :class:`LibraryScorer` in one pass and write all its rows.
+
+    With *skip_existing* the run is skipped when no scoreable asset lacks a
+    current score; otherwise every asset is rescored, because whole-library
+    scores (e.g. kNN outliers) change for everyone when photos are added.
+    """
+    spec = scorer.spec()
+    if skip_existing and scorer.pending_count(conn, scorer_version=spec.version) == 0:
+        emit_diagnostics()
+        return 0
+    compute_start = time.perf_counter()
+    results = scorer.score_library(conn, on_progress=on_progress, cancel_check=cancel_check)
+    diagnostics["score_batch_seconds"] = time.perf_counter() - compute_start
+    if results is None:  # cancelled
+        emit_diagnostics()
+        return 0
+    rows = [(aid, key, value) for aid, metrics in results for key, value in metrics.items()]
+    write_start = time.perf_counter()
+    for start in range(0, len(rows), 10_000):
+        upsert_asset_scores(
+            conn,
+            spec.scorer_id,
+            scorer.variant_id,
+            rows[start : start + 10_000],
+            scorer_version=spec.version,
+        )
+    diagnostics["score_db_write_seconds"] = time.perf_counter() - write_start
+    diagnostics["score_assets_total"] = len(results)
+    diagnostics["score_assets_seen"] = len(results)
+    diagnostics["score_rows_written"] = len(rows)
+    emit_diagnostics()
+    if on_progress is not None:
+        on_progress(len(results), len(results))
+    return len(results)
 
 
 def run_scorer(
@@ -203,6 +249,17 @@ def run_scorer(
 
     def _diag_inc(key: str, amount: int = 1) -> None:
         diagnostics[key] = int(diagnostics.get(key, 0)) + amount
+
+    if isinstance(scorer, LibraryScorer):
+        return _run_library_scorer(
+            conn,
+            scorer,
+            skip_existing=skip_existing and asset_ids is None,
+            diagnostics=diagnostics,
+            emit_diagnostics=_emit_diagnostics,
+            on_progress=on_progress,
+            cancel_check=cancel_check,
+        )
 
     # Determine which assets to score
     stream_all_assets = False

@@ -23,6 +23,7 @@ from takeout_rater.scoring.scorers.laion import AestheticScorer
 from takeout_rater.scoring.scorers.nima import NIMAScorer
 from takeout_rater.scoring.scorers.nsfw import NSFWScorer
 from takeout_rater.scoring.scorers.pyiqa_adapter import PyIQAScorer
+from takeout_rater.scoring.scorers.semantic_outlier import SemanticOutlierScorer
 from takeout_rater.scoring.scorers.simple import SimpleScorer
 
 _SCORER_CLASSES: list[type[BaseScorer]] = [
@@ -36,6 +37,7 @@ _SCORER_CLASSES: list[type[BaseScorer]] = [
     PyIQAScorer,
     CafeStyleScorer,
     FaceQualityScorer,
+    SemanticOutlierScorer,
 ]
 
 
