@@ -14,6 +14,19 @@ to the output folder — handy for checking or recalibrating the thresholds in
 python docs/tools/face_quality_check.py face-check-out 400
 ```
 
+## Story chapters check
+
+`story_chapters_check.py` splits the library's largest trips into story
+chapters at every sensitivity (Fewer / Normal / More) without writing to the
+database.  It writes `summary.csv` (chapter counts and sizes per trip),
+`scores.txt` (break-score percentiles for chapter starts vs other gaps) and a
+contact sheet per trip with one row per chapter — handy for checking the
+presets in `takeout_rater/events/chapters.py`.
+
+```bash
+python docs/tools/story_chapters_check.py chapters-check-out 12
+```
+
 ## Infer Takeout sidecar schema
 
 `infer_takeout_sidecar_schema.py` walks a Google Photos Takeout folder, reads
