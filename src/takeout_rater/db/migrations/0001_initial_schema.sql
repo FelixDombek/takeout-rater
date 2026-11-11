@@ -256,7 +256,8 @@ CREATE INDEX IF NOT EXISTS idx_assets_indexed_at       ON assets (indexed_at);
 CREATE INDEX IF NOT EXISTS idx_assets_sha256           ON assets (sha256);
 CREATE INDEX IF NOT EXISTS idx_asset_paths_asset_id    ON asset_paths (asset_id);
 CREATE INDEX IF NOT EXISTS idx_asset_scores_asset_id   ON asset_scores (asset_id);
-CREATE INDEX IF NOT EXISTS idx_asset_scores_scorer     ON asset_scores (scorer_id, variant_id, metric_key);
+-- Browse "sort by score" order (see 0014_score_value_index.sql)
+CREATE INDEX IF NOT EXISTS idx_asset_scores_metric_value ON asset_scores (scorer_id, variant_id, metric_key, value, asset_id);
 CREATE INDEX IF NOT EXISTS idx_album_assets_asset_id   ON album_assets (asset_id);
 CREATE INDEX IF NOT EXISTS idx_clusters_run_id         ON clusters (run_id);
 CREATE INDEX IF NOT EXISTS idx_face_embeddings_asset_id ON face_embeddings(asset_id);
@@ -283,4 +284,4 @@ CREATE TABLE IF NOT EXISTS asset_places (
 CREATE INDEX IF NOT EXISTS idx_asset_places_place ON asset_places (country_code, admin1, city);
 CREATE INDEX IF NOT EXISTS idx_asset_places_city  ON asset_places (city);
 
-PRAGMA user_version = 18;
+PRAGMA user_version = 19;

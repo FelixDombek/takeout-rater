@@ -1476,3 +1476,99 @@ def test_asset_detail_has_more_like_this_panel(client_with_assets: TestClient) -
     assert "mlt-panel" in resp.text
     assert "mlt-method" in resp.text
     assert "More like this" in resp.text
+
+
+def test_browse_partial_reports_has_more(tmp_path: Path) -> None:
+    """Partial pages say whether another page follows (no COUNT per scroll page)."""
+    from takeout_rater.api.assets import _PAGE_SIZE
+
+    conn = _make_db()
+    for i in range(_PAGE_SIZE + 1):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    client = TestClient(app, follow_redirects=True)
+    first = client.get("/assets?partial=1&page=1").text
+    assert 'data-has-more="1"' in first
+    assert first.count('class="card"') == _PAGE_SIZE
+    second = client.get("/assets?partial=1&page=2").text
+    assert 'data-has-more="0"' in second
+    assert second.count('class="card"') == 1
+
+
+def test_browse_deep_page_renders_its_own_page_number(tmp_path: Path) -> None:
+    """A timeline jump lands on ?page=N; cards and anchor must carry N, not 1."""
+    from takeout_rater.api.assets import _PAGE_SIZE
+
+    conn = _make_db()
+    for i in range(_PAGE_SIZE * 2 + 1):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    client = TestClient(app, follow_redirects=True)
+    html = client.get("/assets?page=3").text
+    assert 'data-page-anchor="3"' in html
+    assert 'data-page="3"' in html
+    assert 'data-page="1"' not in html
+
+
+def test_browse_thumbnails_use_versioned_cacheable_urls(tmp_path: Path) -> None:
+    """Browse links thumbs with ?v=<mtime>; that URL is cacheable, others revalidate."""
+    import re
+
+    from takeout_rater.db.connection import library_state_dir
+    from takeout_rater.indexing.thumbnailer import thumb_path_for_id
+
+    conn = _make_db()
+    asset_id = _add_asset(conn, "Photos/img.jpg")
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    thumb = thumb_path_for_id(library_state_dir(tmp_path) / "thumbs", asset_id)
+    thumb.parent.mkdir(parents=True, exist_ok=True)
+    thumb.write_bytes(b"\xff\xd8\xff\xd9")
+    client = TestClient(app, follow_redirects=True)
+
+    html = client.get("/assets").text
+    match = re.search(rf'src="/thumbs/{asset_id}\?v=([0-9a-f]+)"', html)
+    assert match, "browse card should link a versioned thumbnail"
+    partial = client.get("/assets?partial=1").text
+    assert f"/thumbs/{asset_id}?v={match.group(1)}" in partial
+
+    cached = client.get(f"/thumbs/{asset_id}?v={match.group(1)}")
+    assert "immutable" in cached.headers["cache-control"]
+    assert client.get(f"/thumbs/{asset_id}").headers["cache-control"] == "no-cache"
+    assert client.get(f"/thumbs/{asset_id}?v=stale").headers["cache-control"] == "no-cache"
+
+
+def test_browse_partial_cursor_returns_same_page_as_offset(tmp_path: Path) -> None:
+    """?cursor_dir=after&cursor_key=<ts>&cursor_id=<id> yields the offset page."""
+    import re
+
+    from takeout_rater.api.assets import _PAGE_SIZE
+
+    conn = _make_db()
+    for i in range(_PAGE_SIZE * 2 + 5):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    conn.execute("UPDATE assets SET taken_at = 1700000000 - (id / 3)")
+    conn.commit()
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    client = TestClient(app, follow_redirects=True)
+
+    def ids(html: str) -> list[str]:
+        return re.findall(r'data-lb-id="(\d+)"', html)
+
+    page1 = client.get("/assets?partial=1&page=1").text
+    page2 = client.get("/assets?partial=1&page=2").text
+    last_id = ids(page1)[-1]
+    last_ts = re.findall(rf'data-lb-id="{last_id}"[^>]*?data-ts="(\d*)"', page1, re.S)[0]
+    by_cursor = client.get(
+        f"/assets?partial=1&page=2&cursor_dir=after&cursor_key={last_ts}&cursor_id={last_id}"
+    ).text
+    assert ids(by_cursor) == ids(page2)
+    assert 'data-has-more="1"' in by_cursor
+    first_id = ids(page2)[0]
+    first_ts = re.findall(rf'data-lb-id="{first_id}"[^>]*?data-ts="(\d*)"', page2, re.S)[0]
+    before = client.get(
+        f"/assets?partial=1&page=1&cursor_dir=before&cursor_key={first_ts}&cursor_id={first_id}"
+    ).text
+    assert ids(before) == ids(page1)
+    # Garbage cursor values fall back to the page number.
+    bad = client.get("/assets?partial=1&page=2&cursor_dir=after&cursor_key=nan&cursor_id=1").text
+    assert ids(bad) == ids(page2)

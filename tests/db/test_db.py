@@ -11,6 +11,7 @@ import pytest
 from takeout_rater.db.connection import library_state_dir, open_library_db
 from takeout_rater.db.queries import (
     AssetRow,
+    PageCursor,
     count_assets,
     count_assets_deduped,
     get_asset_alias_paths,
@@ -19,6 +20,7 @@ from takeout_rater.db.queries import (
     get_duplicate_assets,
     list_asset_ids_without_sha256,
     list_assets,
+    list_assets_by_score,
     list_assets_deduped,
     update_asset_sha256,
     upsert_asset,
@@ -501,3 +503,140 @@ def test_count_assets_deduped_favorited_filter() -> None:
     upsert_asset(conn, {**_minimal_asset("c/other.jpg"), "sha256": "bbb", "favorited": 0})
     assert count_assets_deduped(conn, favorited=True) == 1
     assert count_assets_deduped(conn, favorited=False) == 1
+
+
+# ── Browse paging: dedup + stable order ───────────────────────────────────────
+
+
+def _insert_raw(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    sha: str | None,
+    taken_at: int | None,
+    favorited: int = 0,
+) -> None:
+    # Raw insert: upsert_asset merges equal sha256 at write time, but older
+    # libraries (and lazily hashed rows) can still hold duplicate rows.
+    conn.execute(
+        "INSERT INTO assets (id, relpath, filename, ext, sha256, taken_at, favorited, indexed_at)"
+        " VALUES (?, ?, ?, '.jpg', ?, ?, ?, 0)",
+        (asset_id, f"p/{asset_id}.jpg", f"{asset_id}.jpg", sha, taken_at, favorited),
+    )
+
+
+def _window_dedup_reference(conn: sqlite3.Connection, where: str = "") -> list[int]:
+    rows = conn.execute(
+        "SELECT id FROM (SELECT id, taken_at, ROW_NUMBER() OVER ("
+        " PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id) AS rn"
+        f" FROM assets {where}) WHERE rn = 1 ORDER BY taken_at DESC, id DESC"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def test_list_assets_deduped_matches_window_reference_across_pages() -> None:
+    conn = _open_in_memory()
+    # Many equal timestamps, some NULL timestamps, NULL hashes and duplicate
+    # hashes whose lowest-id copy is not favorited.
+    for i in range(1, 121):
+        sha = None if i % 11 == 0 else f"dup{i % 7}" if i % 5 == 0 else f"s{i}"
+        taken = None if i % 13 == 0 else 1_700_000_000 - (i // 4)
+        _insert_raw(conn, i, sha, taken, favorited=1 if i % 3 == 0 else 0)
+    conn.commit()
+
+    for fav, where in ((None, ""), (True, "WHERE favorited = 1")):
+        expected = _window_dedup_reference(conn, where)
+        paged: list[int] = []
+        for offset in range(0, 200, 7):
+            paged += [
+                a.id for a in list_assets_deduped(conn, limit=7, offset=offset, favorited=fav)
+            ]
+        assert paged == expected
+        assert len(paged) == count_assets_deduped(conn, favorited=fav)
+
+
+def test_list_assets_orders_equal_timestamps_by_id() -> None:
+    conn = _open_in_memory()
+    for i in range(1, 11):
+        _insert_raw(conn, i, f"s{i}", 1_700_000_000)
+    conn.commit()
+    pages = [list_assets(conn, limit=3, offset=o) for o in range(0, 12, 3)]
+    ids = [a.id for page in pages for a in page]
+    assert ids == list(range(10, 0, -1))
+
+
+def test_migration_19_adds_score_value_index() -> None:
+    conn = sqlite3.connect(":memory:")
+    migrate(conn)
+    # Put the database back into its v18 shape, then migrate forward.
+    conn.execute("DROP INDEX idx_asset_scores_metric_value")
+    conn.execute(
+        "CREATE INDEX idx_asset_scores_scorer ON asset_scores (scorer_id, variant_id, metric_key)"
+    )
+    conn.execute("PRAGMA user_version = 18")
+    migrate(conn)
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "idx_asset_scores_metric_value" in names
+    assert "idx_asset_scores_scorer" not in names
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_SCHEMA_VERSION
+    plan = " ".join(
+        str(r[3])
+        for r in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT s.asset_id FROM asset_scores s"
+            " WHERE s.scorer_id = 'x' AND s.variant_id = 'y' AND s.metric_key = 'z'"
+            " ORDER BY s.value DESC, s.asset_id DESC LIMIT 5"
+        )
+    )
+    assert "idx_asset_scores_metric_value" in plan
+    assert "TEMP B-TREE" not in plan
+
+
+def _cursor_library() -> sqlite3.Connection:
+    conn = _open_in_memory()
+    # Equal timestamps, a NULL-date tail, duplicate hashes and tied scores.
+    for i in range(1, 61):
+        sha = f"dup{i % 4}" if i % 9 == 0 else f"s{i}"
+        taken = None if i % 6 == 0 else 1_700_000_000 - (i // 3)
+        _insert_raw(conn, i, sha, taken)
+        conn.execute(
+            "INSERT INTO asset_scores (asset_id, scorer_id, variant_id, metric_key, value)"
+            " VALUES (?, 'sc', 'v', 'm', ?)",
+            (i, float(i % 5)),
+        )
+    conn.commit()
+    return conn
+
+
+@pytest.mark.parametrize("deduped", [True, False])
+def test_date_cursor_pages_match_offset_pages(deduped: bool) -> None:
+    conn = _cursor_library()
+    fn = list_assets_deduped if deduped else list_assets
+    size = 7
+    pages = []
+    offset = 0
+    while page := fn(conn, limit=size, offset=offset):
+        pages.append(page)
+        offset += size
+    assert len(pages) > 4
+    for prev, cur in zip(pages, pages[1:], strict=False):
+        last, first = prev[-1], cur[0]
+        after = fn(conn, limit=size, cursor=PageCursor("after", last.taken_at, last.id))
+        assert [a.id for a in after] == [a.id for a in cur]
+        before = fn(conn, limit=size, cursor=PageCursor("before", first.taken_at, first.id))
+        assert [a.id for a in before] == [a.id for a in prev]
+
+
+@pytest.mark.parametrize("descending", [True, False])
+def test_score_cursor_pages_match_offset_pages(descending: bool) -> None:
+    conn = _cursor_library()
+
+    def fetch(**kw):  # noqa: ANN003, ANN202
+        return list_assets_by_score(conn, "sc", "m", variant_id="v", descending=descending, **kw)
+
+    size = 6
+    pages = [fetch(limit=size, offset=o) for o in range(0, 60, size)]
+    for prev, cur in zip(pages, pages[1:], strict=False):
+        (last, last_v), (first, first_v) = prev[-1], cur[0]
+        after = fetch(limit=size, cursor=PageCursor("after", last_v, last.id))
+        assert [a.id for a, _ in after] == [a.id for a, _ in cur]
+        before = fetch(limit=size, cursor=PageCursor("before", first_v, first.id))
+        assert [a.id for a, _ in before] == [a.id for a, _ in prev]

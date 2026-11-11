@@ -5,7 +5,8 @@ from __future__ import annotations
 import datetime
 import json
 import sqlite3
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from functools import partial as partial_fn
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from takeout_rater.db.queries import (
     AssetRow,
+    PageCursor,
     PlaceFilter,
     SortCriterion,
     count_asset_places,
@@ -84,6 +86,25 @@ def _get_thumbs_dir(request: Request) -> Path:
     if thumbs_dir is None:
         raise HTTPException(status_code=503, detail="Library not configured — visit /setup")
     return thumbs_dir
+
+
+def _thumb_versions(thumbs_dir: Path | None, asset_ids: list[int]) -> dict[int, str]:
+    """Return a cache-busting version token per asset: its thumbnail's mtime.
+
+    Browse pages link thumbnails as ``/thumbs/<id>?v=<token>`` so the browser
+    may cache them for good: a rebuilt library or regenerated thumbnail gets a
+    new mtime and therefore a new URL.  Missing thumbnails get no token.
+    """
+    if thumbs_dir is None:
+        return {}
+    versions: dict[int, str] = {}
+    for asset_id in asset_ids:
+        try:
+            mtime_ns = thumb_path_for_id(thumbs_dir, asset_id).stat().st_mtime_ns
+        except OSError:
+            continue
+        versions[asset_id] = format(mtime_ns, "x")
+    return versions
 
 
 def _read_sidecar_json(photos_root: Path | None, asset: AssetRow) -> str | None:
@@ -233,6 +254,23 @@ def _parse_sort_by(sort_by: str | None) -> tuple[str, str, str] | None:
     return scorer_id, variant_id, metric_key
 
 
+def _parse_cursor(
+    direction: str | None, key: str | None, asset_id: int | None
+) -> PageCursor | None:
+    """Build a :class:`PageCursor` from query parameters, or ``None`` if incomplete."""
+    if direction not in ("after", "before") or asset_id is None or key is None:
+        return None
+    if key == "":
+        return PageCursor(direction, None, asset_id)
+    try:
+        value = float(key)
+    except ValueError:
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return PageCursor(direction, int(value) if value.is_integer() else value, asset_id)
+
+
 def _parse_place(country: str | None, region: str | None, city: str | None) -> PlaceFilter | None:
     """Build a :class:`PlaceFilter` from browse query params (``None`` when unset)."""
 
@@ -274,6 +312,9 @@ def browse_assets(
     region: str | None = None,
     city: str | None = None,
     partial: str = "0",
+    cursor_dir: str | None = None,
+    cursor_key: str | None = None,
+    cursor_id: int | None = None,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
     """Render the browse page with paginated asset thumbnails.
@@ -299,13 +340,26 @@ def browse_assets(
       ``asset_places``.  Only geotagged photos with a looked-up place match.
     - ``partial``: ``"1"`` to return only a card fragment (for infinite scroll
       fetch requests); ``"0"`` (default) to return the full page.
+    - ``cursor_dir`` / ``cursor_key`` / ``cursor_id``: optional keyset position
+      (see :class:`PageCursor`) for partial requests.  ``after`` + the last
+      card of page N-1, or ``before`` + the first card of page N+1, return
+      page N without stepping over all earlier rows.  ``cursor_key`` is the
+      card's sort value (``taken_at`` or score; empty for no date).  Ignored
+      for multi-level sorts, which always use ``page``.
     """
     place = _parse_place(country, region, city)
-    offset = max(0, (page - 1) * _PAGE_SIZE)
+    page = max(1, page)
+    offset = (page - 1) * _PAGE_SIZE
+    is_partial = partial == "1"
+    # Fetch one extra row so infinite-scroll requests know whether another
+    # page follows without running a COUNT over the whole library each time.
+    fetch_limit = _PAGE_SIZE + 1
+    count_total: Callable[[], int]
     fav_filter: bool | None = True if favorited == "1" else None
     dedup_enabled = dedupe != "0"
 
     sort_parsed = _parse_sort_by(sort_by)
+    cursor = _parse_cursor(cursor_dir, cursor_key, cursor_id) if is_partial else None
     # Normalize sort_by: use the canonical form when valid, None when malformed.
     # This prevents untrusted query text from being propagated into template links.
     canonical_sort_by: str | None = None
@@ -358,22 +412,25 @@ def browse_assets(
             asset_score_pairs = list_assets_multi_sort(
                 conn,
                 criteria,
-                limit=_PAGE_SIZE,
+                limit=fetch_limit,
                 offset=offset,
                 favorited=fav_filter,
                 place=place,
             )
             assets = [a for a, _ in asset_score_pairs]
             score_map = {a.id: s for a, s in asset_score_pairs}
-            total = count_assets_multi_sort(conn, criteria, favorited=fav_filter, place=place)
+            count_total = partial_fn(
+                count_assets_multi_sort, conn, criteria, favorited=fav_filter, place=place
+            )
         else:
             asset_score_pairs = list_assets_by_score(
                 conn,
                 scorer_id,
                 metric_key,
                 variant_id=variant_id,
-                limit=_PAGE_SIZE,
+                limit=fetch_limit,
                 offset=offset,
+                cursor=cursor if cursor is not None and cursor.key is not None else None,
                 descending=eff_desc,
                 favorited=fav_filter,
                 place=place,
@@ -382,7 +439,8 @@ def browse_assets(
             )
             assets = [a for a, _ in asset_score_pairs]
             score_map = {a.id: s for a, s in asset_score_pairs}
-            total = count_assets_with_score(
+            count_total = partial_fn(
+                count_assets_with_score,
                 conn,
                 scorer_id,
                 metric_key,
@@ -394,15 +452,50 @@ def browse_assets(
             )
     elif dedup_enabled:
         assets = list_assets_deduped(
-            conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter, place=place
+            conn,
+            limit=fetch_limit,
+            offset=offset,
+            cursor=cursor,
+            favorited=fav_filter,
+            place=place,
         )
-        total = count_assets_deduped(conn, favorited=fav_filter, place=place)
+        count_total = partial_fn(count_assets_deduped, conn, favorited=fav_filter, place=place)
     else:
         assets = list_assets(
-            conn, limit=_PAGE_SIZE, offset=offset, favorited=fav_filter, place=place
+            conn,
+            limit=fetch_limit,
+            offset=offset,
+            cursor=cursor,
+            favorited=fav_filter,
+            place=place,
         )
-        total = count_assets(conn, favorited=fav_filter, place=place)
+        count_total = partial_fn(count_assets, conn, favorited=fav_filter, place=place)
 
+    if cursor is not None and cursor.direction == "before" and not use_multi_sort:
+        # "before" pages end where the requested page's successor starts, so a
+        # next page always exists; the extra row (if any) is at the front.
+        has_more = True
+        assets = assets[-_PAGE_SIZE:]
+    else:
+        has_more = len(assets) > _PAGE_SIZE
+        assets = assets[:_PAGE_SIZE]
+    thumb_v = _thumb_versions(request.app.state.thumbs_dir, [a.id for a in assets])
+
+    if is_partial:
+        templates = request.app.state.templates
+        return templates.TemplateResponse(
+            "browse_partial.html",
+            {
+                "request": request,
+                "assets": assets,
+                "page": page,
+                "has_more": has_more,
+                "score_map": score_map,
+                "thumb_v": thumb_v,
+            },
+        )
+
+    total = count_total()
     total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
 
     # Build sort options from registered scorer specs, but only include
@@ -435,46 +528,34 @@ def browse_assets(
     # template can distinguish "no indexed photos" from "no scored photos".
     total_indexed = count_assets(conn) if sort_parsed is not None and total == 0 else None
 
-    # Place filter facets (full page only): countries always, regions/cities
+    # Place filter facets: countries always, regions/cities
     # for the selected country.  ``places_total`` = 0 hides the section.
     place_facets: dict = {}
-    places_total = 0
     has_geotagged = False
-    if partial != "1":
-        places_total = count_asset_places(conn)
-        if not places_total:
-            has_geotagged = (
-                conn.execute(
-                    "SELECT 1 FROM assets WHERE geo_lat != 0 OR geo_lon != 0"
-                    " OR geo_exif_lat != 0 OR geo_exif_lon != 0 LIMIT 1"
-                ).fetchone()
-                is not None
-            )
-        if places_total:
-            place_facets = list_place_facets(
-                conn,
-                country_code=place.country_code if place else None,
-                admin1=place.admin1 if place else None,
-            )
+    places_total = count_asset_places(conn)
+    if not places_total:
+        has_geotagged = (
+            conn.execute(
+                "SELECT 1 FROM assets WHERE geo_lat != 0 OR geo_lon != 0"
+                " OR geo_exif_lat != 0 OR geo_exif_lon != 0 LIMIT 1"
+            ).fetchone()
+            is not None
+        )
+    if places_total:
+        place_facets = list_place_facets(
+            conn,
+            country_code=place.country_code if place else None,
+            admin1=place.admin1 if place else None,
+        )
 
     templates = request.app.state.templates
-    if partial == "1":
-        return templates.TemplateResponse(
-            "browse_partial.html",
-            {
-                "request": request,
-                "assets": assets,
-                "page": page,
-                "total_pages": total_pages,
-                "score_map": score_map,
-            },
-        )
     return templates.TemplateResponse(
         "browse.html",
         {
             "request": request,
             "assets": assets,
             "page": page,
+            "page_size": _PAGE_SIZE,
             "total_pages": total_pages,
             "total": total,
             "total_indexed": total_indexed,
@@ -483,6 +564,7 @@ def browse_assets(
             "sort_desc": eff_desc,
             "sort_options": sort_options,
             "score_map": score_map,
+            "thumb_v": thumb_v,
             "min_score": eff_min,
             "max_score": eff_max,
             # Extra sort criteria passed as a list of (sort_by, min, max, descending) tuples
@@ -1093,26 +1175,38 @@ async def analyze_uploaded_image(
 def serve_thumbnail(
     asset_id: int,
     request: Request,
+    v: str | None = None,
     thumbs_dir: Path = Depends(_get_thumbs_dir),  # noqa: B008
 ) -> FileResponse:
     """Serve the JPEG thumbnail for an asset.
 
     Returns 404 if the thumbnail has not been generated yet.
 
-    ``Cache-Control: no-cache`` is set so that browsers always revalidate
-    against the server's ``ETag`` before using a cached thumbnail.  Without
-    this directive, browsers apply heuristic freshness and can serve a stale
-    cached thumbnail after a full database rebuild where the same asset ID
-    maps to a completely different photo.
+    Without ``v``, ``Cache-Control: no-cache`` is set so that browsers always
+    revalidate against the server's ``ETag`` before using a cached thumbnail.
+    Otherwise browsers apply heuristic freshness and can serve a stale cached
+    thumbnail after a full database rebuild where the same asset ID maps to a
+    completely different photo.
+
+    With ``v`` equal to the file's current version (its mtime, see
+    :func:`_thumb_versions`) the response is cacheable for a year: a rebuilt
+    or regenerated thumbnail changes the version and therefore the URL.
     """
     thumb = thumb_path_for_id(thumbs_dir, asset_id)
-    if not thumb.exists():
-        raise HTTPException(status_code=404, detail=f"Thumbnail for asset {asset_id} not found")
-    return FileResponse(
-        str(thumb),
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-cache"},
-    )
+    try:
+        mtime_ns = thumb.stat().st_mtime_ns
+    except OSError:
+        raise HTTPException(
+            status_code=404, detail=f"Thumbnail for asset {asset_id} not found"
+        ) from None
+    # A URL carrying the thumbnail's current version (see _thumb_versions)
+    # names exactly this file, so the browser may keep it without asking
+    # again.  Unversioned or stale URLs keep revalidating.
+    if v is not None and v == format(mtime_ns, "x"):
+        cache = "public, max-age=31536000, immutable"
+    else:
+        cache = "no-cache"
+    return FileResponse(str(thumb), media_type="image/jpeg", headers={"Cache-Control": cache})
 
 
 @router.get("/image/{asset_id}")
