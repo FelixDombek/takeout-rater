@@ -186,6 +186,12 @@
     background: transparent;
     pointer-events: none;
   }
+  .page-placeholder--loading {
+    border-radius: 6px;
+    background: linear-gradient(90deg, #eee 25%, #f4f4f4 50%, #eee 75%);
+    background-size: 200% 100%;
+    animation: skel-shimmer 1.4s infinite;
+  }
 
   /* ── Skeleton loading cards ───────────────────────────────────────────── */
   .card-skeleton {
@@ -492,14 +498,14 @@
 
 {% if assets %}
   <div class="grid" id="photo-grid">
-    <div class="page-anchor" data-page-anchor="1"></div>
+    <div class="page-anchor" data-page-anchor="{{ page }}"></div>
     {% for asset in assets %}
     <div class="card"
          data-lb-id="{{ asset.id }}"
          data-lb-src="/image/{{ asset.id }}"
          data-lb-title="{{ asset.title or asset.filename }}"
          data-ts="{{ asset.taken_at or '' }}"
-         data-page="1">
+         data-page="{{ page }}">
       <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
         <img
           class="card-thumb"
@@ -733,26 +739,46 @@ function savePreset() {
   'use strict';
 
   // ── Virtual infinite scroll ────────────────────────────────────────────
+  // The grid holds a contiguous run of pages [minPage, maxPage].  Each page
+  // starts with a zero-height anchor.  Pages far from the viewport are
+  // swapped for a height-preserving placeholder so the DOM stays small no
+  // matter how far the user scrolls.  The first rendered page is whatever
+  // ?page= the server rendered (e.g. after a timeline jump); earlier pages
+  // are prepended when the user scrolls up.
   const grid = document.getElementById('photo-grid');
   if (!grid) return;
 
   // ── Config ─────────────────────────────────────────────────────────────
   const BUFFER_PAGES = 2;   // pages to keep loaded above/below the visible area
-  const SKEL_COUNT   = 15;  // skeleton placeholder cards while a page loads
+  const SKEL_COUNT   = 15;  // skeleton placeholder cards while a new page loads
+  const PAGE_SIZE    = {{ page_size }};
+  const START_PAGE   = {{ page }};
   const sortByParam  = {{ (sort_by | tojson) if sort_by else "null" }};
   const SHOW_DAY_HDR = !sortByParam;  // day headers only for date-ordered views
 
+  // The browser's own scroll anchoring would fight the manual compensation
+  // in keepScroll(), so it is switched off for this page.
+  document.documentElement.style.overflowAnchor = 'none';
+  // Reserve the timeline's gutter up front in date views: adding it after the
+  // /api/timeline round trip would reflow the grid to fewer columns and move
+  // everything on screen.  The timeline code removes it again if unused.
+  if (SHOW_DAY_HDR) document.body.classList.add('has-timeline');
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
   // ── State ──────────────────────────────────────────────────────────────
-  let totalPages   = {{ total_pages }};
-  let maxPageInDOM = 1;              // highest page anchor ever created
+  let totalPages = {{ total_pages }};
+  let minPage = START_PAGE;          // lowest page anchor in the DOM
+  let maxPage = START_PAGE;          // highest page anchor in the DOM
+  const anchors = new Map();         // pageNum → anchor element
   const fetchingPages = new Set();
-  // pageState: undefined = never created; 'loading' | 'loaded' | 'unloaded'
-  const pageState   = { 1: 'loaded' };
-  // Last date-key per page (persists even after the page is unloaded so
-  // reloaded pages can reconstruct correct day-header context).
-  const pageDateEnd = {};
-  // Callbacks queued while waiting for a specific page to finish loading.
-  const loadCallbacks = {};  // pageNum → [fn, ...]
+  // pageState: undefined = no slot; 'loading' | 'loaded' | 'unloaded' | 'error'
+  const pageState   = {};
+  // First/last date-key per page (kept after unloading so day headers stay
+  // consistent when a page is reloaded or its neighbour loads later).
+  const pageDateStart = {};
+  const pageDateEnd   = {};
+  const pageHeights   = {};          // last measured height per page
+  const loadCallbacks = {};          // pageNum → [fn, ...]
 
   // ── Date helpers ───────────────────────────────────────────────────────
   const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -772,101 +798,195 @@ function savePreset() {
     return day + ', ' + dd + '.' + mm + '.' + d.getFullYear();
   }
 
-  // ── Insert day headers into the already-rendered page-1 cards ──────────
-  function initPage1DayHeaders() {
-    if (!SHOW_DAY_HDR) return;
-    const cards = Array.from(grid.querySelectorAll('.card[data-page="1"]'));
-    let prevKey = null;
-    cards.forEach(function (card) {
-      const key = tsToDateKey(card.dataset.ts);
-      if (key && key !== prevKey) {
-        const hdr = document.createElement('div');
-        hdr.className = 'day-header';
-        hdr.dataset.page = '1';
-        hdr.textContent = tsToLabel(card.dataset.ts);
-        grid.insertBefore(hdr, card);
-        prevKey = key;
-      }
-    });
-    if (cards.length) {
-      pageDateEnd[1] = tsToDateKey(cards[cards.length - 1].dataset.ts);
-    }
+  function makeDayHeader(pageNum, card, key) {
+    const hdr = document.createElement('div');
+    hdr.className = 'day-header';
+    hdr.dataset.page = pageNum;
+    hdr.dataset.dayKey = key;
+    hdr.textContent = tsToLabel(card.dataset.ts);
+    return hdr;
   }
 
-  // ── Create page anchor + skeleton cards ────────────────────────────────
-  function createPageSlot(pageNum) {
-    if (grid.querySelector('[data-page-anchor="' + pageNum + '"]')) return;
-    const anchor = document.createElement('div');
-    anchor.className = 'page-anchor';
-    anchor.dataset.pageAnchor = pageNum;
-    grid.appendChild(anchor);
+  function makeSkeletons(pageNum) {
+    const frag = document.createDocumentFragment();
     for (let i = 0; i < SKEL_COUNT; i++) {
       const sk = document.createElement('div');
       sk.className = 'card card-skeleton';
       sk.dataset.skelPage = pageNum;
       sk.innerHTML = '<div class="card-thumb-skeleton"></div>'
                    + '<div class="card-body-skeleton"></div>';
-      grid.appendChild(sk);
+      frag.appendChild(sk);
     }
-    if (pageNum > maxPageInDOM) maxPageInDOM = pageNum;
+    return frag;
+  }
+
+  function makePlaceholder(pageNum, height, loading) {
+    const ph = document.createElement('div');
+    ph.className = 'page-placeholder' + (loading ? ' page-placeholder--loading' : '');
+    ph.dataset.placeholderPage = pageNum;
+    ph.style.height = height + 'px';
+    return ph;
+  }
+
+  function avgPageHeight() {
+    let sum = 0, n = 0;
+    for (const p in pageHeights) { sum += pageHeights[p]; n++; }
+    return n ? sum / n : 1200;
+  }
+
+  // ── Scroll compensation ────────────────────────────────────────────────
+  // Run fn(), which changes the height of page pageNum, without moving what
+  // the user is looking at.  If the page starts below the viewport top, the
+  // change happens below its anchor and nothing visible above it moves.  If
+  // it starts above, everything from the next page's anchor on shifts by the
+  // height change, so scroll by the same amount.
+  function keepScroll(pageNum, fn) {
+    const own = anchors.get(pageNum);
+    const ref = anchors.get(pageNum + 1);
+    if (!ref || (own && own.getBoundingClientRect().top >= 0)) { fn(); return; }
+    keepElementInPlace(ref, fn);
+  }
+
+  function keepElementInPlace(ref, fn) {
+    const before = ref.getBoundingClientRect().top;
+    fn();
+    const delta = ref.getBoundingClientRect().top - before;
+    if (delta) window.scrollBy(0, delta);
+  }
+
+  // ── Visible-page lookup (binary search over anchor positions) ──────────
+  function anchorTop(p) {
+    return anchors.get(p).getBoundingClientRect().top;
+  }
+
+  // Highest page whose anchor is at or above viewport-relative y.
+  function pageAtY(y) {
+    let lo = minPage, hi = maxPage, ans = minPage;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (anchorTop(mid) <= y) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return ans;
+  }
+
+  function firstVisiblePage() { return pageAtY(0); }
+
+  function getVisiblePageRange() {
+    return { first: pageAtY(0), last: pageAtY(window.innerHeight) };
+  }
+
+  // ── Insert day headers into the server-rendered first page ─────────────
+  function initFirstPage() {
+    const anchor = grid.querySelector('[data-page-anchor="' + START_PAGE + '"]');
+    anchors.set(START_PAGE, anchor);
+    pageState[START_PAGE] = 'loaded';
+    const cards = Array.from(grid.querySelectorAll('.card[data-page="' + START_PAGE + '"]'));
+    if (!cards.length) return;
+    pageDateStart[START_PAGE] = tsToDateKey(cards[0].dataset.ts);
+    pageDateEnd[START_PAGE] = tsToDateKey(cards[cards.length - 1].dataset.ts);
+    if (!SHOW_DAY_HDR) return;
+    let prevKey = null;
+    cards.forEach(function (card) {
+      const key = tsToDateKey(card.dataset.ts);
+      if (key && key !== prevKey) {
+        grid.insertBefore(makeDayHeader(START_PAGE, card, key), card);
+        prevKey = key;
+      }
+    });
+  }
+
+  // ── Create slots for new pages ─────────────────────────────────────────
+  function appendPageSlot(pageNum) {
+    // Only ever extend the contiguous run at its end.
+    if (pageNum !== maxPage + 1) return false;
+    const anchor = document.createElement('div');
+    anchor.className = 'page-anchor';
+    anchor.dataset.pageAnchor = pageNum;
+    grid.appendChild(anchor);
+    grid.appendChild(makeSkeletons(pageNum));
+    anchors.set(pageNum, anchor);
+    maxPage = pageNum;
     pageState[pageNum] = 'loading';
+    return true;
+  }
+
+  function prependPageSlot(pageNum) {
+    if (pageNum !== minPage - 1 || pageNum < 1) return false;
+    // The new page goes above everything, so anchor it on the old first page.
+    keepScroll(pageNum, function () {
+      const anchor = document.createElement('div');
+      anchor.className = 'page-anchor';
+      anchor.dataset.pageAnchor = pageNum;
+      const ph = makePlaceholder(pageNum, avgPageHeight(), true);
+      grid.insertBefore(ph, grid.firstChild);
+      grid.insertBefore(anchor, ph);
+      anchors.set(pageNum, anchor);
+      minPage = pageNum;
+    });
+    pageState[pageNum] = 'loading';
+    return true;
   }
 
   // ── Replace skeleton/placeholder with real cards ───────────────────────
   function completeLoad(pageNum, cards) {
-    const anchor = grid.querySelector('[data-page-anchor="' + pageNum + '"]');
+    const anchor = anchors.get(pageNum);
     if (!anchor) return;
 
-    // Remove skeleton cards and any stale placeholder for this page.
-    grid.querySelectorAll(
-      '[data-skel-page="' + pageNum + '"],[data-placeholder-page="' + pageNum + '"]'
-    ).forEach(function (el) { el.remove(); });
-
-    // Determine the last date rendered before this page.
-    let lastKey = null;
-    for (let p = pageNum - 1; p >= 1; p--) {
-      if (pageDateEnd[p] !== undefined) { lastKey = pageDateEnd[p]; break; }
-    }
+    let lastKey = pageNum > 1 && pageDateEnd[pageNum - 1] !== undefined
+      ? pageDateEnd[pageNum - 1] : null;
 
     const frag = document.createDocumentFragment();
     cards.forEach(function (card) {
       const key = tsToDateKey(card.dataset.ts);
       if (SHOW_DAY_HDR && key && key !== lastKey) {
-        const hdr = document.createElement('div');
-        hdr.className = 'day-header';
-        hdr.dataset.page = pageNum;
-        hdr.textContent = tsToLabel(card.dataset.ts);
-        frag.appendChild(hdr);
+        frag.appendChild(makeDayHeader(pageNum, card, key));
         lastKey = key;
       }
       card.dataset.page = pageNum;
       frag.appendChild(card);
     });
 
-    // Insert everything right after the page anchor.
-    anchor.after(frag);
-    pageDateEnd[pageNum] = lastKey;
+    keepScroll(pageNum, function () {
+      grid.querySelectorAll(
+        '[data-skel-page="' + pageNum + '"],[data-placeholder-page="' + pageNum + '"]'
+      ).forEach(function (el) { el.remove(); });
+      anchor.after(frag);
+    });
+    // If the next page was rendered before this one, it may start with a
+    // header for the day this page ends on; drop the duplicate.
+    const next = anchors.get(pageNum + 1);
+    const nextFirst = next && next.nextElementSibling;
+    if (nextFirst && nextFirst.classList.contains('day-header')
+        && nextFirst.dataset.dayKey === lastKey) {
+      const after = nextFirst.nextElementSibling;
+      const remove = function () { nextFirst.remove(); };
+      // Keep the cards below the header still unless they are off-screen below.
+      if (after && after.getBoundingClientRect().top < window.innerHeight) {
+        keepElementInPlace(after, remove);
+      } else {
+        remove();
+      }
+    }
+
+    if (cards.length) {
+      pageDateStart[pageNum] = tsToDateKey(cards[0].dataset.ts);
+      pageDateEnd[pageNum] = tsToDateKey(cards[cards.length - 1].dataset.ts);
+    }
     pageState[pageNum] = 'loaded';
     fetchingPages.delete(pageNum);
 
-    // Fire any callbacks that were waiting for this page.
     const cbs = loadCallbacks[pageNum];
     if (cbs) {
       delete loadCallbacks[pageNum];
       cbs.forEach(function (fn) { fn(); });
     }
-    maintainBuffer();
+    scheduleBuffer();
   }
 
   // ── Fetch a page from the server ───────────────────────────────────────
   function fetchPage(pageNum) {
     if (pageNum < 1 || pageNum > totalPages) return;
-    if (fetchingPages.has(pageNum)) return;
-    if (pageState[pageNum] === 'loaded') return;
-
-    if (pageState[pageNum] !== 'loading') {
-      createPageSlot(pageNum);
-    }
+    if (fetchingPages.has(pageNum) || pageState[pageNum] === 'loaded') return;
     fetchingPages.add(pageNum);
 
     const url = new URL(window.location.href);
@@ -881,16 +1001,20 @@ function savePreset() {
       .then(function (html) {
         const tmp = document.createElement('div');
         tmp.innerHTML = html;
-        // Refresh totalPages if the partial carries updated info.
         const meta = tmp.querySelector('[data-partial-meta]');
-        if (meta && meta.dataset.totalPages) {
-          totalPages = parseInt(meta.dataset.totalPages, 10) || totalPages;
+        if (meta) {
+          if (meta.dataset.hasMore === '0') totalPages = pageNum;
+          else if (meta.dataset.hasMore === '1') totalPages = Math.max(totalPages, pageNum + 1);
         }
         completeLoad(pageNum, Array.from(tmp.querySelectorAll('.card')));
       })
       .catch(function () {
         fetchingPages.delete(pageNum);
         pageState[pageNum] = 'error';
+        // Retry once the user is still (or again) near this page.
+        setTimeout(function () {
+          if (pageState[pageNum] === 'error') { pageState[pageNum] = 'loading'; scheduleBuffer(); }
+        }, 3000);
         grid.querySelectorAll('[data-skel-page="' + pageNum + '"]')
             .forEach(function (el) {
               el.className = 'card';
@@ -902,99 +1026,77 @@ function savePreset() {
   // ── Unload a page (replace content with height-preserving placeholder) ──
   function unloadPage(pageNum) {
     if (pageState[pageNum] !== 'loaded') return;
+    const anchor = anchors.get(pageNum);
     const els = Array.from(grid.querySelectorAll('[data-page="' + pageNum + '"]'));
-    if (!els.length) return;
+    if (!anchor || !els.length) return;
 
-    // Measure the bounding height of the page's content.
-    const top    = els[0].getBoundingClientRect().top + window.scrollY;
-    const bottom = els[els.length - 1].getBoundingClientRect().bottom + window.scrollY;
+    const top    = els[0].getBoundingClientRect().top;
+    const bottom = els[els.length - 1].getBoundingClientRect().bottom;
     const height = Math.max(0, bottom - top);
+    pageHeights[pageNum] = height;
 
-    const placeholder = document.createElement('div');
-    placeholder.className = 'page-placeholder';
-    placeholder.dataset.placeholderPage = pageNum;
-    placeholder.style.height = height + 'px';
-
-    const anchor = grid.querySelector('[data-page-anchor="' + pageNum + '"]');
-    if (anchor) anchor.after(placeholder);
-    els.forEach(function (el) { el.remove(); });
+    keepScroll(pageNum, function () {
+      anchor.after(makePlaceholder(pageNum, height, false));
+      els.forEach(function (el) { el.remove(); });
+    });
     pageState[pageNum] = 'unloaded';
   }
 
   // ── Reload an unloaded page ────────────────────────────────────────────
+  // The placeholder keeps its height (with a shimmer) until the cards
+  // arrive, so nothing shifts while the request is in flight.
   function reloadPage(pageNum) {
     if (pageState[pageNum] !== 'unloaded') return;
-    // Replace the placeholder with fresh skeleton cards.
     grid.querySelectorAll('[data-placeholder-page="' + pageNum + '"]')
-        .forEach(function (el) { el.remove(); });
-
-    const anchor = grid.querySelector('[data-page-anchor="' + pageNum + '"]');
-    if (anchor) {
-      const frag = document.createDocumentFragment();
-      for (let i = 0; i < SKEL_COUNT; i++) {
-        const sk = document.createElement('div');
-        sk.className = 'card card-skeleton';
-        sk.dataset.skelPage = pageNum;
-        sk.innerHTML = '<div class="card-thumb-skeleton"></div>'
-                     + '<div class="card-body-skeleton"></div>';
-        frag.appendChild(sk);
-      }
-      anchor.after(frag);
-    }
+        .forEach(function (el) { el.classList.add('page-placeholder--loading'); });
     pageState[pageNum] = 'loading';
     fetchPage(pageNum);
   }
 
-  // ── Maintain the 2-page buffer around the visible area ────────────────
-  function getVisiblePageRange() {
-    const vTop = window.scrollY;
-    const vBot = vTop + window.innerHeight;
-    let first = maxPageInDOM, last = 1;
-    for (let p = 1; p <= maxPageInDOM; p++) {
-      const anchor = grid.querySelector('[data-page-anchor="' + p + '"]');
-      if (!anchor) continue;
-      const anchorTop = anchor.getBoundingClientRect().top + window.scrollY;
-      // A page is "visible" when its anchor is above the viewport bottom
-      // and the next page's anchor (or DOM end) is below the viewport top.
-      const nextAnchor = grid.querySelector('[data-page-anchor="' + (p + 1) + '"]');
-      const pageBot = nextAnchor
-        ? nextAnchor.getBoundingClientRect().top + window.scrollY
-        : grid.getBoundingClientRect().bottom + window.scrollY;
-      if (pageBot >= vTop && anchorTop <= vBot) {
-        if (p < first) first = p;
-        if (p > last)  last  = p;
-      }
-    }
-    return { first: Math.max(1, first), last: Math.max(1, last) };
-  }
-
+  // ── Maintain the buffer around the visible area ────────────────────────
   function maintainBuffer() {
     const { first, last } = getVisiblePageRange();
     const keepMin = Math.max(1, first - BUFFER_PAGES);
-    const keepMax = Math.min(totalPages, last  + BUFFER_PAGES);
+    const keepMax = Math.min(totalPages, last + BUFFER_PAGES);
 
-    // Unload pages that are outside the keep window.
-    for (let p = 1; p <= maxPageInDOM; p++) {
-      if (p < keepMin || p > keepMax) {
-        if (pageState[p] === 'loaded') unloadPage(p);
-      }
+    // Unload loaded pages outside the keep window (placeholders stay).
+    for (let p = minPage; p <= maxPage; p++) {
+      if ((p < keepMin || p > keepMax) && pageState[p] === 'loaded') unloadPage(p);
     }
 
-    // Load / reload pages that are inside the keep window.
-    for (let p = keepMin; p <= keepMax; p++) {
+    // Prepend earlier pages (nearest first) when scrolling up.
+    for (let p = minPage - 1; p >= keepMin; p--) {
+      if (prependPageSlot(p)) fetchPage(p);
+    }
+
+    // Load / reload pages inside the window, and pre-fetch two more below
+    // so scrolling at a normal pace never waits.
+    const fetchMax = Math.min(totalPages, keepMax + 2);
+    for (let p = keepMin; p <= fetchMax; p++) {
       const st = pageState[p];
-      if (!st && p <= totalPages) {
-        fetchPage(p);
-      } else if (st === 'unloaded') {
+      if (st === undefined) {
+        if (appendPageSlot(p)) fetchPage(p);
+      } else if (st === 'unloaded' && p <= keepMax) {
         reloadPage(p);
+      } else if (st === 'loading') {
+        fetchPage(p);  // no-op if already in flight
       }
     }
+  }
 
-    // Always pre-fetch the next two pages beyond the keep window so the
-    // user never has to wait when scrolling at a normal pace.
-    for (let p = keepMax + 1; p <= Math.min(totalPages, keepMax + 2); p++) {
-      if (!pageState[p]) fetchPage(p);
-    }
+  // ── Keep the URL pointing at the visible page ──────────────────────────
+  // So reload and back/forward return to the same spot instead of page 1.
+  let urlTimer = null;
+  function syncUrl() {
+    clearTimeout(urlTimer);
+    urlTimer = setTimeout(function () {
+      const p = firstVisiblePage();
+      const offset = Math.round(-anchorTop(p));
+      const url = new URL(window.location.href);
+      if (p > 1) url.searchParams.set('page', p); else url.searchParams.delete('page');
+      const state = Object.assign({}, history.state, { vsPage: p, vsOffset: offset });
+      history.replaceState(state, '', url.toString());
+    }, 250);
   }
 
   // ── Scroll / resize listener ───────────────────────────────────────────
@@ -1004,30 +1106,41 @@ function savePreset() {
     rafPending = true;
     requestAnimationFrame(function () { rafPending = false; maintainBuffer(); });
   }
-  window.addEventListener('scroll', scheduleBuffer, { passive: true });
+  window.addEventListener('scroll', function () { scheduleBuffer(); syncUrl(); }, { passive: true });
   window.addEventListener('resize', scheduleBuffer, { passive: true });
 
-  // ── Expose API for lightbox ────────────────────────────────────────────
-  // lbNext uses this to trigger loading the next page when at the last card.
-  window._vs = {
-    ensureNextPage: function (callback) {
-      if (maxPageInDOM >= totalPages) return;
-      const target = maxPageInDOM + 1;
-      if (pageState[target] === 'loaded') {
-        callback();
-        return;
-      }
-      if (!loadCallbacks[target]) loadCallbacks[target] = [];
-      loadCallbacks[target].push(callback);
-      if (!pageState[target]) fetchPage(target);
+  // ── Expose API for the lightbox ────────────────────────────────────────
+  function ensurePage(pageNum, callback) {
+    if (pageNum < 1 || pageNum > totalPages) return;
+    if (pageState[pageNum] === 'loaded') { callback(); return; }
+    (loadCallbacks[pageNum] = loadCallbacks[pageNum] || []).push(callback);
+    const st = pageState[pageNum];
+    if (st === undefined) {
+      if (pageNum === maxPage + 1 && appendPageSlot(pageNum)) fetchPage(pageNum);
+      else if (pageNum === minPage - 1 && prependPageSlot(pageNum)) fetchPage(pageNum);
+    } else if (st === 'unloaded') {
+      reloadPage(pageNum);
+    } else {
+      fetchPage(pageNum);
     }
+  }
+
+  window._vs = {
+    pageSize: PAGE_SIZE,
+    ensurePage: ensurePage,
+    totalPages: function () { return totalPages; },
   };
 
   // ── Boot ──────────────────────────────────────────────────────────────
-  initPage1DayHeaders();
+  initFirstPage();
+  const st = history.state;
+  if (st && st.vsPage === START_PAGE && typeof st.vsOffset === 'number') {
+    // Returning via back/forward or reload: restore the offset within the page.
+    window.scrollTo(0, anchors.get(START_PAGE).getBoundingClientRect().top
+                       + window.scrollY + st.vsOffset);
+  }
   maintainBuffer();
-  // Re-run after the browser has laid out the page so height measurements
-  // and IntersectionObserver-like distance checks are accurate.
+  // Re-run after layout settles so height measurements are accurate.
   setTimeout(maintainBuffer, 150);
 })();
 
@@ -1042,7 +1155,8 @@ function savePreset() {
   const lbLink   = document.getElementById('lb-link');
   const lbCounter = document.getElementById('lb-counter');
   const lbDetails = document.getElementById('lb-details');
-  let lbIndex = 0;
+  const LB_TOTAL = {{ total or 0 }};
+  let lbCard = null;   // the card shown in the lightbox (indices shift as pages unload)
   let lbDetailAbort = null;
 
   // Scroll a card into view even while the body scroll is locked by the lightbox.
@@ -1168,11 +1282,18 @@ function savePreset() {
       });
   }
 
-  function openLightbox(index) {
-    const cards = getCards();
-    if (!cards.length) return;
-    lbIndex = Math.max(0, Math.min(index, cards.length - 1));
-    const card = cards[lbIndex];
+  // Position of a card in the whole result list ("1234 / 56789"), derived
+  // from its page number and its index within that page.
+  function cardPosition(card) {
+    const page = parseInt(card.dataset.page, 10) || 1;
+    const pageCards = Array.from(grid.querySelectorAll('.card[data-lb-id][data-page="' + page + '"]'));
+    const pageSize = window._vs ? window._vs.pageSize : pageCards.length;
+    return (page - 1) * pageSize + pageCards.indexOf(card) + 1;
+  }
+
+  function openLightbox(card) {
+    if (!card) return;
+    lbCard = card;
 
     // Update active-card highlight.
     const prev = document.querySelector('.card--active');
@@ -1183,7 +1304,7 @@ function savePreset() {
     lbImg.alt = card.dataset.lbTitle;
     lbTitle.textContent = card.dataset.lbTitle;
     lbLink.href = '/assets/' + card.dataset.lbId;
-    lbCounter.textContent = (lbIndex + 1) + ' / ' + cards.length;
+    lbCounter.textContent = cardPosition(card).toLocaleString() + ' / ' + LB_TOTAL.toLocaleString();
     lightbox.style.display = 'flex';
     lightbox.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
@@ -1198,6 +1319,7 @@ function savePreset() {
     if (lbDetailAbort) { lbDetailAbort.abort(); lbDetailAbort = null; }
     const active = document.querySelector('.card--active');
     if (active) active.classList.remove('card--active');
+    lbCard = null;
     lightbox.style.display = 'none';
     lightbox.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
@@ -1205,23 +1327,27 @@ function savePreset() {
     lbDetails.innerHTML = '<div class="lb-details-loading">Loading…</div>';
   }
 
-  function lbPrev() {
-    if (lbIndex > 0) openLightbox(lbIndex - 1);
+  // Step to the neighbouring card in DOM order; at the edge of the loaded
+  // range, load the adjacent page first.
+  function lbStep(dir) {
+    if (!lbCard) return;
+    const cards = getCards();
+    const i = cards.indexOf(lbCard);
+    const target = cards[i + dir];
+    if (i >= 0 && target) { openLightbox(target); return; }
+    if (!window._vs) return;
+    const from = lbCard;
+    const page = (parseInt(from.dataset.page, 10) || 1) + dir;
+    window._vs.ensurePage(page, function () {
+      if (lbCard !== from) return;  // user moved on or closed meanwhile
+      const now = getCards();
+      const j = now.indexOf(from);
+      if (j >= 0 && now[j + dir]) openLightbox(now[j + dir]);
+    });
   }
 
-  function lbNext() {
-    const cards = getCards();
-    if (lbIndex < cards.length - 1) {
-      openLightbox(lbIndex + 1);
-    } else if (window._vs) {
-      // At the last loaded card – request the next page, then advance.
-      const currentCount = cards.length;
-      window._vs.ensureNextPage(function () {
-        const newCards = getCards();
-        if (newCards.length > currentCount) openLightbox(currentCount);
-      });
-    }
-  }
+  function lbPrev() { lbStep(-1); }
+  function lbNext() { lbStep(1); }
 
   // Attach button listeners (avoids inline onclick attributes)
   document.getElementById('lb-close').addEventListener('click', lbClose);
@@ -1236,8 +1362,7 @@ function savePreset() {
       const card = e.target.closest('.card[data-lb-id]');
       if (!card) return;
       e.preventDefault();
-      const cards = getCards();
-      openLightbox(cards.indexOf(card));
+      openLightbox(card);
     });
   }
 
@@ -1298,7 +1423,7 @@ function savePreset() {
   fetch('/api/timeline?' + apiParams.toString())
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      if (!data.has_data) return;
+      if (!data.has_data) { document.body.classList.remove('has-timeline'); return; }
 
       const minYear   = data.min_year;
       const maxYear   = data.max_year;
@@ -1382,7 +1507,7 @@ function savePreset() {
 
       // ── Update thumb from scroll ──────────────────────────────────────
       function updateThumbFromScroll() {
-        const cards = Array.from(document.querySelectorAll('.card[data-ts]'))
+        const cards = Array.from(document.querySelectorAll('#photo-grid .card[data-ts]'))
           .filter(function (c) { return c.dataset.ts; });
         if (!cards.length) return;
 
@@ -1399,7 +1524,12 @@ function savePreset() {
         }
       }
 
-      window.addEventListener('scroll', updateThumbFromScroll, { passive: true });
+      let thumbRaf = false;
+      window.addEventListener('scroll', function () {
+        if (thumbRaf || dragging) return;
+        thumbRaf = true;
+        requestAnimationFrame(function () { thumbRaf = false; updateThumbFromScroll(); });
+      }, { passive: true });
       // Run once on load so the thumb starts at the right position.
       updateThumbFromScroll();
 
@@ -1495,7 +1625,7 @@ function savePreset() {
         }, 400);
       }, { passive: true });
     })
-    .catch(function () { /* ignore if API is unavailable */ });
+    .catch(function () { document.body.classList.remove('has-timeline'); });
 })();
 </script>
 {% endblock %}

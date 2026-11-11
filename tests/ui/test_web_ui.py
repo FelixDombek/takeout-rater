@@ -1476,3 +1476,35 @@ def test_asset_detail_has_more_like_this_panel(client_with_assets: TestClient) -
     assert "mlt-panel" in resp.text
     assert "mlt-method" in resp.text
     assert "More like this" in resp.text
+
+
+def test_browse_partial_reports_has_more(tmp_path: Path) -> None:
+    """Partial pages say whether another page follows (no COUNT per scroll page)."""
+    from takeout_rater.api.assets import _PAGE_SIZE
+
+    conn = _make_db()
+    for i in range(_PAGE_SIZE + 1):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    client = TestClient(app, follow_redirects=True)
+    first = client.get("/assets?partial=1&page=1").text
+    assert 'data-has-more="1"' in first
+    assert first.count('class="card"') == _PAGE_SIZE
+    second = client.get("/assets?partial=1&page=2").text
+    assert 'data-has-more="0"' in second
+    assert second.count('class="card"') == 1
+
+
+def test_browse_deep_page_renders_its_own_page_number(tmp_path: Path) -> None:
+    """A timeline jump lands on ?page=N; cards and anchor must carry N, not 1."""
+    from takeout_rater.api.assets import _PAGE_SIZE
+
+    conn = _make_db()
+    for i in range(_PAGE_SIZE * 2 + 1):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    client = TestClient(app, follow_redirects=True)
+    html = client.get("/assets?page=3").text
+    assert 'data-page-anchor="3"' in html
+    assert 'data-page="3"' in html
+    assert 'data-page="1"' not in html

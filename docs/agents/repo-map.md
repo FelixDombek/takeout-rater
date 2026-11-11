@@ -72,7 +72,7 @@ takeout-rater/
 | `ui/app.py` | `create_app()` — FastAPI + Jinja2 setup, router registration |
 | `ui/templates/base.html` | Layout wrapper, navigation header (Browse, Clusters, Scoring, Jobs, Setup) |
 | `ui/templates/browse.html` | Full browse page (pagination, filters, sort, favorites, timeline) |
-| `ui/templates/browse_partial.html` | Card grid fragment (HTMX infinite scroll) |
+| `ui/templates/browse_partial.html` | Card grid fragment for the browse page's virtual infinite scroll (`data-has-more` meta) |
 | `ui/templates/detail.html` | Asset detail page (scores, EXIF, sidecar, aliases) |
 | `ui/templates/detail_partial.html` | Detail panel fragment (lightbox overlay) |
 | `ui/templates/clusters.html` | Cluster browse page (paginated grid of representatives) |

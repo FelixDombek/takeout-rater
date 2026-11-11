@@ -1,4 +1,4 @@
-<div data-partial-meta data-total-pages="{{ total_pages }}" style="display:none"></div>
+<div data-partial-meta data-has-more="{{ '1' if has_more else '0' }}" data-total-pages="{{ page + 1 if has_more else page }}" style="display:none"></div>
 {% for asset in assets %}
 <div class="card"
      data-lb-id="{{ asset.id }}"

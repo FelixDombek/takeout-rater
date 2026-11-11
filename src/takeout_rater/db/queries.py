@@ -285,7 +285,7 @@ def list_assets(
     *,
     limit: int = 100,
     offset: int = 0,
-    order_by: str = "taken_at DESC",
+    order_by: str = "taken_at DESC, id DESC",
     favorited: bool | None = None,
     place: PlaceFilter | None = None,
     archived: bool | None = None,
@@ -441,7 +441,7 @@ def list_assets_deduped(
     *,
     limit: int = 100,
     offset: int = 0,
-    order_by: str = "taken_at DESC",
+    order_by: str = "taken_at DESC, id DESC",
     favorited: bool | None = None,
     place: PlaceFilter | None = None,
     archived: bool | None = None,
@@ -458,7 +458,9 @@ def list_assets_deduped(
         conn: Open database connection.
         limit: Maximum number of rows to return.
         offset: Rows to skip (for pagination).
-        order_by: SQL ``ORDER BY`` clause fragment (trusted, code-controlled).
+        order_by: Trusted ``ORDER BY`` terms on plain ``assets`` columns,
+            e.g. ``"taken_at DESC, id DESC"`` (each term is prefixed with the
+            table alias).
         favorited: Optional favorited filter.
         place: Optional place-name filter (see :class:`PlaceFilter`).
         archived: Optional archived filter.
@@ -468,33 +470,45 @@ def list_assets_deduped(
     Returns:
         List of :class:`AssetRow` objects.
     """
-    conditions: list[str] = []
-    params: list[Any] = []
 
-    if favorited is not None:
-        conditions.append("favorited = ?")
-        params.append(1 if favorited else 0)
-    if place is not None:
-        place_sql, place_params = place.sql_condition("id")
-        conditions.append(place_sql)
-        params.extend(place_params)
-    if archived is not None:
-        conditions.append("archived = ?")
-        params.append(1 if archived else 0)
-    if trashed is not None:
-        conditions.append("trashed = ?")
-        params.append(1 if trashed else 0)
-    if ext is not None:
-        conditions.append("ext = ?")
-        params.append(ext.lower())
+    def filters(alias: str) -> tuple[str, list[Any]]:
+        conds: list[str] = []
+        vals: list[Any] = []
+        if favorited is not None:
+            conds.append(f"{alias}.favorited = ?")
+            vals.append(1 if favorited else 0)
+        if place is not None:
+            place_sql, place_params = place.sql_condition(f"{alias}.id")
+            conds.append(place_sql)
+            vals.extend(place_params)
+        if archived is not None:
+            conds.append(f"{alias}.archived = ?")
+            vals.append(1 if archived else 0)
+        if trashed is not None:
+            conds.append(f"{alias}.trashed = ?")
+            vals.append(1 if trashed else 0)
+        if ext is not None:
+            conds.append(f"{alias}.ext = ?")
+            vals.append(ext.lower())
+        return "".join(f" AND {c}" for c in conds), vals
 
-    # Each sha256 group is represented by its minimum id; assets without sha256
-    # are partitioned individually via COALESCE with a unique per-row key.
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    # Each sha256 group is represented by its lowest id among the rows that
+    # pass the filters; assets without a sha256 are always shown.  The NOT
+    # EXISTS probe uses idx_assets_sha256, so SQLite can walk
+    # idx_assets_taken_at in order and stop after LIMIT + OFFSET rows instead
+    # of ranking the whole table with a window function on every page.
+    outer_where, outer_params = filters("a")
+    inner_where, inner_params = filters("b")
+    # order_by is a trusted list of plain column terms ("col [ASC|DESC], …").
+    order_sql = ", ".join(f"a.{term.strip()}" for term in order_by.split(","))
     sql = (  # noqa: S608
-        f"SELECT * FROM {_deduped_assets_sql(where)} ORDER BY {order_by} LIMIT ? OFFSET ?"
+        "SELECT a.* FROM assets a"
+        " WHERE NOT EXISTS ("
+        f"SELECT 1 FROM assets b WHERE b.sha256 = a.sha256 AND b.id < a.id{inner_where}"
+        f"){outer_where}"
+        f" ORDER BY {order_sql} LIMIT ? OFFSET ?"
     )
-    params.extend([limit, offset])
+    params = inner_params + outer_params + [limit, offset]
     rows = conn.execute(sql, params).fetchall()
     return [_row_to_asset(r) for r in rows]
 
@@ -951,7 +965,7 @@ def list_assets_by_score(
         f" FROM assets a"
         f" JOIN asset_scores s ON s.asset_id = a.id"
         f" {where}"
-        f" ORDER BY s.value {order}"
+        f" ORDER BY s.value {order}, a.id {order}"
         f" LIMIT ? OFFSET ?"
     )
     params.extend([limit, offset])
@@ -1117,6 +1131,10 @@ def list_assets_multi_sort(
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     join_sql = " ".join(joins)
     select_sql = ", ".join(select_cols)
+    # Final tie-breaker on id so rows with equal scores keep a stable order
+    # across LIMIT/OFFSET pages (otherwise SQLite may return them in a
+    # different order per query, causing duplicates and gaps when scrolling).
+    order_cols.append(f"a.id {order0}")
     order_sql = ", ".join(order_cols)
 
     # All literals are code-controlled, not user input.  # noqa: S608

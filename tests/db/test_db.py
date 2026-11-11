@@ -501,3 +501,62 @@ def test_count_assets_deduped_favorited_filter() -> None:
     upsert_asset(conn, {**_minimal_asset("c/other.jpg"), "sha256": "bbb", "favorited": 0})
     assert count_assets_deduped(conn, favorited=True) == 1
     assert count_assets_deduped(conn, favorited=False) == 1
+
+
+# ── Browse paging: dedup + stable order ───────────────────────────────────────
+
+
+def _insert_raw(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    sha: str | None,
+    taken_at: int | None,
+    favorited: int = 0,
+) -> None:
+    # Raw insert: upsert_asset merges equal sha256 at write time, but older
+    # libraries (and lazily hashed rows) can still hold duplicate rows.
+    conn.execute(
+        "INSERT INTO assets (id, relpath, filename, ext, sha256, taken_at, favorited, indexed_at)"
+        " VALUES (?, ?, ?, '.jpg', ?, ?, ?, 0)",
+        (asset_id, f"p/{asset_id}.jpg", f"{asset_id}.jpg", sha, taken_at, favorited),
+    )
+
+
+def _window_dedup_reference(conn: sqlite3.Connection, where: str = "") -> list[int]:
+    rows = conn.execute(
+        "SELECT id FROM (SELECT id, taken_at, ROW_NUMBER() OVER ("
+        " PARTITION BY COALESCE(sha256, CAST(id AS TEXT)) ORDER BY id) AS rn"
+        f" FROM assets {where}) WHERE rn = 1 ORDER BY taken_at DESC, id DESC"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def test_list_assets_deduped_matches_window_reference_across_pages() -> None:
+    conn = _open_in_memory()
+    # Many equal timestamps, some NULL timestamps, NULL hashes and duplicate
+    # hashes whose lowest-id copy is not favorited.
+    for i in range(1, 121):
+        sha = None if i % 11 == 0 else f"dup{i % 7}" if i % 5 == 0 else f"s{i}"
+        taken = None if i % 13 == 0 else 1_700_000_000 - (i // 4)
+        _insert_raw(conn, i, sha, taken, favorited=1 if i % 3 == 0 else 0)
+    conn.commit()
+
+    for fav, where in ((None, ""), (True, "WHERE favorited = 1")):
+        expected = _window_dedup_reference(conn, where)
+        paged: list[int] = []
+        for offset in range(0, 200, 7):
+            paged += [
+                a.id for a in list_assets_deduped(conn, limit=7, offset=offset, favorited=fav)
+            ]
+        assert paged == expected
+        assert len(paged) == count_assets_deduped(conn, favorited=fav)
+
+
+def test_list_assets_orders_equal_timestamps_by_id() -> None:
+    conn = _open_in_memory()
+    for i in range(1, 11):
+        _insert_raw(conn, i, f"s{i}", 1_700_000_000)
+    conn.commit()
+    pages = [list_assets(conn, limit=3, offset=o) for o in range(0, 12, 3)]
+    ids = [a.id for page in pages for a in page]
+    assert ids == list(range(10, 0, -1))
