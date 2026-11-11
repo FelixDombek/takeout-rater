@@ -51,7 +51,8 @@ Enter the new path and click **Save & continue**.
 - **Maps** geotagged photos with a timeline to explore where you were when
 - **Names places** from GPS (country / region / city, fully offline via GeoNames) so you can filter by place
 - **Finds trips and events** from photo times and GPS (trips away from home, photo bursts), with place names and a cover photo
-- **Exports** your best photos (top-N, or best-of-cluster) to a folder
+- **Exports** your best photos (top-N, or best-of-cluster) to a folder, optionally sorted
+  into sub-folders by CLIP category (e.g. `Nature/Beach`), trip, or place
 
 See [`docs/design.md`](docs/design.md) for the full architecture overview.
 
@@ -142,7 +143,8 @@ takeout-rater score /path/to/library-root [--scorer blur] [--phash]
 takeout-rater cluster /path/to/library-root [--threshold 10]
 
 # Export best-of-cluster photos to a folder
-takeout-rater export /path/to/library-root [--scorer aesthetic] [--out ./export]
+takeout-rater export /path/to/library-root [--scorer aesthetic] [--out ./export] \
+    [--folders flat|category|trip|place]
 
 # Compute SHA-256 hashes for deduplication
 takeout-rater rehash /path/to/library-root
