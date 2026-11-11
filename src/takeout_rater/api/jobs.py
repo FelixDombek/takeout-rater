@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -532,6 +533,25 @@ class _ScoreStartBody(BaseModel):
     rerun: bool = False
 
 
+def _close_scorers(scorers: list[object]) -> None:
+    """Close and drop every scorer so its models are freed before the next pass.
+
+    Runs in its own frame so no loop variable or bound ``close`` method keeps
+    the last scorer (and its GPU weights) alive while the next pass loads.
+    """
+    for scorer in scorers:
+        close = getattr(scorer, "close", None)
+        if callable(close):
+            close()
+    scorers.clear()
+    torch_mod = sys.modules.get("torch")
+    if torch_mod is not None and torch_mod.cuda.is_available():
+        import gc
+
+        gc.collect()
+        torch_mod.cuda.empty_cache()
+
+
 @router.post("/api/jobs/score/start")
 def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
     """Start a background scoring run.
@@ -697,11 +717,7 @@ def start_score_job(body: _ScoreStartBody, request: Request) -> JSONResponse:
                     )
                 finally:
                     # Release models (VRAM, thread pools) before the next pass.
-                    for scorer in scorers:
-                        close = getattr(scorer, "close", None)
-                        if callable(close):
-                            close()
-                    scorers.clear()
+                    _close_scorers(scorers)
                 completed += len(group)
                 progress.diagnostics["score_variants_completed"] = completed
                 progress.diagnostics["score_passes_completed"] = g_idx + 1
@@ -1353,13 +1369,18 @@ def start_rescan_job(body: _RescanStartBody, request: Request) -> JSONResponse:
 
                             from takeout_rater.scoring.scorers.clip_backbone import (
                                 get_clip_model,
+                                preprocess_clip_image_fast,
                             )
 
                             if _clip_bundle is None:
                                 _clip_bundle = get_clip_model()
-                            model, preprocess, _tokenizer, device = _clip_bundle
+                            model, _preprocess, _tokenizer, device = _clip_bundle
                             thumb_img = Image.open(io.BytesIO(thumb.read_bytes())).convert("RGB")
-                            img_tensor = preprocess(thumb_img).unsqueeze(0).to(device)
+                            # Same preprocessing as the indexer, so the LAION and
+                            # CLIP-IQA scorers can reuse this row.
+                            img_tensor = (
+                                preprocess_clip_image_fast(thumb_img).unsqueeze(0).to(device)
+                            )
                             with torch.no_grad():
                                 embedding = model.encode_image(img_tensor)
                                 embedding = embedding / embedding.norm(dim=-1, keepdim=True)

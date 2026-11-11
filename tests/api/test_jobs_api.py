@@ -1038,3 +1038,21 @@ def test_run_index_fills_missing_phash_for_existing_asset(
     phash_count = check_conn.execute("SELECT COUNT(*) FROM phash").fetchone()[0]
     check_conn.close()
     assert phash_count == 1, "phash must be computed even for assets already in the DB"
+
+
+def test_close_scorers_closes_and_drops_all() -> None:
+    import takeout_rater.api.jobs as jobs_mod
+
+    closed: list[int] = []
+
+    class _S:
+        def __init__(self, n: int) -> None:
+            self.n = n
+
+        def close(self) -> None:
+            closed.append(self.n)
+
+    scorers: list[object] = [_S(1), object(), _S(2)]
+    jobs_mod._close_scorers(scorers)
+    assert closed == [1, 2]
+    assert scorers == []
