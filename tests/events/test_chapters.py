@@ -122,6 +122,11 @@ def test_without_embeddings_long_pauses_split() -> None:
     # Evenly spaced photos with no embeddings: nothing to split on.
     flat = ch.split_chapters([(i, t0 + i * 300) for i in range(30)], {})
     assert len(flat.chapters) == 1
+    # Evenly spaced every 30 min: every gap scores the same (MAD 0) and none
+    # is a long pause, so it must not be cut into minimum-sized chapters.
+    for step in (1800, 2 * HOUR):
+        even = ch.split_chapters([(i, t0 + i * step) for i in range(30)], {})
+        assert len(even.chapters) == 1, step
 
 
 def test_input_order_does_not_matter_and_cover_prefers_scores() -> None:

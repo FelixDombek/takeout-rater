@@ -30,6 +30,8 @@ from takeout_rater.events.detector import _utc_offset_s
 
 _HOUR = 3600
 _DAY = 86400
+#: Without embeddings, a gap must be a pause of a few hours to start a chapter.
+_TIME_ONLY_MIN_SCORE = 0.6
 
 
 @dataclass(frozen=True)
@@ -210,6 +212,9 @@ def split_chapters(
         med = float(np.median(scores))
         mad = float(np.median(np.abs(scores - med))) * 1.4826
         threshold = max(params.min_score, med + params.mad_k * mad)
+        if matrix is None:
+            # Pauses alone: only gaps of a few hours count (0.6 ≈ 3.5 h).
+            threshold = max(threshold, _TIME_ONLY_MIN_SCORE)
 
     # Greedy: strongest breaks first, keep one only if it is the peak of its
     # neighbourhood (the windows smear one change over a few gaps) and both
@@ -219,7 +224,8 @@ def split_chapters(
         r = max(1, params.window)
         for g in np.argsort(-scores, kind="stable"):
             g = int(g)
-            if scores[g] < threshold or len(cuts) + 1 >= params.max_chapters:
+            # Strictly above, so a flat curve (MAD 0) stays one chapter.
+            if scores[g] <= threshold or len(cuts) + 1 >= params.max_chapters:
                 break
             if scores[g] < scores[max(0, g - r) : g + r + 1].max():
                 continue
