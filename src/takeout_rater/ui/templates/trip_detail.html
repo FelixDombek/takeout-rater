@@ -39,11 +39,56 @@
   .pagination .btn { min-width: 2.2rem; text-align: center; }
   .pagination .btn.active { background: #1a5cdb; color: #fff; border-color: #1a5cdb; }
   .pagination-info { font-size: 0.82rem; color: #666; }
+
+  .view-bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 1.25rem 0 0.5rem; }
+  .view-bar .section-title { margin: 0; }
+  .seg { display: inline-flex; border: 1px solid #ccc; border-radius: 6px; overflow: hidden; }
+  .seg a { padding: 0.25rem 0.7rem; font-size: 0.82rem; color: #333; text-decoration: none; background: #fff; }
+  .seg a + a { border-left: 1px solid #ccc; }
+  .seg a.on { background: #1a5cdb; color: #fff; }
+  .seg-label { font-size: 0.8rem; color: #666; }
+  .story-note { font-size: 0.8rem; color: #777; margin: 0.25rem 0 0.75rem; }
+
+  .break-curve { width: 100%; height: 48px; display: block; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 0.75rem; }
+  .break-curve polyline { fill: none; stroke: #8aa4d6; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+  .break-curve .thr { stroke: #f0a500; stroke-dasharray: 4 3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .break-curve .cut { stroke: #1a5cdb; stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .break-curve a:hover .cut { stroke: #e0245e; }
+
+  .chapter-toc { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 0.4rem; margin-bottom: 0.5rem; }
+  .toc-item { flex: 0 0 130px; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.12); color: inherit; text-decoration: none; }
+  .toc-item:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); text-decoration: none; }
+  .toc-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: #e0e0e0; }
+  .toc-item div { padding: 0.25rem 0.4rem; font-size: 0.72rem; color: #555; }
+  .toc-item b { display: block; color: #1a1a1a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .chapter { margin: 1.5rem 0 0; scroll-margin-top: 1rem; }
+  .chapter-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; border-bottom: 2px solid #e3e8f2; padding-bottom: 0.3rem; margin-bottom: 0.6rem; }
+  .chapter-num { font-size: 0.75rem; font-weight: 700; color: #1a5cdb; text-transform: uppercase; letter-spacing: 0.04em; }
+  .chapter-title { font-size: 1.05rem; font-weight: 600; margin: 0; }
+  .chapter-meta { font-size: 0.8rem; color: #666; }
 </style>
 <link rel="stylesheet" href="/static/lightbox.css">
 {% endblock %}
 
 {% block content %}
+{% macro photo_card(asset) %}
+<div class="card{% if asset.id == ev.cover_asset_id %} is-cover{% endif %}"
+     data-lb-id="{{ asset.id }}"
+     data-lb-src="/image/{{ asset.id }}"
+     data-lb-title="{{ asset.title or asset.filename }}">
+  <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
+    <img class="card-thumb" src="/thumbs/{{ asset.id }}" alt="{{ asset.title or asset.filename }}" loading="lazy"
+         onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+    <div class="card-thumb-placeholder" style="display:none">🖼</div>
+    <div class="card-body">
+      {% if asset.favorited %}⭐{% endif %}
+      {{ asset.taken_at | timestamp_fmt }}
+    </div>
+  </a>
+</div>
+{% endmacro %}
+
 {% if parent %}
 <a class="btn back-link" href="/trips/{{ parent.id }}">← {{ parent.name }}</a>
 {% else %}
@@ -91,41 +136,99 @@
 </div>
 {% endif %}
 
-<h2 class="section-title">Photos</h2>
+<div class="view-bar">
+  <h2 class="section-title">Photos</h2>
+  <span class="seg" role="group" aria-label="View">
+    <a href="/trips/{{ ev.id }}?view=grid" class="{{ 'on' if view == 'grid' else '' }}">▦ Grid</a>
+    <a href="/trips/{{ ev.id }}?view=story&sensitivity={{ sensitivity }}" class="{{ 'on' if view == 'story' else '' }}"
+       title="Split the photos into chapters where the scene changes">📖 Story</a>
+  </span>
+  {% if view == 'story' %}
+  <span class="seg-label">Chapters:</span>
+  <span class="seg" role="group" aria-label="Number of chapters">
+    {% for key, label in [('fewer', 'Fewer'), ('normal', 'Normal'), ('more', 'More')] %}
+    <a href="/trips/{{ ev.id }}?view=story&sensitivity={{ key }}" class="{{ 'on' if sensitivity == key else '' }}">{{ label }}</a>
+    {% endfor %}
+  </span>
+  {% endif %}
+</div>
+
+{% if view == 'story' %}
+<div class="story-note">
+  {{ chapters | length }} chapter{{ 's' if chapters | length != 1 else '' }}, split where the scene changes
+  (CLIP embeddings) and at long pauses.
+  {% if n_with_embedding == 0 %}
+  <b>No CLIP embeddings for these photos yet</b>, so chapters only follow pauses in time; run indexing with CLIP embeddings for scene-based chapters.
+  {% elif n_with_embedding < n_story_photos %}
+  {{ n_story_photos - n_with_embedding }} photo{{ 's' if n_story_photos - n_with_embedding != 1 else '' }} without an embedding follow their neighbours.
+  {% endif %}
+</div>
+
+{% if curve and chapters | length > 1 %}
+<svg class="break-curve" viewBox="0 0 {{ curve.width }} {{ curve.height }}" preserveAspectRatio="none"
+     role="img" aria-label="How much the scene changes between consecutive photos">
+  <line class="thr" x1="0" x2="{{ curve.width }}" y1="{{ curve.threshold_y }}" y2="{{ curve.threshold_y }}"></line>
+  <polyline points="{{ curve.points }}"></polyline>
+  {% for cut in curve.cuts %}
+  <a href="#chapter-{{ cut.index }}"><title>Chapter {{ cut.index }}</title>
+    <line class="cut" x1="{{ cut.x }}" x2="{{ cut.x }}" y1="0" y2="{{ curve.height }}"></line>
+    <rect x="{{ cut.x - 6 }}" y="0" width="12" height="{{ curve.height }}" fill="transparent"></rect>
+  </a>
+  {% endfor %}
+</svg>
+{% endif %}
+
+{% if chapters | length > 1 %}
+<nav class="chapter-toc" aria-label="Chapters">
+  {% for c in chapters %}
+  <a class="toc-item" href="#chapter-{{ c.index }}">
+    {% if c.cover_asset_id is not none %}<img src="/thumbs/{{ c.cover_asset_id }}" alt="" loading="lazy">{% endif %}
+    <div><b data-chapter-title="{{ c.index }}">Chapter {{ c.index }}</b>{{ c.time_label }}</div>
+  </a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+<div id="photo-grid">
+  {% for c in chapters %}
+  <section class="chapter" id="chapter-{{ c.index }}">
+    <div class="chapter-head">
+      <span class="chapter-num">Chapter {{ c.index }}</span>
+      <h3 class="chapter-title" data-chapter-title="{{ c.index }}"></h3>
+      <span class="chapter-meta">{{ c.time_label }} · {{ c.n_assets }} photo{{ 's' if c.n_assets != 1 else '' }}</span>
+    </div>
+    <div class="photo-grid">
+      {% for asset in c.assets %}
+      {{ photo_card(asset) }}
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% else %}
 <div class="photo-grid" id="photo-grid">
   {% for asset in assets %}
-  <div class="card{% if asset.id == ev.cover_asset_id %} is-cover{% endif %}"
-       data-lb-id="{{ asset.id }}"
-       data-lb-src="/image/{{ asset.id }}"
-       data-lb-title="{{ asset.title or asset.filename }}">
-    <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
-      <img class="card-thumb" src="/thumbs/{{ asset.id }}" alt="{{ asset.title or asset.filename }}" loading="lazy"
-           onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-      <div class="card-thumb-placeholder" style="display:none">🖼</div>
-      <div class="card-body">
-        {% if asset.favorited %}⭐{% endif %}
-        {{ asset.taken_at | timestamp_fmt }}
-      </div>
-    </a>
-  </div>
+  {{ photo_card(asset) }}
   {% endfor %}
 </div>
 
 {% if total_pages > 1 %}
 <div class="pagination">
-  {% if page > 1 %}<a class="btn" href="/trips/{{ ev.id }}?page={{ page - 1 }}">‹ Prev</a>{% endif %}
+  {% if page > 1 %}<a class="btn" href="/trips/{{ ev.id }}?view=grid&page={{ page - 1 }}">‹ Prev</a>{% endif %}
   {% for p in range(1, total_pages + 1) %}
   {% if p == page %}
   <span class="btn active">{{ p }}</span>
   {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-  <a class="btn" href="/trips/{{ ev.id }}?page={{ p }}">{{ p }}</a>
+  <a class="btn" href="/trips/{{ ev.id }}?view=grid&page={{ p }}">{{ p }}</a>
   {% elif p == page - 3 or p == page + 3 %}
   <span class="pagination-info">…</span>
   {% endif %}
   {% endfor %}
-  {% if page < total_pages %}<a class="btn" href="/trips/{{ ev.id }}?page={{ page + 1 }}">Next ›</a>{% endif %}
+  {% if page < total_pages %}<a class="btn" href="/trips/{{ ev.id }}?view=grid&page={{ page + 1 }}">Next ›</a>{% endif %}
   <span class="pagination-info">Page {{ page }} of {{ total_pages }}</span>
 </div>
+{% endif %}
+
 {% endif %}
 
 <div id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer" aria-hidden="true">
@@ -189,5 +292,22 @@ SharedLightbox.init({
   });
   if (resetBtn) resetBtn.addEventListener('click', function () { save(null); });
 })();
+
+{% if view == 'story' and chapters | length > 1 %}
+// Chapter titles come from zero-shot CLIP and may need to load the text model
+// first, so they are fetched after the page is shown.
+fetch('/api/trips/{{ ev.id }}/chapters?labels=1&sensitivity={{ sensitivity }}')
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (data) {
+    if (!data) return;
+    data.chapters.forEach(function (c) {
+      if (!c.title) return;
+      document.querySelectorAll('[data-chapter-title="' + c.index + '"]').forEach(function (el) {
+        el.textContent = c.title;
+      });
+    });
+  })
+  .catch(function () {});
+{% endif %}
 </script>
 {% endblock %}
