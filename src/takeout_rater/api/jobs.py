@@ -1043,6 +1043,8 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                 message += f" in {len(result.folders)} folder(s)"
             if result.skipped:
                 message += f" ({result.skipped} skipped)"
+            if result.removed:
+                message += f"; replaced {result.removed} file(s) from the previous export"
             progress.message = message
             progress.current_item = ""
             progress.running = False

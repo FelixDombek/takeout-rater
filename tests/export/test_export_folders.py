@@ -285,3 +285,38 @@ def test_export_picks_copies_into_place_folders(conn, tmp_path: Path) -> None:
     assert (out / "Portugal" / "Lisbon" / f"cluster{c1:06d}_img0.jpg").is_file()
     assert (out / NO_PLACE_FOLDER / f"cluster{c2:06d}_img2.jpg").is_file()
     assert result.folders == {"Portugal/Lisbon": 1, NO_PLACE_FOLDER: 1}
+
+
+def test_rerun_with_another_layout_replaces_previous_copies(conn, tmp_path: Path) -> None:
+    photos = tmp_path / "photos"
+    (photos / "Photos").mkdir(parents=True)
+    aid = _add_asset(conn, 0)
+    (photos / "Photos" / "img0.jpg").write_bytes(b"jpeg")
+    upsert_asset_places(
+        conn,
+        [
+            {
+                "asset_id": aid,
+                "lat": 1.0,
+                "lon": 1.0,
+                "geocoder_version": 1,
+                "country_code": "PT",
+                "country": "Portugal",
+                "city": "Lisbon",
+            }
+        ],
+    )
+    out = tmp_path / "out"
+    (out / "Portugal").mkdir(parents=True)
+    (out / "Portugal" / "mine.txt").write_text("user file")
+    (out / "keep.jpg").write_bytes(b"user")
+
+    export_picks(conn, [(1, aid)], photos, out, folder_mode="place")
+    assert (out / "Portugal" / "Lisbon" / "cluster000001_img0.jpg").is_file()
+
+    result = export_picks(conn, [(1, aid)], photos, out, folder_mode="flat")
+    assert result.removed == 1
+    assert (out / "cluster000001_img0.jpg").is_file()
+    assert not (out / "Portugal" / "Lisbon").exists()  # emptied folder pruned
+    assert (out / "Portugal" / "mine.txt").read_text() == "user file"
+    assert (out / "keep.jpg").is_file()

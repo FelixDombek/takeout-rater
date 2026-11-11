@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
 import shutil
 import sqlite3
 from collections import Counter
@@ -15,6 +18,11 @@ from takeout_rater.export.folders import (
     assign_folders,
 )
 
+_log = logging.getLogger(__name__)
+
+#: Lists the files the last export wrote, so the next one can remove them.
+MANIFEST_NAME = ".takeout-rater-export.json"
+
 
 @dataclass
 class ExportResult:
@@ -22,6 +30,8 @@ class ExportResult:
     skipped: int = 0
     #: Number of exported files per relative folder (``""`` = export root).
     folders: Counter[str] = field(default_factory=Counter)
+    #: Copies from the previous export that were removed before this one.
+    removed: int = 0
 
 
 def select_best_assets(
@@ -89,7 +99,13 @@ def export_picks(
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     on_copied: Callable[[int, str], None] | None = None,
 ) -> ExportResult:
-    """Copy the picked assets into *export_dir*, sorted into folders by *folder_mode*."""
+    """Copy the picked assets into *export_dir*, sorted into folders by *folder_mode*.
+
+    Files written by the previous export into *export_dir* (listed in its
+    manifest) are removed first, so changing the folder layout, the category
+    labels or a trip name does not leave stale copies behind.  Files the user
+    put there are never touched.
+    """
     from takeout_rater.db.queries import get_asset_by_id
 
     folders = assign_folders(
@@ -100,6 +116,8 @@ def export_picks(
         min_confidence=min_confidence,
     )
     result = ExportResult()
+    result.removed = _remove_previous_export(export_dir)
+    written: list[str] = []
     for cluster_id, asset_id in picks:
         asset = get_asset_by_id(conn, asset_id)
         if asset is None:
@@ -111,9 +129,48 @@ def export_picks(
         folder = folders.get(asset_id, "")
         dest_dir = export_dir / folder if folder else export_dir
         dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest_dir / f"cluster{cluster_id:06d}_{asset.filename}")
+        dest = dest_dir / f"cluster{cluster_id:06d}_{asset.filename}"
+        shutil.copy2(src, dest)
+        written.append(dest.relative_to(export_dir).as_posix())
         result.copied += 1
         result.folders[folder] += 1
         if on_copied is not None:
             on_copied(result.copied, folder)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    (export_dir / MANIFEST_NAME).write_text(json.dumps({"files": written}), encoding="utf-8")
     return result
+
+
+def _remove_previous_export(export_dir: Path) -> int:
+    """Delete the files listed in *export_dir*'s manifest; prune emptied folders."""
+    manifest = export_dir / MANIFEST_NAME
+    try:
+        files = json.loads(manifest.read_text(encoding="utf-8")).get("files", [])
+    except (OSError, ValueError, AttributeError):
+        return 0
+    root = export_dir.resolve()
+    removed = 0
+    dirs: set[Path] = set()
+    for rel in files:
+        if not isinstance(rel, str):
+            continue
+        path = (export_dir / rel).resolve()
+        if path == root or root not in path.parents:
+            continue  # never delete outside the export folder
+        try:
+            path.unlink()
+            removed += 1
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            _log.warning("Could not remove previous export file %s: %s", path, exc)
+            continue
+        parent = path.parent
+        while parent != root and root in parent.parents:
+            dirs.add(parent)
+            parent = parent.parent
+    for d in sorted(dirs, key=lambda p: len(p.parts), reverse=True):
+        with contextlib.suppress(OSError):
+            d.rmdir()  # only succeeds when empty
+    manifest.unlink(missing_ok=True)
+    return removed

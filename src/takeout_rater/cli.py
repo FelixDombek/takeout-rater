@@ -537,6 +537,8 @@ def _cmd_export(args: argparse.Namespace) -> int:
             print(f"  {folder or '.'}: {n}")
     if result.skipped:
         print(f"  ({result.skipped} file(s) skipped — originals not found)")
+    if result.removed:
+        print(f"  (removed {result.removed} file(s) from the previous export first)")
     return 0
 
 
