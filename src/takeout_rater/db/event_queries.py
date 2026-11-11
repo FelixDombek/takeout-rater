@@ -266,3 +266,43 @@ def event_stats(conn: sqlite3.Connection) -> dict[str, Any]:
         "n_nested_events": row[2] or 0,
         "detected_at": row[3],
     }
+
+
+def load_event_embeddings(conn: sqlite3.Connection, event_id: int) -> dict[int, Any]:
+    """CLIP ViT-L/14 embeddings of the photos in one trip/event, as ``{asset_id: float32 array}``.
+
+    Blobs whose length differs from the most common one are skipped.
+    """
+    import numpy as np
+
+    rows = conn.execute(
+        """
+        SELECT ce.asset_id, ce.embedding
+        FROM event_assets ea JOIN clip_embeddings ce ON ce.asset_id = ea.asset_id
+        WHERE ea.event_id = ?
+        """,
+        (event_id,),
+    ).fetchall()
+    if not rows:
+        return {}
+    lengths: dict[int, int] = {}
+    for _, blob in rows:
+        lengths[len(blob)] = lengths.get(len(blob), 0) + 1
+    size = max(lengths, key=lambda k: lengths[k])
+    if size == 0 or size % 4:
+        return {}
+    return {aid: np.frombuffer(blob, dtype="<f4") for aid, blob in rows if len(blob) == size}
+
+
+def load_event_aesthetic_scores(conn: sqlite3.Connection, event_id: int) -> dict[int, float]:
+    """LAION aesthetic score of each photo in one trip/event that has one."""
+    rows = conn.execute(
+        """
+        SELECT s.asset_id, MAX(s.value)
+        FROM event_assets ea JOIN asset_scores s ON s.asset_id = ea.asset_id
+        WHERE ea.event_id = ? AND s.scorer_id = 'aesthetic' AND s.metric_key = 'aesthetic'
+        GROUP BY s.asset_id
+        """,
+        (event_id,),
+    ).fetchall()
+    return {r[0]: r[1] for r in rows}
