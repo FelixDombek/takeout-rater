@@ -21,6 +21,7 @@ from takeout_rater.api.config_routes import router as config_router
 from takeout_rater.api.faces import router as faces_router
 from takeout_rater.api.jobs import router as jobs_router
 from takeout_rater.api.map_routes import router as map_router
+from takeout_rater.api.moods import router as moods_router
 from takeout_rater.api.presets import router as presets_router
 from takeout_rater.api.search import router as search_router
 from takeout_rater.api.trips import router as trips_router
@@ -137,6 +138,7 @@ def create_app(
     app.include_router(faces_router)
     app.include_router(map_router)
     app.include_router(trips_router)
+    app.include_router(moods_router)
 
     @app.get("/")
     def redirect_to_browse(request: Request) -> RedirectResponse:

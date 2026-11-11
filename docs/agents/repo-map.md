@@ -68,6 +68,8 @@ takeout-rater/
 | `api/presets.py` | Routes: `GET/POST /api/presets`, `DELETE /api/presets/{id}` |
 | `api/config_routes.py` | Routes: `GET /health`, `GET /api/config`, `GET /api/library/status`, `POST /api/config/takeout-path`, `POST /api/config/open-picker` |
 | `api/jobs.py` | Routes: `GET /api/jobs/status`, `GET /api/jobs/scorers`, `POST /api/jobs/{type}/start` (index, score, cluster, export, rehash, rescan) |
+| `api/moods.py` | Routes: `GET /moods`, `GET /api/moods/timeline`, `GET /api/moods/photos` (mood timeline, issue #110) |
+| `moods/timeline.py` | Zero-shot mood shares per photo from search embeddings, bucketed by week/month/quarter/year |
 | **UI** | |
 | `ui/app.py` | `create_app()` — FastAPI + Jinja2 setup, router registration |
 | `ui/templates/base.html` | Layout wrapper, navigation header (Browse, Clusters, Scoring, Jobs, Setup) |

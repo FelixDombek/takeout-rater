@@ -51,6 +51,7 @@ Enter the new path and click **Save & continue**.
 - **Maps** geotagged photos with a timeline to explore where you were when
 - **Names places** from GPS (country / region / city, fully offline via GeoNames) so you can filter by place
 - **Finds trips and events** from photo times and GPS (trips away from home, photo bursts), with place names and a cover photo
+- **Charts your moods over time** (happy, peaceful, cozy … or your own words) from the image embeddings, and shows the most typical photos per mood and period
 - **Exports** your best photos (top-N, or best-of-cluster) to a folder
 
 See [`docs/design.md`](docs/design.md) for the full architecture overview.
@@ -64,8 +65,8 @@ See [`docs/design.md`](docs/design.md) for the full architecture overview.
 | [![Browse](docs/screenshots/browse.png)](docs/screenshots/browse.png) | [![Clusters](docs/screenshots/clusters.png)](docs/screenshots/clusters.png) |
 | **🎯 Scoring** | **⚙ Jobs** |
 | [![Scoring](docs/screenshots/scoring.png)](docs/screenshots/scoring.png) | [![Jobs](docs/screenshots/jobs.png)](docs/screenshots/jobs.png) |
-| **🗺️ Map** | |
-| [![Map](docs/screenshots/map.png)](docs/screenshots/map.png) | |
+| **🗺️ Map** | **🎭 Moods** |
+| [![Map](docs/screenshots/map.png)](docs/screenshots/map.png) | [![Moods](docs/screenshots/moods.png)](docs/screenshots/moods.png) |
 
 ---
 

@@ -1,0 +1,567 @@
+{% extends "base.html" %}
+
+{% block title %}Mood timeline – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .mood-root {
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #85847f;
+    --grid: #e6e5e1;
+    --div-low: #2a78d6;
+    --div-mid: #f0efec;
+    --div-high: #e34948;
+    --count-bar: #c9c8c2;
+  }
+  .toolbar { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.4rem; flex-wrap: wrap; }
+  .toolbar h1 { font-size: 1.25rem; margin: 0; }
+  .toolbar .muted { font-size: 0.82rem; }
+  .intro { color: #555; font-size: 0.86rem; max-width: 820px; margin-bottom: 1rem; }
+
+  .mood-card { background: var(--surface-1); border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 1rem 1.1rem; margin-bottom: 1rem; }
+  .mood-card h2 { font-size: 0.95rem; margin-bottom: 0.6rem; color: var(--text-primary); }
+  .card-sub { font-size: 0.78rem; color: var(--text-secondary); font-weight: normal; margin-left: 0.4rem; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; margin-bottom: 0.6rem; font-size: 0.8rem; color: var(--text-secondary); }
+  .legend-item { display: inline-flex; align-items: center; gap: 0.35rem; cursor: default; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+
+  .overall-bar { display: flex; height: 22px; gap: 2px; border-radius: 4px; overflow: hidden; margin-bottom: 0.35rem; }
+  .overall-bar > div { height: 100%; min-width: 2px; }
+  .overall-labels { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; font-size: 0.78rem; color: var(--text-secondary); }
+  .overall-labels b { color: var(--text-primary); font-weight: 600; }
+
+  #chart-wrap { position: relative; }
+  #chart { display: block; width: 100%; user-select: none; }
+  #chart text { font-size: 11px; fill: var(--text-secondary); }
+  #chart .axis-title { fill: var(--text-muted); font-size: 10px; }
+  .tooltip {
+    position: absolute; pointer-events: none; background: #fff; border: 1px solid #ddd; border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15); padding: 0.45rem 0.6rem; font-size: 0.78rem; color: var(--text-primary);
+    min-width: 170px; display: none; z-index: 5;
+  }
+  .tooltip .tt-head { font-weight: 600; margin-bottom: 0.25rem; }
+  .tooltip .tt-row { display: flex; align-items: center; gap: 0.4rem; justify-content: space-between; }
+  .tooltip .tt-row span:first-child { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .tooltip .tt-foot { color: var(--text-muted); margin-top: 0.25rem; font-size: 0.72rem; }
+  .chart-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.3rem; }
+
+  .diverging-key { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.6rem; }
+  .diverging-key .ramp { width: 160px; height: 10px; border-radius: 2px;
+    background: linear-gradient(90deg, var(--div-low), var(--div-mid), var(--div-high)); }
+
+  .detail-row { display: grid; grid-template-columns: 150px 1fr; gap: 0.75rem; align-items: center; padding: 0.4rem 0; border-top: 1px solid #eee; }
+  .detail-row:first-of-type { border-top: none; }
+  .detail-mood { font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 0.4rem; }
+  .detail-mood small { display: block; font-weight: normal; color: var(--text-secondary); font-size: 0.74rem; }
+  .thumbs { display: flex; gap: 6px; overflow-x: auto; min-height: 84px; }
+  .thumbs a { flex-shrink: 0; }
+  .thumbs img { height: 84px; width: 84px; object-fit: cover; border-radius: 4px; display: block; background: #e0e0e0; }
+  .thumbs .none { color: var(--text-muted); font-size: 0.78rem; align-self: center; }
+
+  .mood-chips { display: flex; flex-direction: column; gap: 4px; margin-bottom: 0.5rem; }
+  .mood-chip { display: flex; align-items: center; gap: 0.4rem; font-size: 0.84rem; padding: 2px 4px; border-radius: 4px; }
+  .mood-chip:hover { background: #f3f3f3; }
+  .mood-chip span.name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mood-chip button { border: none; background: none; cursor: pointer; color: #999; font-size: 0.95rem; line-height: 1; padding: 0 2px; }
+  .mood-chip button:hover { color: #c0392b; }
+  .add-row { display: flex; gap: 0.3rem; }
+  .add-row input { flex: 1; min-width: 0; padding: 0.25rem 0.4rem; font-size: 0.82rem; border: 1px solid #ccc; border-radius: 3px; }
+  .sidebar-select { width: 100%; padding: 0.25rem; font-size: 0.82rem; }
+  .empty-state { text-align: center; padding: 3rem 2rem; color: #666; }
+  .empty-state h2 { font-size: 1.2rem; margin-bottom: 0.6rem; color: #333; }
+  .link-btn { border: none; background: none; color: #1a5cdb; cursor: pointer; font-size: 0.78rem; padding: 0; }
+  .link-btn:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
+{% block page_sidebar %}
+<aside class="app-sidebar">
+  <div class="sidebar-section-title">Moods</div>
+  <div id="mood-chips" class="mood-chips"></div>
+  <form class="add-row" onsubmit="addMood(event)">
+    <input id="mood-input" type="text" maxlength="60" placeholder="Add a mood, e.g. festive" aria-label="Add a mood">
+    <button class="btn" type="submit">Add</button>
+  </form>
+  <p class="sidebar-note" style="margin-top:0.35rem">
+    Up to {{ max_moods }} words. <button class="link-btn" type="button" onclick="resetMoods()">Reset to defaults</button>
+  </p>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Group by</div>
+  <div class="sidebar-radio-group">
+    {% for value, label in [("week", "Week"), ("month", "Month"), ("quarter", "Quarter"), ("year", "Year")] %}
+    <label class="sidebar-radio">
+      <input type="radio" name="granularity" value="{{ value }}" onchange="setOpt('granularity', this.value)">
+      <span>{{ label }}</span>
+    </label>
+    {% endfor %}
+  </div>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Show</div>
+  <div class="sidebar-radio-group">
+    <label class="sidebar-radio">
+      <input type="radio" name="view" value="share" onchange="setOpt('view', this.value)">
+      <span>Mood mix <small>share of each mood per period</small></span>
+    </label>
+    <label class="sidebar-radio">
+      <input type="radio" name="view" value="lift" onchange="setOpt('view', this.value)">
+      <span>Compared to usual <small>more or less of a mood than your library average</small></span>
+    </label>
+  </div>
+  <label class="sidebar-radio" style="margin-top:0.4rem">
+    <input type="checkbox" id="smooth" onchange="setOpt('smooth', this.checked)">
+    <span>Smooth over neighbouring periods</span>
+  </label>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-section-title">Embeddings</div>
+  <select id="model" class="sidebar-select" onchange="setOpt('model', this.value)">
+    <option value="auto">Automatic</option>
+  </select>
+  <p class="sidebar-note" style="margin-top:0.5rem">
+    Each photo is compared with every mood word (prompts like “{{ prompt_templates[1].format('happy') }}”)
+    and its similarity is split across the moods, so every photo counts once.
+    Undated and trashed photos are left out.
+  </p>
+</aside>
+{% endblock %}
+
+{% block content %}
+<div class="mood-root">
+  <div class="toolbar">
+    <h1>🎭 Mood timeline</h1>
+    <span id="status" class="muted">Loading…</span>
+  </div>
+  <p class="intro">
+    How the feel of your photos changes over time, read from their image embeddings.
+    Click a period to see the photos that carry each mood most strongly.
+  </p>
+
+  <div id="content">
+    <div class="mood-card">
+      <h2>Whole library <span class="card-sub" id="overall-sub"></span></h2>
+      <div id="overall-bar" class="overall-bar"></div>
+      <div id="overall-labels" class="overall-labels"></div>
+    </div>
+
+    <div class="mood-card">
+      <h2 id="chart-title">Mood mix over time</h2>
+      <div id="legend" class="legend"></div>
+      <div id="div-key" class="diverging-key" style="display:none">
+        <span>half as much</span><span class="ramp"></span><span>twice as much</span>
+      </div>
+      <div id="chart-wrap">
+        <svg id="chart" role="img" aria-label="Mood timeline chart"></svg>
+        <div id="tooltip" class="tooltip"></div>
+      </div>
+      <div class="chart-hint">The grey bars along the bottom show how many photos each period has; periods with few photos are noisy.</div>
+    </div>
+
+    <div class="mood-card">
+      <h2 id="detail-title">Most typical photos per mood</h2>
+      <div id="detail"></div>
+    </div>
+  </div>
+  <div id="empty" class="empty-state" style="display:none"></div>
+</div>
+
+<script>
+(function () {
+  const DEFAULT_MOODS = {{ default_moods | tojson }};
+  const MAX_MOODS = {{ max_moods }};
+  // Categorical slots, fixed order; a mood keeps its slot while it exists.
+  const PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+  const STORE_KEY = 'takeout-rater.moods.v1';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  let state = { moods: [], granularity: 'month', view: 'share', smooth: false, model: 'auto' };
+  let data = null;
+  let selected = null; // selected bucket index
+  let requestSeq = 0;
+
+  function defaultMoods() { return DEFAULT_MOODS.map((name, i) => ({ name, slot: i })); }
+
+  function loadState() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+      if (saved && Array.isArray(saved.moods)) state = Object.assign(state, saved);
+    } catch (e) { /* storage unavailable */ }
+    const params = new URLSearchParams(location.search);
+    if (params.get('moods')) {
+      state.moods = params.get('moods').split(',').map(s => s.trim()).filter(Boolean)
+        .slice(0, MAX_MOODS).map((name, i) => ({ name, slot: i }));
+    }
+    for (const key of ['granularity', 'view', 'model']) if (params.get(key)) state[key] = params.get(key);
+    if (params.get('smooth')) state.smooth = params.get('smooth') === '1';
+    if (!state.moods.length) state.moods = defaultMoods();
+  }
+
+  function saveState() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+    const params = new URLSearchParams({
+      moods: state.moods.map(m => m.name).join(','), granularity: state.granularity,
+      view: state.view, smooth: state.smooth ? '1' : '0', model: state.model,
+    });
+    history.replaceState(null, '', '/moods?' + params.toString());
+  }
+
+  function color(i) { return PALETTE[state.moods[i].slot % PALETTE.length]; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function pct(v) { return v == null ? '–' : (v * 100).toFixed(v < 0.1 ? 1 : 0) + '%'; }
+  function liftText(v) { return v == null ? '–' : v.toFixed(2) + '×'; }
+
+  function bucketLabel(b) {
+    const g = data.granularity;
+    if (g === 'month') { const [y, m] = b.key.split('-'); return MONTHS[+m - 1] + ' ' + y; }
+    if (g === 'quarter') { const [y, q] = b.key.split('-'); return q + ' ' + y; }
+    if (g === 'week') return 'Week of ' + b.key;
+    return b.key;
+  }
+
+  // ── Sidebar ────────────────────────────────────────────────────────────
+  function renderChips() {
+    const box = document.getElementById('mood-chips');
+    box.innerHTML = state.moods.map((m, i) =>
+      `<div class="mood-chip"><span class="swatch" style="background:${color(i)}"></span>` +
+      `<span class="name" title="${esc(m.name)}">${esc(m.name)}</span>` +
+      `<button type="button" title="Remove" aria-label="Remove ${esc(m.name)}" onclick="removeMood(${i})">×</button></div>`
+    ).join('');
+    document.getElementById('mood-input').disabled = state.moods.length >= MAX_MOODS;
+    document.querySelectorAll('input[name=granularity]').forEach(r => { r.checked = r.value === state.granularity; });
+    document.querySelectorAll('input[name=view]').forEach(r => { r.checked = r.value === state.view; });
+    document.getElementById('smooth').checked = state.smooth;
+  }
+
+  window.addMood = function (ev) {
+    ev.preventDefault();
+    const input = document.getElementById('mood-input');
+    const name = input.value.trim().replace(/\s+/g, ' ').replace(/,/g, ' ');
+    if (!name || state.moods.length >= MAX_MOODS) return;
+    if (state.moods.some(m => m.name.toLowerCase() === name.toLowerCase())) { input.value = ''; return; }
+    const used = new Set(state.moods.map(m => m.slot));
+    let slot = 0; while (used.has(slot)) slot++;
+    state.moods.push({ name, slot });
+    input.value = '';
+    changed(true);
+  };
+  window.removeMood = function (i) {
+    if (state.moods.length <= 2) { showToastSafe('Keep at least two moods to compare.'); return; }
+    state.moods.splice(i, 1);
+    changed(true);
+  };
+  window.resetMoods = function () { state.moods = defaultMoods(); changed(true); };
+  window.setOpt = function (key, value) {
+    state[key] = value;
+    changed(key === 'granularity' || key === 'model');
+  };
+
+  function showToastSafe(msg) {
+    if (typeof showError === 'function') showError(msg);
+  }
+
+  function changed(refetch) {
+    saveState();
+    renderChips();
+    if (refetch) { selected = null; fetchTimeline(); } else render();
+  }
+
+  function loadModels() {
+    fetch('/api/search/backbones').then(r => r.ok ? r.json() : null).then(d => {
+      if (!d) return;
+      const sel = document.getElementById('model');
+      for (const b of d.backbones) {
+        if (!b.count) continue;
+        const opt = document.createElement('option');
+        opt.value = b.key;
+        opt.textContent = b.label + ' (' + b.count.toLocaleString() + ')';
+        sel.appendChild(opt);
+      }
+      sel.value = [...sel.options].some(o => o.value === state.model) ? state.model : 'auto';
+    }).catch(() => {});
+  }
+
+  // ── Data ───────────────────────────────────────────────────────────────
+  function moodParam() { return state.moods.map(m => m.name).join(','); }
+
+  function fetchTimeline() {
+    const seq = ++requestSeq;
+    document.getElementById('status').textContent = 'Computing…';
+    const params = new URLSearchParams({ moods: moodParam(), granularity: state.granularity, model: state.model });
+    fetch('/api/moods/timeline?' + params).then(async r => {
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+      return d;
+    }).then(d => {
+      if (seq !== requestSeq) return;
+      data = d;
+      render();
+      loadDetail();
+    }).catch(err => {
+      if (seq !== requestSeq) return;
+      document.getElementById('status').textContent = 'Error: ' + err.message;
+      showToastSafe('Mood timeline: ' + err.message);
+    });
+  }
+
+  // Count-weighted rolling mean over ±1 period (empty periods stay empty).
+  function seriesValues(field) {
+    const bs = data.buckets;
+    if (!state.smooth) return bs.map(b => b[field]);
+    const k = data.moods.length;
+    return bs.map((b, i) => {
+      if (!b.count) return b[field];
+      const acc = new Array(k).fill(0); let w = 0;
+      for (let j = Math.max(0, i - 1); j <= Math.min(bs.length - 1, i + 1); j++) {
+        const c = bs[j].count; if (!c) continue;
+        const wt = c * (j === i ? 2 : 1);
+        for (let m = 0; m < k; m++) acc[m] += bs[j][field][m] * wt;
+        w += wt;
+      }
+      return acc.map(v => v / w);
+    });
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────────────
+  function render() {
+    const empty = document.getElementById('empty');
+    const content = document.getElementById('content');
+    const status = document.getElementById('status');
+    if (!data) return;
+    if (data.error || !data.overall.count) {
+      content.style.display = 'none';
+      empty.style.display = '';
+      empty.innerHTML = data.error
+        ? '<h2>No image embeddings yet</h2><p>The mood timeline reads the search embeddings. Run indexing (CLIP) or the SigLIP 2 embedding job on the <a href="/jobs">Jobs</a> page first.</p>'
+        : '<h2>No dated photos with embeddings</h2><p>Photos need a capture date and an embedding to appear on the timeline.</p>';
+      status.textContent = '';
+      return;
+    }
+    content.style.display = '';
+    empty.style.display = 'none';
+    const modelLabel = data.model.startsWith('siglip') ? 'SigLIP 2' : 'CLIP ViT-L/14';
+    status.textContent = `${data.overall.count.toLocaleString()} dated photos · ${data.buckets.length} ${data.granularity}s · ${modelLabel}`;
+    renderOverall();
+    renderLegend();
+    document.getElementById('chart-title').textContent = state.view === 'lift' ? 'Compared to your usual mood mix' : 'Mood mix over time';
+    document.getElementById('div-key').style.display = state.view === 'lift' ? '' : 'none';
+    renderChart();
+  }
+
+  function renderOverall() {
+    const share = data.overall.share;
+    document.getElementById('overall-sub').textContent = data.overall.count.toLocaleString() + ' photos';
+    document.getElementById('overall-bar').innerHTML = share.map((v, i) =>
+      `<div style="flex:${Math.max(v, 0.002)};background:${color(i)}" title="${esc(data.moods[i])}: ${pct(v)}"></div>`).join('');
+    const order = share.map((v, i) => i).sort((a, b) => share[b] - share[a]);
+    document.getElementById('overall-labels').innerHTML = order.map(i =>
+      `<span><span class="swatch" style="background:${color(i)}"></span> ${esc(data.moods[i])} <b>${pct(share[i])}</b></span>`).join('');
+  }
+
+  function renderLegend() {
+    document.getElementById('legend').innerHTML = data.moods.map((m, i) =>
+      `<span class="legend-item"><span class="swatch" style="background:${color(i)}"></span>${esc(m)}</span>`).join('');
+  }
+
+  function el(tag, attrs) {
+    const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+
+  function divergingColor(lift) {
+    if (lift == null) return 'transparent';
+    const t = Math.max(-1, Math.min(1, Math.log2(Math.max(lift, 1e-6))));
+    const mix = (a, b, f) => {
+      const pa = [1, 3, 5].map(o => parseInt(a.slice(o, o + 2), 16));
+      const pb = [1, 3, 5].map(o => parseInt(b.slice(o, o + 2), 16));
+      return 'rgb(' + pa.map((v, i) => Math.round(v + (pb[i] - v) * f)).join(',') + ')';
+    };
+    return t >= 0 ? mix('#f0efec', '#e34948', t) : mix('#f0efec', '#2a78d6', -t);
+  }
+
+  function xTicks(bs) {
+    // Label year starts; thin them out so labels never collide.
+    const g = data.granularity;
+    const ticks = [];
+    bs.forEach((b, i) => {
+      if (g === 'year') ticks.push({ i, label: b.key });
+      else if (g === 'month' ? b.key.endsWith('-01') : g === 'quarter' ? b.key.endsWith('-Q1')
+               : (i === 0 || b.key.slice(0, 4) !== bs[i - 1].key.slice(0, 4))) ticks.push({ i, label: b.key.slice(0, 4) });
+    });
+    if (!ticks.length && bs.length) ticks.push({ i: 0, label: bucketLabel(bs[0]) });
+    return ticks;
+  }
+
+  function renderChart() {
+    const svg = document.getElementById('chart');
+    svg.innerHTML = '';
+    const bs = data.buckets;
+    const k = data.moods.length;
+    const width = svg.parentElement.clientWidth || 800;
+    const lift = state.view === 'lift';
+    const m = { top: 6, right: 12, bottom: 22, left: lift ? 96 : 40 };
+    const plotH = lift ? Math.max(18 * k, 120) : 260;
+    const countH = 34;
+    const height = m.top + plotH + 8 + countH + m.bottom;
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('height', height);
+    const plotW = width - m.left - m.right;
+    const n = bs.length;
+    const bw = plotW / Math.max(n, 1);
+    const cx = i => m.left + (i + 0.5) * bw;
+    const countTop = m.top + plotH + 8;
+
+    if (!lift) {
+      // Gridlines + y labels
+      [0, 0.25, 0.5, 0.75, 1].forEach(v => {
+        const y = m.top + plotH * (1 - v);
+        svg.appendChild(el('line', { x1: m.left, x2: width - m.right, y1: y, y2: y, stroke: 'var(--grid)', 'stroke-width': 1 }));
+        const t = el('text', { x: m.left - 6, y: y + 4, 'text-anchor': 'end' }); t.textContent = (v * 100) + '%'; svg.appendChild(t);
+      });
+      const vals = seriesValues('share');
+      // Contiguous runs of non-empty buckets become separate areas.
+      const runs = []; let cur = null;
+      vals.forEach((v, i) => { if (bs[i].count) { if (!cur) runs.push(cur = []); cur.push(i); } else cur = null; });
+      for (const run of runs) {
+        const base = run.map(() => 0);
+        for (let s = 0; s < k; s++) {
+          const top = run.map((i, j) => base[j] + vals[i][s]);
+          const pts = run.length === 1 ? [run[0] - 0.45, run[0] + 0.45] : null;
+          const xs = pts ? pts.map(p => m.left + (p + 0.5) * bw) : run.map(cx);
+          const topY = (pts ? [top[0], top[0]] : top).map(v => m.top + plotH * (1 - v));
+          const baseY = (pts ? [base[0], base[0]] : base).map(v => m.top + plotH * (1 - v));
+          let d = 'M' + xs.map((x, j) => x.toFixed(1) + ',' + topY[j].toFixed(1)).join('L');
+          d += 'L' + xs.map((x, j) => x.toFixed(1) + ',' + baseY[j].toFixed(1)).reverse().join('L') + 'Z';
+          svg.appendChild(el('path', { d, fill: color(s), stroke: 'var(--surface-1)', 'stroke-width': 1, 'stroke-linejoin': 'round' }));
+          run.forEach((_, j) => { base[j] = top[j]; });
+        }
+      }
+    } else {
+      const vals = seriesValues('lift');
+      for (let s = 0; s < k; s++) {
+        const y = m.top + s * (plotH / k);
+        const h = plotH / k;
+        const t = el('text', { x: m.left - 8, y: y + h / 2 + 4, 'text-anchor': 'end' });
+        t.textContent = data.moods[s].length > 14 ? data.moods[s].slice(0, 13) + '…' : data.moods[s];
+        svg.appendChild(t);
+        svg.appendChild(el('rect', { x: m.left - 6, y: y + h / 2 - 1.5, width: 3, height: 3, fill: color(s) }));
+        bs.forEach((b, i) => {
+          if (!b.count) return;
+          svg.appendChild(el('rect', { x: m.left + i * bw + (bw > 4 ? 0.5 : 0), y: y + 1, width: Math.max(bw - (bw > 4 ? 1 : 0), 0.6), height: h - 2,
+            fill: divergingColor(vals[i][s]) }));
+        });
+      }
+    }
+
+    // Photo-count strip
+    const maxCount = Math.max(1, ...bs.map(b => b.count));
+    bs.forEach((b, i) => {
+      if (!b.count) return;
+      const h = Math.max(1, countH * Math.sqrt(b.count / maxCount));
+      svg.appendChild(el('rect', { x: m.left + i * bw + (bw > 4 ? 1 : 0), y: countTop + countH - h, width: Math.max(bw - (bw > 4 ? 2 : 0), 0.6), height: h, fill: 'var(--count-bar)', rx: bw > 6 ? 1.5 : 0 }));
+    });
+    const ct = el('text', { x: m.left - 6, y: countTop + countH - 2, 'text-anchor': 'end', class: 'axis-title' }); ct.textContent = 'photos'; svg.appendChild(ct);
+
+    // X axis
+    const ticks = xTicks(bs);
+    const minGap = 34; let lastX = -Infinity;
+    for (const tk of ticks) {
+      const x = m.left + tk.i * bw;
+      if (x - lastX < minGap) continue;
+      lastX = x;
+      svg.appendChild(el('line', { x1: x, x2: x, y1: m.top, y2: countTop + countH, stroke: 'var(--grid)', 'stroke-width': 1, 'stroke-dasharray': lift ? '' : '2,3' }));
+      const t = el('text', { x: x + 2, y: height - 6 }); t.textContent = tk.label; svg.appendChild(t);
+    }
+
+    // Selection + hover layer
+    if (selected != null && selected < n) {
+      svg.appendChild(el('rect', { x: m.left + selected * bw, y: m.top, width: Math.max(bw, 2), height: countTop + countH - m.top,
+        fill: 'none', stroke: '#1a1a2e', 'stroke-width': 1.5 }));
+    }
+    const cross = el('line', { y1: m.top, y2: countTop + countH, stroke: '#1a1a2e', 'stroke-width': 1, opacity: 0 });
+    svg.appendChild(cross);
+    const hit = el('rect', { x: m.left, y: 0, width: plotW, height, fill: 'transparent', style: 'cursor:pointer' });
+    svg.appendChild(hit);
+    const tip = document.getElementById('tooltip');
+    const idxAt = ev => {
+      const r = svg.getBoundingClientRect();
+      const x = (ev.clientX - r.left) * (width / r.width);
+      return Math.max(0, Math.min(n - 1, Math.floor((x - m.left) / bw)));
+    };
+    hit.addEventListener('mousemove', ev => {
+      const i = idxAt(ev); const b = bs[i];
+      cross.setAttribute('x1', cx(i)); cross.setAttribute('x2', cx(i)); cross.setAttribute('opacity', 0.5);
+      const vals = seriesValues(lift ? 'lift' : 'share')[i];
+      const shares = seriesValues('share')[i];
+      let rows = '';
+      if (b.count) {
+        const order = [...Array(k).keys()];
+        if (!lift) order.reverse(); // match stack order, top first
+        rows = order.map(s => `<div class="tt-row"><span><span class="swatch" style="background:${color(s)}"></span>${esc(data.moods[s])}</span>` +
+          `<span>${lift ? liftText(vals[s]) : pct(shares[s])}</span></div>`).join('');
+      }
+      tip.innerHTML = `<div class="tt-head">${esc(bucketLabel(b))}</div>${rows}` +
+        `<div class="tt-foot">${b.count.toLocaleString()} photo${b.count === 1 ? '' : 's'}${b.count ? ' · click for photos' : ''}</div>`;
+      tip.style.display = 'block';
+      const r = svg.getBoundingClientRect();
+      const px = ev.clientX - r.left; const tw = tip.offsetWidth;
+      tip.style.left = (px + 14 + tw > r.width ? px - tw - 14 : px + 14) + 'px';
+      tip.style.top = Math.max(0, ev.clientY - r.top - 20) + 'px';
+    });
+    hit.addEventListener('mouseleave', () => { tip.style.display = 'none'; cross.setAttribute('opacity', 0); });
+    hit.addEventListener('click', ev => {
+      const i = idxAt(ev);
+      if (!bs[i].count) return;
+      selected = selected === i ? null : i;
+      renderChart();
+      loadDetail();
+    });
+  }
+
+  // ── Detail: top photos per mood ───────────────────────────────────────
+  function loadDetail() {
+    const box = document.getElementById('detail');
+    const title = document.getElementById('detail-title');
+    const b = selected != null ? data.buckets[selected] : null;
+    title.innerHTML = b
+      ? `${esc(bucketLabel(b))} <span class="card-sub">${b.count.toLocaleString()} photos · <button class="link-btn" type="button" id="clear-sel">show whole library</button></span>`
+      : 'Most typical photos per mood <span class="card-sub">whole library · click a period in the chart to narrow down</span>';
+    const clr = document.getElementById('clear-sel');
+    if (clr) clr.onclick = () => { selected = null; renderChart(); loadDetail(); };
+    const shares = b ? seriesValues('share')[selected] : data.overall.share;
+    const lifts = b ? seriesValues('lift')[selected] : null;
+    const order = [...Array(data.moods.length).keys()].sort((x, y) => shares[y] - shares[x]);
+    box.innerHTML = order.map(s =>
+      `<div class="detail-row"><div class="detail-mood"><span class="swatch" style="background:${color(s)}"></span>` +
+      `<div>${esc(data.moods[s])}<small>${pct(shares[s])}${lifts ? ' · ' + liftText(lifts[s]) + ' usual' : ''}</small></div></div>` +
+      `<div class="thumbs" id="thumbs-${s}"><span class="none">Loading…</span></div></div>`).join('');
+    const seq = requestSeq;
+    for (const s of order) {
+      const params = new URLSearchParams({ moods: moodParam(), mood: data.moods[s], model: data.model, limit: '10' });
+      if (b) { params.set('start', b.start); params.set('end', b.end); }
+      fetch('/api/moods/photos?' + params).then(r => r.json()).then(d => {
+        if (seq !== requestSeq) return;
+        const el2 = document.getElementById('thumbs-' + s);
+        if (!el2) return;
+        el2.innerHTML = (d.photos || []).length
+          ? d.photos.map(p => `<a href="/assets/${p.asset_id}" title="${esc(data.moods[s])}: ${pct(p.score)}"><img loading="lazy" src="/thumbs/${p.asset_id}" alt=""></a>`).join('')
+          : '<span class="none">No photos</span>';
+      }).catch(() => {});
+    }
+  }
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => data && renderChart(), 120); });
+
+  loadState();
+  saveState();
+  renderChips();
+  loadModels();
+  fetchTimeline();
+})();
+</script>
+{% endblock %}
