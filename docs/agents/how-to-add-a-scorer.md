@@ -267,3 +267,14 @@ See `docs/agents/definition-of-done.md` before opening a PR.
 - Multi-metric scorers should document what each metric measures in the `MetricSpec.description`.
 - `score_batch` must **always** return a list of the same length as `image_paths`, even when individual images fail.  Use a safe default (typically `0.0`) and catch `(OSError, ValueError, RuntimeError)`.
 - Scorers are run via the scoring pipeline (`takeout_rater.scoring.pipeline.run_scorer`).  They do not need to know about DB internals.
+
+## Whole-library scorers
+
+Some scores depend on the whole library rather than one image, e.g. the
+semantic outlier scorer (`scorers/semantic_outlier.py`), which ranks each photo
+by how far its nearest neighbours are in embedding space.  Subclass
+`LibraryScorer` (in `scorers/base.py`) instead of `BaseScorer` and implement
+`pending_count()` and `score_library()`.  `run_scorer` then calls
+`score_library()` once and stores the returned rows in `asset_scores`, so the
+metrics sort and filter like any other score.  With `skip_existing` the run is
+skipped when nothing is pending; otherwise every asset is rescored.

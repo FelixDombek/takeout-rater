@@ -278,3 +278,46 @@ class BaseScorer(ABC):
         """Convenience wrapper: score a single image."""
         results = self.score_batch([image_path], variant_id=variant_id)
         return results[0]
+
+
+class LibraryScorer(BaseScorer):
+    """A scorer whose values depend on the whole library, not one image.
+
+    Example: semantic outlier detection, where a photo's score depends on how
+    close its nearest neighbours are.  Such scores cannot be computed one batch
+    at a time, so :func:`~takeout_rater.scoring.pipeline.run_scorer` calls
+    :meth:`score_library` once instead of :meth:`score_batch`, and stores the
+    returned rows like any other score (so they sort and filter the same way).
+    """
+
+    def score_batch(
+        self,
+        image_paths: list[Path],
+        *,
+        variant_id: str | None = None,
+    ) -> list[dict[str, float]]:
+        raise NotImplementedError(
+            f"{type(self).__name__} scores the whole library; use score_library()"
+        )
+
+    @abstractmethod
+    def pending_count(self, conn: Any, *, scorer_version: str) -> int:
+        """Return how many scoreable assets lack a current-version score.
+
+        ``run_scorer`` skips the run when this is 0 and ``skip_existing`` is set;
+        otherwise the whole library is rescored, since adding photos changes
+        everyone's neighbours.
+        """
+
+    @abstractmethod
+    def score_library(
+        self,
+        conn: Any,
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> list[tuple[int, dict[str, float]]] | None:
+        """Score every scoreable asset; return ``(asset_id, metrics)`` pairs.
+
+        Returns ``None`` when cancelled (nothing is written).
+        """
