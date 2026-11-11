@@ -268,6 +268,29 @@ def test_start_export_job_requires_metric_when_scorer_given(
     assert resp.status_code == 400
 
 
+def test_start_export_job_rejects_unknown_folder_mode(client_with_db: TestClient) -> None:
+    resp = client_with_db.post("/api/jobs/export/start", json={"folder_mode": "bogus"})
+    assert resp.status_code == 400
+    assert "folder_mode" in resp.json()["detail"]
+
+
+def test_start_export_job_rejects_bad_categories(client_with_db: TestClient) -> None:
+    resp = client_with_db.post(
+        "/api/jobs/export/start",
+        json={"folder_mode": "category", "categories": "Only one category"},
+    )
+    assert resp.status_code == 400
+    assert "Categories" in resp.json()["detail"]
+
+
+def test_export_categories_endpoint(client_with_db: TestClient) -> None:
+    resp = client_with_db.get("/api/export/categories")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "Nature/Beach:" in data["categories"]
+    assert 0 < data["min_confidence"] < 1
+
+
 def test_start_export_job_conflicts_when_running(
     client_with_db: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

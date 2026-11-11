@@ -126,7 +126,8 @@
     <p class="desc">
       Copy the best representative from each cluster to the
       <code>takeout-rater/exports/</code> folder. Requires clustering to have been run first.
-      Optionally rank by a scorer metric to pick the highest-quality photo from each group.
+      Optionally rank by a scorer metric to pick the highest-quality photo from each group,
+      and sort the exported photos into sub-folders by category, trip or place.
     </p>
     <div class="job-options">
       <label for="export-scorer">Rank by scorer:</label>
@@ -134,7 +135,32 @@
         <option value="">— cluster representative —</option>
         <!-- populated by JS with available scorers -->
       </select>
+      <label for="export-folders" style="margin-left:0.75rem;">Sort into folders:</label>
+      <select id="export-folders" onchange="onExportFoldersChange()">
+        <option value="flat">— none (one flat folder) —</option>
+        <option value="category">by category (CLIP zero-shot)</option>
+        <option value="trip">by trip / event</option>
+        <option value="place">by place (country / city)</option>
+      </select>
     </div>
+    <p class="desc" id="export-folders-hint" style="display:none; margin-top:0.2rem;"></p>
+    <details id="export-categories-box" style="display:none; margin:0.3rem 0 0.5rem;">
+      <summary style="cursor:pointer; font-size:0.85rem;">Edit categories</summary>
+      <p style="font-size:0.8rem; color:#888; margin:0.3rem 0;">
+        One folder per line: <code>Folder/Sub-folder: prompt one; prompt two</code>.
+        Each photo goes to the category whose prompts CLIP finds most similar; photos
+        below the confidence threshold go to <code>Other</code>.
+      </p>
+      <textarea id="export-categories" rows="10" spellcheck="false"
+                style="width:100%; box-sizing:border-box; padding:0.4rem; font-family:monospace; font-size:0.8rem;"></textarea>
+      <div class="job-options" style="margin-top:0.3rem;">
+        <label for="export-min-confidence"
+               title="Minimum softmax probability of the best category. Lower puts fewer photos into Other.">
+          Min. confidence:</label>
+        <input type="number" id="export-min-confidence" min="0" max="1" step="0.05" value="0.25" style="width:4.5rem;">
+        <button class="btn" type="button" onclick="resetExportCategories()">Reset to defaults</button>
+      </div>
+    </details>
     <div class="progress-bar-wrap" id="prog-wrap-export"><div class="progress-bar" id="prog-bar-export"></div></div>
     <div class="job-current-item" id="current-item-export"></div>
     <div class="job-status" id="status-export"></div>
@@ -235,6 +261,42 @@
       });
     })
     .catch(function() { /* ignore */ });
+
+  // Export folder layouts (issue #118)
+  var _defaultExportCategories = '';
+  var _defaultExportConfidence = 0.25;
+  var _exportFolderHints = {
+    flat: '',
+    category: 'Each photo is matched against the category list below using its CLIP embedding ' +
+              '(e.g. Nature/Beach, Food &amp; Drink, People/Portraits). Uncertain photos go to Other.',
+    trip: 'Uses the trips and events from the Trips page (e.g. 2024-05-12 Lisbon). ' +
+          'Photos outside any trip go to Not in a trip/&lt;year&gt;. Detect trips on the Trips page first.',
+    place: 'Uses the place names from reverse geocoding (Country/City). ' +
+           'Photos without GPS go to No location. Run "Look up place names" on the Jobs page first.'
+  };
+  fetch('/api/export/categories')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      _defaultExportCategories = d.categories;
+      _defaultExportConfidence = d.min_confidence;
+      document.getElementById('export-categories').value = d.categories;
+      document.getElementById('export-min-confidence').value = d.min_confidence;
+    })
+    .catch(function() { /* ignore */ });
+
+  window.onExportFoldersChange = function() {
+    var mode = document.getElementById('export-folders').value;
+    var hint = document.getElementById('export-folders-hint');
+    hint.innerHTML = _exportFolderHints[mode] || '';
+    hint.style.display = _exportFolderHints[mode] ? '' : 'none';
+    document.getElementById('export-categories-box').style.display =
+      mode === 'category' ? '' : 'none';
+  };
+
+  window.resetExportCategories = function() {
+    document.getElementById('export-categories').value = _defaultExportCategories;
+    document.getElementById('export-min-confidence').value = _defaultExportConfidence;
+  };
 
   var _pollers = {};
   var _jobStats = {};
@@ -382,6 +444,13 @@
       if (exportScorer) {
         body.scorer_id = exportScorer;
         body.metric_key = exportScorer;
+      }
+      body.folder_mode = document.getElementById('export-folders').value;
+      if (body.folder_mode === 'category') {
+        var cats = document.getElementById('export-categories').value;
+        if (cats.trim() && cats !== _defaultExportCategories) body.categories = cats;
+        var conf = parseFloat(document.getElementById('export-min-confidence').value);
+        if (!isNaN(conf)) body.min_confidence = conf;
       }
     }
 

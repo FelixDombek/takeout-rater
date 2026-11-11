@@ -907,15 +907,44 @@ def start_cluster_job(body: _ClusterStartBody, request: Request) -> JSONResponse
 class _ExportStartBody(BaseModel):
     scorer_id: str | None = None
     metric_key: str | None = None
+    #: ``flat`` | ``category`` (zero-shot CLIP) | ``trip`` | ``place``
+    folder_mode: str = "flat"
+    #: Custom category list for ``category`` mode (see ``parse_categories``).
+    categories: str | None = None
+    min_confidence: float | None = None
+
+
+@router.get("/api/export/categories")
+def get_export_categories() -> JSONResponse:
+    """Default zero-shot category list for the "Sort into folders by category" export."""
+    from takeout_rater.export.folders import (
+        DEFAULT_CATEGORIES,
+        DEFAULT_MIN_CONFIDENCE,
+        format_categories,
+    )
+
+    return JSONResponse(
+        {
+            "categories": format_categories(DEFAULT_CATEGORIES),
+            "min_confidence": DEFAULT_MIN_CONFIDENCE,
+        }
+    )
 
 
 @router.post("/api/jobs/export/start")
 def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
     """Start a background export run.
 
-    Copies the best representative from each cluster to the exports folder.
+    Copies the best representative from each cluster to the exports folder,
+    optionally sorted into sub-folders by CLIP category, trip or place.
     Returns ``409`` if an export job is already running.
     """
+    from takeout_rater.export.folders import (
+        DEFAULT_MIN_CONFIDENCE,
+        FOLDER_MODES,
+        parse_categories,
+    )
+
     _require_photos_root(request)
     jobs = _get_jobs(request.app)
 
@@ -931,21 +960,29 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
             status_code=400,
             detail="metric_key is required when scorer_id is specified.",
         )
+    folder_mode = body.folder_mode
+    if folder_mode not in FOLDER_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"folder_mode must be one of {', '.join(FOLDER_MODES)}.",
+        )
+    categories = None
+    if folder_mode == "category" and body.categories and body.categories.strip():
+        try:
+            categories = parse_categories(body.categories)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Categories: {exc}") from exc
+    min_confidence = DEFAULT_MIN_CONFIDENCE if body.min_confidence is None else body.min_confidence
+    if not 0.0 <= min_confidence <= 1.0:
+        raise HTTPException(status_code=400, detail="min_confidence must be between 0 and 1.")
 
     progress = JobProgress(job_type="export", running=True, message="Starting…")
     jobs["export"] = progress
 
     def _worker() -> None:
-        import shutil
-
         from takeout_rater.db.connection import library_state_dir
-        from takeout_rater.db.queries import (
-            count_clusters,
-            get_asset_by_id,
-            get_asset_scores,
-            get_cluster_members,
-            list_clusters_with_representatives,
-        )
+        from takeout_rater.db.queries import count_clusters
+        from takeout_rater.export.run import export_picks, select_best_assets
 
         worker_conn = _open_worker_conn(request.app)
         try:
@@ -953,7 +990,6 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
                 progress.message = "No clusters found. Run 'Cluster' first."
                 progress.running = False
                 progress.done = True
-                worker_conn.close()
                 return
 
             photos_root = _configured_photos_root(request.app)
@@ -971,70 +1007,46 @@ def start_export_job(body: _ExportStartBody, request: Request) -> JSONResponse:
             export_dir = library_state_dir(db_root) / "exports"
             export_dir.mkdir(parents=True, exist_ok=True)
 
-            _BATCH = 200
-            offset = 0
-            copied = 0
-            skipped = 0
+            progress.total = count_clusters(worker_conn)
+            progress.message = "Picking the best photo of each cluster…"
 
-            # Count total clusters for progress reporting
-            total_clusters = count_clusters(worker_conn)
-            progress.total = total_clusters
+            def _on_cluster(n: int) -> None:
+                progress.processed = n
 
-            while True:
-                clusters = list_clusters_with_representatives(
-                    worker_conn, limit=_BATCH, offset=offset
-                )
-                if not clusters:
-                    break
-                offset += len(clusters)
+            picks = select_best_assets(worker_conn, scorer_id, metric_key, on_cluster=_on_cluster)
 
-                for cluster_info in clusters:
-                    cluster_id = cluster_info["cluster_id"]
-                    members = get_cluster_members(worker_conn, cluster_id)
+            if folder_mode == "category":
+                progress.message = "Sorting photos into categories with CLIP…"
+            elif folder_mode != "flat":
+                progress.message = f"Sorting photos into folders by {folder_mode}…"
+            progress.total = len(picks)
+            progress.processed = 0
 
-                    if scorer_id and metric_key:
-                        best_asset_id: int | None = None
-                        best_score: float = float("-inf")
-                        for asset, _dist, _is_rep in members:
-                            scores = get_asset_scores(worker_conn, asset.id)
-                            for s in scores:
-                                if s["scorer_id"] == scorer_id and s["metric_key"] == metric_key:
-                                    if s["value"] > best_score:
-                                        best_score = s["value"]
-                                        best_asset_id = asset.id
-                                    break
-                        if best_asset_id is None:
-                            best_asset_id = next(
-                                (a.id for a, _d, is_rep in members if is_rep),
-                                members[0][0].id if members else None,
-                            )
-                    else:
-                        best_asset_id = next(
-                            (a.id for a, _d, is_rep in members if is_rep),
-                            members[0][0].id if members else None,
-                        )
+            def _on_copied(n: int, folder: str) -> None:
+                progress.processed = n
+                progress.current_item = folder
+                progress.message = f"Exported {n} file(s)…"
 
-                    if best_asset_id is None:
-                        continue
-
-                    asset = get_asset_by_id(worker_conn, best_asset_id)
-                    if asset is None:
-                        continue
-
-                    src = photos_root / asset.relpath
-                    if not src.exists():
-                        skipped += 1
-                        continue
-
-                    dest = export_dir / f"cluster{cluster_id:06d}_{asset.filename}"
-                    shutil.copy2(src, dest)
-                    copied += 1
-                    progress.processed = copied
-                    progress.message = f"Exported {copied} file(s)…"
-
-            progress.message = f"Export complete — {copied} file(s) copied to {export_dir}" + (
-                f" ({skipped} skipped)" if skipped else ""
+            result = export_picks(
+                worker_conn,
+                picks,
+                photos_root,
+                export_dir,
+                folder_mode=folder_mode,
+                categories=categories,
+                min_confidence=min_confidence,
+                on_copied=_on_copied,
             )
+
+            message = f"Export complete — {result.copied} file(s) copied to {export_dir}"
+            if folder_mode != "flat":
+                message += f" in {len(result.folders)} folder(s)"
+            if result.skipped:
+                message += f" ({result.skipped} skipped)"
+            if result.removed:
+                message += f"; replaced {result.removed} file(s) from the previous export"
+            progress.message = message
+            progress.current_item = ""
             progress.running = False
             progress.done = True
         except Exception as exc:  # noqa: BLE001

@@ -217,6 +217,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to <db-root>/takeout-rater/exports/."
         ),
     )
+    export_parser.add_argument(
+        "--folders",
+        choices=["flat", "category", "trip", "place"],
+        default="flat",
+        help=(
+            "Sort exported photos into sub-folders: 'category' (zero-shot CLIP labels such "
+            "as Nature/Beach), 'trip' (detected trips and events) or 'place' "
+            "(Country/City).  Default: 'flat'."
+        ),
+    )
 
     # serve – launcher-friendly variant of browse that reads config for the path
     serve_parser = sub.add_parser(
@@ -470,22 +480,17 @@ def _cmd_cluster(args: argparse.Namespace) -> int:
 def _cmd_export(args: argparse.Namespace) -> int:
     """Execute the ``export`` sub-command.
 
-    Copies the best representative from each cluster to the export directory.
+    Copies the best representative from each cluster to the export directory,
+    optionally sorted into sub-folders (``--folders``).
     When no scorer is specified, uses the cluster representative (lowest asset ID).
     """
-    import shutil
-
     from takeout_rater.db.connection import (
         library_db_path,
         library_state_dir,
         open_library_db,
     )
-    from takeout_rater.db.queries import (
-        get_asset_by_id,
-        get_asset_scores,
-        get_cluster_members,
-        list_clusters_with_representatives,
-    )
+    from takeout_rater.db.queries import count_clusters
+    from takeout_rater.export.run import export_picks, select_best_assets
 
     photos_root = Path(args.photos_root).resolve()
     db_root = Path(args.db_root).resolve()
@@ -512,74 +517,28 @@ def _cmd_export(args: argparse.Namespace) -> int:
     export_dir = Path(args.out).resolve() if args.out else state_dir / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check there are any clusters before iterating
-    from takeout_rater.db.queries import count_clusters
-
     if count_clusters(conn) == 0:
         print("No clusters found.  Run 'takeout-rater cluster <photos_root>' first.")
         conn.close()
         return 0
 
-    copied = 0
-    skipped = 0
-    _EXPORT_BATCH = 200
-
-    offset = 0
-    while True:
-        clusters = list_clusters_with_representatives(conn, limit=_EXPORT_BATCH, offset=offset)
-        if not clusters:
-            break
-        offset += len(clusters)
-
-        for cluster_info in clusters:
-            cluster_id = cluster_info["cluster_id"]
-            members = get_cluster_members(conn, cluster_id)
-
-            if args.scorer and args.metric:
-                # Pick member with highest score for the given scorer+metric
-                best_asset_id: int | None = None
-                best_score: float = float("-inf")
-                for asset, _dist, _is_rep in members:
-                    scores = get_asset_scores(conn, asset.id)
-                    for s in scores:
-                        if s["scorer_id"] == args.scorer and s["metric_key"] == args.metric:
-                            if s["value"] > best_score:
-                                best_score = s["value"]
-                                best_asset_id = asset.id
-                            break
-                if best_asset_id is None:
-                    # Fall back to representative if no scores available
-                    best_asset_id = next(
-                        (a.id for a, _d, is_rep in members if is_rep),
-                        members[0][0].id if members else None,
-                    )
-            else:
-                # Use representative (first is_rep=True member)
-                best_asset_id = next(
-                    (a.id for a, _d, is_rep in members if is_rep),
-                    members[0][0].id if members else None,
-                )
-
-            if best_asset_id is None:
-                continue
-
-            asset = get_asset_by_id(conn, best_asset_id)
-            if asset is None:
-                continue
-
-            src = photos_root / asset.relpath
-            if not src.exists():
-                skipped += 1
-                continue
-
-            dest = export_dir / f"cluster{cluster_id:06d}_{asset.filename}"
-            shutil.copy2(src, dest)
-            copied += 1
-
+    picks = select_best_assets(conn, args.scorer, args.metric)
+    result = export_picks(
+        conn,
+        picks,
+        photos_root,
+        export_dir,
+        folder_mode=getattr(args, "folders", "flat"),
+    )
     conn.close()
-    print(f"Exported {copied} file(s) to {export_dir}")
-    if skipped:
-        print(f"  ({skipped} file(s) skipped — originals not found)")
+    print(f"Exported {result.copied} file(s) to {export_dir}")
+    if len(result.folders) > 1 or "" not in result.folders:
+        for folder, n in sorted(result.folders.items()):
+            print(f"  {folder or '.'}: {n}")
+    if result.skipped:
+        print(f"  ({result.skipped} file(s) skipped — originals not found)")
+    if result.removed:
+        print(f"  (removed {result.removed} file(s) from the previous export first)")
     return 0
 
 
