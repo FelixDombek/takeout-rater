@@ -82,7 +82,11 @@ def test_knn_flags_isolated_point(use_torch: bool) -> None:
     assert sims[-1] < 0.2
 
 
-def test_knn_torch_and_numpy_agree() -> None:
+def test_knn_torch_and_numpy_agree(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Compare float32 against float32: on CUDA the torch path uses float16.
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     m = np.random.default_rng(1).standard_normal((50, 8)).astype(np.float32)
     a = knn_mean_similarity(m, k=4, block_rows=7, use_torch=True)
     b = knn_mean_similarity(m, k=4, block_rows=50, use_torch=False)
