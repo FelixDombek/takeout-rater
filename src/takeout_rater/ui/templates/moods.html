@@ -182,6 +182,7 @@
   let data = null;
   let selected = null; // selected bucket index
   let requestSeq = 0;
+  let detailSeq = 0; // generation of the photo panel, bumped per selection
 
   function defaultMoods() { return DEFAULT_MOODS.map((name, i) => ({ name, slot: i })); }
 
@@ -539,12 +540,12 @@
       `<div class="detail-row"><div class="detail-mood"><span class="swatch" style="background:${color(s)}"></span>` +
       `<div>${esc(data.moods[s])}<small>${pct(shares[s])}${lifts ? ' · ' + liftText(lifts[s]) + ' usual' : ''}</small></div></div>` +
       `<div class="thumbs" id="thumbs-${s}"><span class="none">Loading…</span></div></div>`).join('');
-    const seq = requestSeq;
+    const seq = ++detailSeq;
     for (const s of order) {
       const params = new URLSearchParams({ moods: moodParam(), mood: data.moods[s], model: data.model, limit: '10' });
       if (b) { params.set('start', b.start); params.set('end', b.end); }
       fetch('/api/moods/photos?' + params).then(r => r.json()).then(d => {
-        if (seq !== requestSeq) return;
+        if (seq !== detailSeq) return;
         const el2 = document.getElementById('thumbs-' + s);
         if (!el2) return;
         el2.innerHTML = (d.photos || []).length

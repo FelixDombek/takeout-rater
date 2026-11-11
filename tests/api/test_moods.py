@@ -250,3 +250,18 @@ def test_moods_page_and_nav(client) -> None:
     assert r.status_code == 200
     assert "Mood timeline" in r.text
     assert 'href="/moods"' in r.text
+
+
+def test_cache_refreshes_when_dates_or_trash_change(client, db_conn, library, fake_text) -> None:
+    params = {"moods": "happy,calm", "granularity": "year"}
+    assert client.get("/api/moods/timeline", params=params).json()["overall"]["count"] == 7
+
+    # Trashing or re-dating doesn't rebuild the search index (e.g. SigLIP 2).
+    db_conn.execute("UPDATE assets SET trashed = 1 WHERE id = ?", (library["happy"][0],))
+    db_conn.execute(
+        "UPDATE assets SET taken_at = ? WHERE id = ?", (_ts(2022, 5), library["calm"][0])
+    )
+    db_conn.commit()
+    d = client.get("/api/moods/timeline", params=params).json()
+    assert d["overall"]["count"] == 6
+    assert [b["key"] for b in d["buckets"]] == ["2020", "2021", "2022"]

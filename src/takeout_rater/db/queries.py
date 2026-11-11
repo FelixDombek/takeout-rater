@@ -643,6 +643,20 @@ def load_dated_asset_ids(conn: sqlite3.Connection) -> tuple[Any, Any]:
     return arr[:, 0].copy(), arr[:, 1].copy()
 
 
+def dated_assets_fingerprint(conn: sqlite3.Connection) -> tuple:
+    """Return a cheap fingerprint of what :func:`load_dated_asset_ids` depends on.
+
+    It changes when photos are added or removed, re-dated, (un)trashed or
+    re-hashed, so callers can tell when a cached result is stale without
+    reloading every row.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*), TOTAL(taken_at), TOTAL(COALESCE(trashed, 0) * id), COUNT(sha256)"
+        " FROM assets"
+    ).fetchone()
+    return tuple(row)
+
+
 def count_assets_newer_than(
     conn: sqlite3.Connection,
     timestamp: int,

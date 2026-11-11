@@ -25,7 +25,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from takeout_rater.api.search import _get_conn, _get_search_index, _resolve_model
-from takeout_rater.db.queries import CLIP_L14_MODEL_KEY, load_dated_asset_ids
+from takeout_rater.db.queries import (
+    CLIP_L14_MODEL_KEY,
+    dated_assets_fingerprint,
+    load_dated_asset_ids,
+)
 from takeout_rater.embeddings import search_backbones
 from takeout_rater.moods import timeline as mt
 
@@ -46,6 +50,7 @@ class _MoodData:
     probs: np.ndarray  # (n, k) float32
     total_embedded: int
     index: object  # the search index this was computed from (identity check)
+    fingerprint: tuple  # dated_assets_fingerprint() at computation time
 
 
 def _parse_moods(raw: str) -> list[str]:
@@ -86,10 +91,13 @@ def _mood_data(
             if cache is None:
                 cache = state.mood_cache = OrderedDict()
     cache_key = (model_key, tuple(moods))
+    # Dates and trash flags can change (rescan, trash) without the search index
+    # being rebuilt, e.g. for SigLIP 2, so check them separately.
+    fingerprint = dated_assets_fingerprint(conn)
     with _cache_lock:
         data = cache.get(cache_key)
         # A rebuilt search index is a new object, so stale entries never match.
-        if data is not None and data.index is index:
+        if data is not None and data.index is index and data.fingerprint == fingerprint:
             cache.move_to_end(cache_key)
             return model_key, data
 
@@ -110,6 +118,7 @@ def _mood_data(
         probs=probs,
         total_embedded=len(index.asset_ids),
         index=index,
+        fingerprint=fingerprint,
     )
     with _cache_lock:
         cache[cache_key] = data
