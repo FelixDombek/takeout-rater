@@ -23,6 +23,7 @@ from takeout_rater.api.jobs import router as jobs_router
 from takeout_rater.api.map_routes import router as map_router
 from takeout_rater.api.presets import router as presets_router
 from takeout_rater.api.search import router as search_router
+from takeout_rater.api.smart_albums import router as smart_albums_router
 from takeout_rater.api.trips import router as trips_router
 from takeout_rater.db.queries import asset_location
 
@@ -137,6 +138,7 @@ def create_app(
     app.include_router(faces_router)
     app.include_router(map_router)
     app.include_router(trips_router)
+    app.include_router(smart_albums_router)
 
     @app.get("/")
     def redirect_to_browse(request: Request) -> RedirectResponse:

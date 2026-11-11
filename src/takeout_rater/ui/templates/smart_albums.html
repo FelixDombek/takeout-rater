@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+
+{% block title %}Smart albums – takeout-rater{% endblock %}
+
+{% block head %}
+<style>
+  .toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+  .toolbar h1 { font-size: 1.25rem; margin: 0; }
+  .album-tabs { display: flex; gap: 0.4rem; margin-left: 0.5rem; }
+  .album-tabs a, .album-tabs span { padding: 0.2rem 0.7rem; border-radius: 4px; font-size: 0.85rem; text-decoration: none; }
+  .album-tabs a { color: #1a5cdb; background: #f1f4fb; }
+  .album-tabs span { background: #1a5cdb; color: #fff; font-weight: 600; }
+  .count-badge {
+    display: inline-block; padding: 0.2rem 0.6rem; background: #e8f0fe; color: #1a5cdb;
+    border-radius: 4px; font-size: 0.875rem; font-weight: 600;
+  }
+  .section-heading { font-size: 1.05rem; margin: 1.5rem 0 0.25rem; color: #333; }
+  .section-heading:first-of-type { margin-top: 0; }
+  .section-note { font-size: 0.82rem; color: #666; margin: 0 0 0.7rem; }
+
+  .sa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  .sa-card {
+    background: #fff; border-radius: 6px; overflow: hidden; position: relative;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12); transition: box-shadow 0.15s;
+  }
+  .sa-card:hover { box-shadow: 0 3px 8px rgba(0,0,0,.2); }
+  .sa-card > a { display: block; color: inherit; text-decoration: none; }
+  .sa-mosaic { display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; aspect-ratio: 4 / 3; background: #e0e0e0; }
+  .sa-mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; background: #ddd; }
+  .sa-mosaic img:first-child { grid-row: span 2; }
+  .sa-mosaic img:only-child { grid-column: span 2; }
+  .sa-body { padding: 0.5rem 0.65rem 0.6rem; font-size: 0.8rem; color: #444; }
+  .sa-name { font-weight: 600; font-size: 0.92rem; color: #1a1a1a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sa-terms { color: #666; margin: 0.15rem 0 0.35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sa-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+  .chip { display: inline-block; padding: 0 6px; background: #e8f0fe; color: #1a5cdb; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+  .chip.grey { background: #eee; color: #555; }
+  .sa-actions { display: flex; gap: 0.35rem; padding: 0 0.65rem 0.6rem; }
+  .sa-actions .btn { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+  .sa-kept-badge { position: absolute; top: 8px; left: 8px; padding: 1px 7px; border-radius: 10px;
+    font-size: 0.7rem; font-weight: 600; background: rgba(26,26,46,.78); color: #fff; }
+
+  .param-row { display: grid; grid-template-columns: 1fr 70px; align-items: center; gap: 0.4rem; margin-bottom: 0.35rem; font-size: 0.78rem; color: #333; }
+  .param-row input { width: 100%; padding: 0.15rem 0.3rem; font-size: 0.8rem; border: 1px solid #ccc; border-radius: 3px; }
+
+  .empty-state { text-align: center; padding: 4rem 2rem; color: #666; }
+  .empty-state h2 { font-size: 1.3rem; margin-bottom: 0.75rem; color: #333; }
+  .empty-state p { max-width: 540px; margin: 0 auto 1rem; line-height: 1.6; }
+</style>
+{% endblock %}
+
+{% block page_sidebar %}
+<aside class="app-sidebar">
+  <div class="sidebar-section-title">Suggest albums</div>
+  <p class="sidebar-note" style="margin-bottom:0.6rem">
+    Photos that look alike (by their CLIP embedding) are grouped, and each group
+    is named after the words from the CLIP vocabulary and your own
+    <a href="/clip">CLIP tags</a> that describe it best.
+  </p>
+  <form id="suggest-form" onsubmit="runSuggest(event)">
+    <label class="param-row">Number of groups to look for
+      <input type="number" name="n_albums" min="2" max="300" value="{{ defaults.n_albums }}"></label>
+    <label class="param-row">Min. photos per album
+      <input type="number" name="min_photos" min="1" value="{{ defaults.min_photos }}"></label>
+    <label class="param-row">Words per name
+      <input type="number" name="terms_per_name" min="1" max="3" value="{{ defaults.terms_per_name }}"></label>
+    <button type="submit" class="btn btn-primary sidebar-apply" id="suggest-btn"
+            {% if not stats.n_embedded %}disabled title="Compute CLIP embeddings first"{% endif %}>
+      {{ "Re-suggest" if stats.suggested_at else "Suggest" }} albums
+    </button>
+    <button type="button" class="btn sidebar-apply" id="cancel-btn" style="display:none"
+            onclick="cancelSuggest()">Cancel</button>
+  </form>
+  <div class="sidebar-status" id="suggest-status">
+    {% if stats.suggested_at %}Last run {{ stats.suggested_at | timestamp_fmt }}{% endif %}
+  </div>
+  <p class="sidebar-note" style="margin-top:0.4rem">
+    Re-suggesting replaces the suggestions only. Albums you keep or rename stay,
+    and are not suggested again.
+  </p>
+</aside>
+{% endblock %}
+
+{% macro album_card(a) %}
+<div class="sa-card" data-album-id="{{ a.id }}">
+  <a href="/smart-albums/{{ a.id }}" title="{{ a.name }}">
+    <div class="sa-mosaic">
+      {% for aid in a.preview_ids %}
+      <img src="/thumbs/{{ aid }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+      {% endfor %}
+    </div>
+    {% if a.kept %}<span class="sa-kept-badge">★ Kept</span>{% endif %}
+    <div class="sa-body">
+      <div class="sa-name">{{ a.name }}</div>
+      <div class="sa-terms" title="Best-matching words">
+        {% for t in a.terms %}{{ t.term }}{% if not loop.last %}, {% endif %}{% endfor %}
+      </div>
+      <div class="sa-meta">
+        <span class="chip">{{ a.n_assets }} photo{{ 's' if a.n_assets != 1 else '' }}</span>
+        {% if a.cohesion is not none %}
+        <span class="chip grey" title="How alike the photos are (mean similarity to the album centre)">
+          {{ (a.cohesion * 100) | round | int }}% alike</span>
+        {% endif %}
+      </div>
+    </div>
+  </a>
+  <div class="sa-actions">
+    {% if a.kept %}
+    <button class="btn" type="button" onclick="setKept({{ a.id }}, false)" title="Turn back into a suggestion">Un-keep</button>
+    {% else %}
+    <button class="btn btn-primary" type="button" onclick="setKept({{ a.id }}, true)">★ Keep</button>
+    <button class="btn" type="button" onclick="dismiss({{ a.id }})">Dismiss</button>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="toolbar">
+  <h1>✨ Smart albums</h1>
+  <div class="album-tabs"><a href="/albums">Folders</a><span>Smart albums</span></div>
+  {% if kept %}<span class="count-badge">{{ kept | length }} kept</span>{% endif %}
+  {% if suggested %}<span class="count-badge">{{ suggested | length }} suggested</span>{% endif %}
+</div>
+
+{% if kept %}
+<h2 class="section-heading">Kept</h2>
+<div class="sa-grid">{% for a in kept %}{{ album_card(a) }}{% endfor %}</div>
+{% endif %}
+
+{% if suggested %}
+<h2 class="section-heading">Suggestions</h2>
+<p class="section-note">Keep the ones you like; rename one on its page to give it your own name.</p>
+<div class="sa-grid">{% for a in suggested %}{{ album_card(a) }}{% endfor %}</div>
+{% endif %}
+
+{% if not kept and not suggested %}
+<div class="empty-state">
+  {% if not stats.n_embedded %}
+  <h2>No CLIP embeddings yet</h2>
+  <p>Smart albums are built from CLIP embeddings. Run <b>Embed</b> on the
+     <a href="/jobs">Jobs</a> page first, then come back here.</p>
+  {% elif stats.suggested_at %}
+  <h2>No suggestions left</h2>
+  <p>Run the suggestion again from the sidebar, perhaps with fewer minimum photos per album.</p>
+  {% else %}
+  <h2>No smart albums yet</h2>
+  <p>Group {{ "{:,}".format(stats.n_embedded) }} photos into albums by what they show, named
+     automatically (for example “Beach · Sunset”). It only reads the index, so it is safe to re-run.</p>
+  <button class="btn btn-primary" onclick="runSuggest(event)">Suggest albums</button>
+  {% endif %}
+</div>
+{% endif %}
+
+<script>
+const PARAMS_KEY = 'smartAlbums.params';
+const form = document.getElementById('suggest-form');
+const statusEl = document.getElementById('suggest-status');
+const suggestBtn = document.getElementById('suggest-btn');
+const cancelBtn = document.getElementById('cancel-btn');
+
+try {
+  const saved = JSON.parse(localStorage.getItem(PARAMS_KEY) || '{}');
+  for (const el of form.elements) {
+    if (el.name && saved[el.name] !== undefined) el.value = saved[el.name];
+  }
+} catch (e) { /* storage unavailable: keep defaults */ }
+
+function setStatus(cls, text) {
+  statusEl.className = 'sidebar-status ' + cls;
+  statusEl.textContent = text;
+}
+
+function setRunning(running) {
+  suggestBtn.disabled = running;
+  cancelBtn.style.display = running ? '' : 'none';
+}
+
+function pollJob() {
+  fetch('/api/jobs/status?job_type=smart_albums')
+    .then(function (r) { return r.json(); })
+    .then(function (p) {
+      if (p.running) {
+        setRunning(true);
+        setStatus('info', p.message);
+        setTimeout(pollJob, 500);
+        return;
+      }
+      setRunning(false);
+      if (!p.done) return;
+      if (p.error) {
+        setStatus('error', 'Suggestion failed');
+        showError('Album suggestion failed: ' + p.error);
+      } else {
+        setStatus(p.cancelled ? 'info' : 'ok', p.message);
+        if (!p.cancelled && sessionStorage.getItem('smartAlbums.reloadOnDone') === '1') {
+          sessionStorage.removeItem('smartAlbums.reloadOnDone');
+          setTimeout(function () { location.reload(); }, 600);
+        }
+      }
+    })
+    .catch(function () { setRunning(false); });
+}
+
+function runSuggest(ev) {
+  if (ev) ev.preventDefault();
+  const body = {};
+  for (const el of form.elements) {
+    if (el.name && el.value !== '') body[el.name] = Number(el.value);
+  }
+  try { localStorage.setItem(PARAMS_KEY, JSON.stringify(body)); } catch (e) { /* ignore */ }
+  setRunning(true);
+  setStatus('info', 'Starting… (the first run loads the CLIP model)');
+  fetch('/api/jobs/smart_albums/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  })
+    .then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { throw new Error(t || r.statusText); });
+      try { sessionStorage.setItem('smartAlbums.reloadOnDone', '1'); } catch (e) { /* ignore */ }
+      pollJob();
+    })
+    .catch(function (e) {
+      setRunning(false);
+      setStatus('error', 'Suggestion failed');
+      showError('Album suggestion failed: ' + e.message);
+    });
+}
+
+function cancelSuggest() {
+  fetch('/api/jobs/smart_albums/cancel', {method: 'POST'}).catch(function () {});
+}
+
+function setKept(id, kept) {
+  fetch('/api/smart-albums/' + id + '/keep', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({kept: kept}),
+  }).then(function (r) {
+    if (!r.ok) throw new Error(r.statusText);
+    location.reload();
+  }).catch(function (e) { showError('Could not update album: ' + e.message); });
+}
+
+function dismiss(id) {
+  fetch('/api/smart-albums/' + id, {method: 'DELETE'}).then(function (r) {
+    if (!r.ok) throw new Error(r.statusText);
+    const card = document.querySelector('.sa-card[data-album-id="' + id + '"]');
+    if (card) card.remove();
+  }).catch(function (e) { showError('Could not dismiss album: ' + e.message); });
+}
+
+fetch('/api/jobs/status?job_type=smart_albums')
+  .then(function (r) { return r.json(); })
+  .then(function (p) { if (p.running) pollJob(); })
+  .catch(function () {});
+</script>
+{% endblock %}
