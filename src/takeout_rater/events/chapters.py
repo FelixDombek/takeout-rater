@@ -44,11 +44,13 @@ class ChapterParams:
     mad_k: float = 1.5
     #: Absolute floor on the break score, so a trip with almost no variation
     #: is not chopped up just because some gap is "relatively" large.
-    min_score: float = 0.12
+    min_score: float = 0.33
     #: Smallest chapter, in photos.  ``None`` scales with the trip size.
     min_photos: int | None = None
-    #: Hard cap on the number of chapters.
+    #: Cap on the number of chapters: at least this many, more for big trips
+    #: (one per ``photos_per_extra_chapter`` photos).
     max_chapters: int = 40
+    photos_per_extra_chapter: int = 30
     #: How much a long pause amplifies a change of scene: the score is
     #: multiplied by up to ``1 + time_weight`` (reached at ``time_full_h``).
     time_weight: float = 0.3
@@ -57,9 +59,9 @@ class ChapterParams:
 
 #: Presets offered in the UI.
 SENSITIVITY: dict[str, ChapterParams] = {
-    "fewer": ChapterParams(mad_k=2.5, min_score=0.16),
+    "fewer": ChapterParams(mad_k=2.5, min_score=0.42),
     "normal": ChapterParams(),
-    "more": ChapterParams(mad_k=0.75, min_score=0.08),
+    "more": ChapterParams(mad_k=0.75, min_score=0.25),
 }
 _MIN_PHOTOS_SCALE = {"fewer": 2.0, "normal": 1.0, "more": 0.5}
 
@@ -70,8 +72,13 @@ def params_for(sensitivity: str) -> ChapterParams:
 
 
 def default_min_photos(n: int, sensitivity: str = "normal") -> int:
-    """Minimum chapter size for a trip of *n* photos (4 for small trips, ~n/50 for big ones)."""
-    base = max(4, round(n / 50))
+    """Minimum chapter size for a trip of *n* photos: 4 for small trips, ~n/50, at most 12.
+
+    The cap matters for long trips: with n/50 alone a 1,900-photo trip needed
+    38 photos per chapter, so short scenes (an evening, a museum) could not
+    stand alone and chapters ran across several scenes and nights.
+    """
+    base = max(4, min(round(n / 50), 12))
     return max(2, round(base * _MIN_PHOTOS_SCALE.get(sensitivity, 1.0)))
 
 
@@ -206,6 +213,7 @@ def split_chapters(
     matrix, n_emb = _fill_missing(ids, embeddings)
     scores = break_scores(ts, matrix, params)
     min_size = min_photos or params.min_photos or default_min_photos(n)
+    max_chapters = max(params.max_chapters, n // max(1, params.photos_per_extra_chapter))
 
     threshold = params.min_score
     if len(scores):
@@ -225,7 +233,7 @@ def split_chapters(
         for g in np.argsort(-scores, kind="stable"):
             g = int(g)
             # Strictly above, so a flat curve (MAD 0) stays one chapter.
-            if scores[g] <= threshold or len(cuts) + 1 >= params.max_chapters:
+            if scores[g] <= threshold or len(cuts) + 1 >= max_chapters:
                 break
             if scores[g] < scores[max(0, g - r) : g + r + 1].max():
                 continue
@@ -277,9 +285,24 @@ def label_terms() -> set[str]:
     """Vocabulary terms that make good chapter titles (places, things, activities)."""
     from takeout_rater.scoring.scorers import clip_vocab as v
 
-    skip = {"documentary", "abstract", "product photography", "fashion", "nature", "landscape"}
+    # Generic or holiday terms that CLIP over-uses on ordinary photos (a real
+    # library got "Christmas" on summer trips and "face" on screenshots).
+    skip = {
+        "documentary",
+        "abstract",
+        "product photography",
+        "fashion",
+        "nature",
+        "landscape",
+        "christmas",
+        "halloween",
+        "face",
+        "wedding",
+        "wedding photography",
+        "birthday party",
+    }
     terms = v._SCENES + v._ACTIVITIES + v._OBJECTS + v._PHOTOGRAPHY_SUBJECTS
-    return {t for t in terms if t not in skip}
+    return {t for t in terms if t.lower() not in skip}
 
 
 def label_chapters(

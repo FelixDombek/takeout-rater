@@ -169,6 +169,21 @@ def test_label_terms_are_concrete() -> None:
     terms = ch.label_terms()
     assert "beach" in terms
     assert "abstract" not in terms
+    assert not {"Christmas", "face"} & terms
+
+
+def test_min_chapter_size_is_capped_for_long_trips() -> None:
+    assert ch.default_min_photos(50) == 4
+    assert ch.default_min_photos(400) == 8
+    assert ch.default_min_photos(1900) == 12  # n/50 would be 38
+    assert ch.default_min_photos(1900, "fewer") == 24
+    assert ch.default_min_photos(1900, "more") == 6
+
+
+def test_chapter_cap_grows_with_trip_size() -> None:
+    photos, emb = _day_trip(list(range(125)), per_scene=12, seed=5)  # 1,500 photos
+    story = ch.split_chapters(photos, emb)
+    assert len(story.chapters) > 40
 
 
 def test_time_label() -> None:

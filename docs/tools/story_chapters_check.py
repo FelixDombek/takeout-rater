@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from takeout_rater.events import chapters as ch
 from takeout_rater.events.detector import PhotoPoint, detect
@@ -161,14 +161,21 @@ for trip in trips:
         tw, th, lw = 160, 120, 300
         sheet = Image.new("RGB", (lw + 8 * tw, th * len(story.chapters)), "white")
         d = ImageDraw.Draw(sheet)
+        font = None
+        for name in ("arial.ttf", "segoeui.ttf", "DejaVuSans.ttf"):
+            try:  # the default bitmap font has no en dash or arrow
+                font = ImageFont.truetype(name, 13)
+                break
+            except OSError:
+                pass
         for row, c in enumerate(story.chapters):
             y = row * th
             title = ch.chapter_title(labels[row]) or f"Chapter {row + 1}"
             tl = ch.time_label(c.start_ts, c.end_ts, story.chapters[0].start_ts, trip["lon"])
             brk = f"break {c.break_score:.3f}" if c.break_score is not None else "start"
-            d.text((6, y + 8), f"{row + 1}. {title}", fill="black")
-            d.text((6, y + 28), f"{tl}", fill="gray")
-            d.text((6, y + 48), f"{len(c.asset_ids)} photos, {brk}", fill="gray")
+            d.text((6, y + 8), f"{row + 1}. {title}", fill="black", font=font)
+            d.text((6, y + 28), f"{tl}", fill="gray", font=font)
+            d.text((6, y + 48), f"{len(c.asset_ids)} photos, {brk}", fill="gray", font=font)
             pick = np.linspace(0, len(c.asset_ids) - 1, min(8, len(c.asset_ids))).astype(int)
             for k, idx in enumerate(pick):
                 p = thumb_path_for_id(thumbs, c.asset_ids[idx])
