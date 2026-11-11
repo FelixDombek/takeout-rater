@@ -11,6 +11,7 @@ import pytest
 from takeout_rater.db.connection import library_state_dir, open_library_db
 from takeout_rater.db.queries import (
     AssetRow,
+    PageCursor,
     count_assets,
     count_assets_deduped,
     get_asset_alias_paths,
@@ -19,6 +20,7 @@ from takeout_rater.db.queries import (
     get_duplicate_assets,
     list_asset_ids_without_sha256,
     list_assets,
+    list_assets_by_score,
     list_assets_deduped,
     update_asset_sha256,
     upsert_asset,
@@ -586,3 +588,55 @@ def test_migration_19_adds_score_value_index() -> None:
     )
     assert "idx_asset_scores_metric_value" in plan
     assert "TEMP B-TREE" not in plan
+
+
+def _cursor_library() -> sqlite3.Connection:
+    conn = _open_in_memory()
+    # Equal timestamps, a NULL-date tail, duplicate hashes and tied scores.
+    for i in range(1, 61):
+        sha = f"dup{i % 4}" if i % 9 == 0 else f"s{i}"
+        taken = None if i % 6 == 0 else 1_700_000_000 - (i // 3)
+        _insert_raw(conn, i, sha, taken)
+        conn.execute(
+            "INSERT INTO asset_scores (asset_id, scorer_id, variant_id, metric_key, value)"
+            " VALUES (?, 'sc', 'v', 'm', ?)",
+            (i, float(i % 5)),
+        )
+    conn.commit()
+    return conn
+
+
+@pytest.mark.parametrize("deduped", [True, False])
+def test_date_cursor_pages_match_offset_pages(deduped: bool) -> None:
+    conn = _cursor_library()
+    fn = list_assets_deduped if deduped else list_assets
+    size = 7
+    pages = []
+    offset = 0
+    while page := fn(conn, limit=size, offset=offset):
+        pages.append(page)
+        offset += size
+    assert len(pages) > 4
+    for prev, cur in zip(pages, pages[1:], strict=False):
+        last, first = prev[-1], cur[0]
+        after = fn(conn, limit=size, cursor=PageCursor("after", last.taken_at, last.id))
+        assert [a.id for a in after] == [a.id for a in cur]
+        before = fn(conn, limit=size, cursor=PageCursor("before", first.taken_at, first.id))
+        assert [a.id for a in before] == [a.id for a in prev]
+
+
+@pytest.mark.parametrize("descending", [True, False])
+def test_score_cursor_pages_match_offset_pages(descending: bool) -> None:
+    conn = _cursor_library()
+
+    def fetch(**kw):  # noqa: ANN003, ANN202
+        return list_assets_by_score(conn, "sc", "m", variant_id="v", descending=descending, **kw)
+
+    size = 6
+    pages = [fetch(limit=size, offset=o) for o in range(0, 60, size)]
+    for prev, cur in zip(pages, pages[1:], strict=False):
+        (last, last_v), (first, first_v) = prev[-1], cur[0]
+        after = fetch(limit=size, cursor=PageCursor("after", last_v, last.id))
+        assert [a.id for a, _ in after] == [a.id for a, _ in cur]
+        before = fetch(limit=size, cursor=PageCursor("before", first_v, first.id))
+        assert [a.id for a, _ in before] == [a.id for a, _ in prev]

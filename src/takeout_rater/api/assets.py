@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from takeout_rater.db.queries import (
     AssetRow,
+    PageCursor,
     PlaceFilter,
     SortCriterion,
     count_asset_places,
@@ -253,6 +254,23 @@ def _parse_sort_by(sort_by: str | None) -> tuple[str, str, str] | None:
     return scorer_id, variant_id, metric_key
 
 
+def _parse_cursor(
+    direction: str | None, key: str | None, asset_id: int | None
+) -> PageCursor | None:
+    """Build a :class:`PageCursor` from query parameters, or ``None`` if incomplete."""
+    if direction not in ("after", "before") or asset_id is None or key is None:
+        return None
+    if key == "":
+        return PageCursor(direction, None, asset_id)
+    try:
+        value = float(key)
+    except ValueError:
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return PageCursor(direction, int(value) if value.is_integer() else value, asset_id)
+
+
 def _parse_place(country: str | None, region: str | None, city: str | None) -> PlaceFilter | None:
     """Build a :class:`PlaceFilter` from browse query params (``None`` when unset)."""
 
@@ -294,6 +312,9 @@ def browse_assets(
     region: str | None = None,
     city: str | None = None,
     partial: str = "0",
+    cursor_dir: str | None = None,
+    cursor_key: str | None = None,
+    cursor_id: int | None = None,
     conn: sqlite3.Connection = Depends(_get_conn),  # noqa: B008
 ) -> HTMLResponse:
     """Render the browse page with paginated asset thumbnails.
@@ -319,6 +340,12 @@ def browse_assets(
       ``asset_places``.  Only geotagged photos with a looked-up place match.
     - ``partial``: ``"1"`` to return only a card fragment (for infinite scroll
       fetch requests); ``"0"`` (default) to return the full page.
+    - ``cursor_dir`` / ``cursor_key`` / ``cursor_id``: optional keyset position
+      (see :class:`PageCursor`) for partial requests.  ``after`` + the last
+      card of page N-1, or ``before`` + the first card of page N+1, return
+      page N without stepping over all earlier rows.  ``cursor_key`` is the
+      card's sort value (``taken_at`` or score; empty for no date).  Ignored
+      for multi-level sorts, which always use ``page``.
     """
     place = _parse_place(country, region, city)
     page = max(1, page)
@@ -332,6 +359,7 @@ def browse_assets(
     dedup_enabled = dedupe != "0"
 
     sort_parsed = _parse_sort_by(sort_by)
+    cursor = _parse_cursor(cursor_dir, cursor_key, cursor_id) if is_partial else None
     # Normalize sort_by: use the canonical form when valid, None when malformed.
     # This prevents untrusted query text from being propagated into template links.
     canonical_sort_by: str | None = None
@@ -402,6 +430,7 @@ def browse_assets(
                 variant_id=variant_id,
                 limit=fetch_limit,
                 offset=offset,
+                cursor=cursor if cursor is not None and cursor.key is not None else None,
                 descending=eff_desc,
                 favorited=fav_filter,
                 place=place,
@@ -423,17 +452,33 @@ def browse_assets(
             )
     elif dedup_enabled:
         assets = list_assets_deduped(
-            conn, limit=fetch_limit, offset=offset, favorited=fav_filter, place=place
+            conn,
+            limit=fetch_limit,
+            offset=offset,
+            cursor=cursor,
+            favorited=fav_filter,
+            place=place,
         )
         count_total = partial_fn(count_assets_deduped, conn, favorited=fav_filter, place=place)
     else:
         assets = list_assets(
-            conn, limit=fetch_limit, offset=offset, favorited=fav_filter, place=place
+            conn,
+            limit=fetch_limit,
+            offset=offset,
+            cursor=cursor,
+            favorited=fav_filter,
+            place=place,
         )
         count_total = partial_fn(count_assets, conn, favorited=fav_filter, place=place)
 
-    has_more = len(assets) > _PAGE_SIZE
-    assets = assets[:_PAGE_SIZE]
+    if cursor is not None and cursor.direction == "before" and not use_multi_sort:
+        # "before" pages end where the requested page's successor starts, so a
+        # next page always exists; the extra row (if any) is at the front.
+        has_more = True
+        assets = assets[-_PAGE_SIZE:]
+    else:
+        has_more = len(assets) > _PAGE_SIZE
+        assets = assets[:_PAGE_SIZE]
     thumb_v = _thumb_versions(request.app.state.thumbs_dir, [a.id for a in assets])
 
     if is_partial:

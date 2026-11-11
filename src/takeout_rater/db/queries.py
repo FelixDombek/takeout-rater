@@ -23,6 +23,7 @@ import re
 import sqlite3
 import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -280,6 +281,60 @@ class PlaceFilter:
         return f"{id_column} IN (SELECT asset_id FROM asset_places WHERE {where})", params  # noqa: S608
 
 
+@dataclass(frozen=True)
+class PageCursor:
+    """Keyset position for infinite scroll: a page starts right after (or ends
+    right before) the row identified by its sort ``key`` and ``asset_id``.
+
+    *key* is the row's sort value (``taken_at`` for date order, the score for
+    score order); ``None`` stands for a NULL ``taken_at``.  Fetching by cursor
+    returns the same rows as the equivalent ``OFFSET`` page, but SQLite can
+    seek straight to the position instead of stepping over every earlier row.
+    """
+
+    direction: str  # "after" (rows following the cursor) or "before"
+    key: float | None
+    asset_id: int
+
+    def __post_init__(self) -> None:
+        if self.direction not in ("after", "before"):
+            raise ValueError(f"invalid cursor direction: {self.direction!r}")
+
+
+def _date_keyset_rows(
+    run: Callable[[str, list[Any], str, int], list[sqlite3.Row]],
+    cursor: PageCursor,
+    limit: int,
+) -> list[sqlite3.Row]:
+    """Fetch *limit* rows next to *cursor* in ``taken_at DESC, id DESC`` order.
+
+    NULL ``taken_at`` rows sort last.  Each step is a single row-value range
+    (``(a.taken_at, a.id) < (?, ?)``) that SQLite answers by seeking in
+    idx_assets_taken_at; crossing into or out of the NULL tail is a second
+    query rather than an ``OR``, which would turn the seek into a scan.
+    *run(condition, params, order, limit)* executes one query.
+    """
+    key, cid = cursor.key, cursor.asset_id
+    if cursor.direction == "after":
+        if key is not None:
+            rows = run(
+                "(a.taken_at, a.id) < (?, ?)", [key, cid], "a.taken_at DESC, a.id DESC", limit
+            )
+            if len(rows) < limit:
+                rows += run("a.taken_at IS NULL", [], "a.id DESC", limit - len(rows))
+        else:
+            rows = run("a.taken_at IS NULL AND a.id < ?", [cid], "a.id DESC", limit)
+        return rows
+    if key is not None:
+        rows = run("(a.taken_at, a.id) > (?, ?)", [key, cid], "a.taken_at ASC, a.id ASC", limit)
+    else:
+        rows = run("a.taken_at IS NULL AND a.id > ?", [cid], "a.id ASC", limit)
+        if len(rows) < limit:
+            rows += run("a.taken_at IS NOT NULL", [], "a.taken_at ASC, a.id ASC", limit - len(rows))
+    rows.reverse()
+    return rows
+
+
 def list_assets(
     conn: sqlite3.Connection,
     *,
@@ -291,6 +346,7 @@ def list_assets(
     archived: bool | None = None,
     trashed: bool | None = None,
     ext: str | None = None,
+    cursor: PageCursor | None = None,
 ) -> list[AssetRow]:
     """Return a paginated list of assets with optional filters.
 
@@ -305,6 +361,8 @@ def list_assets(
         archived: If not ``None``, filter to assets where ``archived`` matches.
         trashed: If not ``None``, filter to assets where ``trashed`` matches.
         ext: If not ``None``, filter to assets with this file extension (e.g. ``".jpg"``).
+        cursor: Keyset position (see :class:`PageCursor`); replaces *offset*
+            and requires the default *order_by*.
 
     Returns:
         List of :class:`AssetRow` objects.
@@ -328,6 +386,17 @@ def list_assets(
     if ext is not None:
         conditions.append("ext = ?")
         params.append(ext.lower())
+
+    if cursor is not None:
+
+        def run(cond: str, cond_params: list[Any], order: str, n: int) -> list[sqlite3.Row]:
+            all_conds = [*conditions, cond]
+            sql = (
+                f"SELECT a.* FROM assets a WHERE {' AND '.join(all_conds)} ORDER BY {order} LIMIT ?"  # noqa: S608
+            )
+            return conn.execute(sql, [*params, *cond_params, n]).fetchall()
+
+        return [_row_to_asset(r) for r in _date_keyset_rows(run, cursor, limit)]
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     # order_by is a trusted, code-controlled value — not user input
@@ -447,6 +516,7 @@ def list_assets_deduped(
     archived: bool | None = None,
     trashed: bool | None = None,
     ext: str | None = None,
+    cursor: PageCursor | None = None,
 ) -> list[AssetRow]:
     """Return a deduplicated, paginated list of assets.
 
@@ -466,6 +536,8 @@ def list_assets_deduped(
         archived: Optional archived filter.
         trashed: Optional trashed filter.
         ext: Optional file-extension filter (e.g. ``".jpg"``).
+        cursor: Keyset position (see :class:`PageCursor`); replaces *offset*
+            and requires the default *order_by*.
 
     Returns:
         List of :class:`AssetRow` objects.
@@ -500,14 +572,22 @@ def list_assets_deduped(
     outer_where, outer_params = filters("a")
     inner_where, inner_params = filters("b")
     # order_by is a trusted list of plain column terms ("col [ASC|DESC], …").
-    order_sql = ", ".join(f"a.{term.strip()}" for term in order_by.split(","))
-    sql = (  # noqa: S608
+    base = (
         "SELECT a.* FROM assets a"
         " WHERE NOT EXISTS ("
         f"SELECT 1 FROM assets b WHERE b.sha256 = a.sha256 AND b.id < a.id{inner_where}"
         f"){outer_where}"
-        f" ORDER BY {order_sql} LIMIT ? OFFSET ?"
     )
+    if cursor is not None:
+
+        def run(cond: str, cond_params: list[Any], order: str, n: int) -> list[sqlite3.Row]:
+            sql = f"{base} AND {cond} ORDER BY {order} LIMIT ?"
+            return conn.execute(sql, [*inner_params, *outer_params, *cond_params, n]).fetchall()
+
+        return [_row_to_asset(r) for r in _date_keyset_rows(run, cursor, limit)]
+
+    order_sql = ", ".join(f"a.{term.strip()}" for term in order_by.split(","))
+    sql = f"{base} ORDER BY {order_sql} LIMIT ? OFFSET ?"
     params = inner_params + outer_params + [limit, offset]
     rows = conn.execute(sql, params).fetchall()
     return [_row_to_asset(r) for r in rows]
@@ -907,6 +987,7 @@ def list_assets_by_score(
     trashed: bool | None = None,
     min_score: float | None = None,
     max_score: float | None = None,
+    cursor: PageCursor | None = None,
 ) -> list[tuple[AssetRow, float]]:
     """Return assets that have been scored, sorted by score value.
 
@@ -926,6 +1007,8 @@ def list_assets_by_score(
         trashed: Optional trashed filter.
         min_score: Optional inclusive lower bound on the score value.
         max_score: Optional inclusive upper bound on the score value.
+        cursor: Keyset position (see :class:`PageCursor`, *key* = score);
+            replaces *offset*.
 
     Returns:
         List of ``(AssetRow, score_value)`` tuples.
@@ -958,6 +1041,21 @@ def list_assets_by_score(
         conditions.append("s.value <= ?")
         params.append(max_score)
 
+    reverse = False
+    if cursor is not None:
+        if cursor.key is None:
+            raise ValueError("a score cursor needs a score key")
+        # Rows after the cursor in display order, or (for "before") the rows
+        # preceding it, fetched in the opposite order and flipped back.
+        forward = cursor.direction == "after"
+        op = "<" if descending == forward else ">"
+        conditions.append(f"(s.value, s.asset_id) {op} (?, ?)")
+        params.extend([cursor.key, cursor.asset_id])
+        if not forward:
+            order = "ASC" if descending else "DESC"
+            reverse = True
+        offset = 0
+
     where = "WHERE " + " AND ".join(conditions)
     # order is a code-controlled literal, not user input  # noqa: S608
     sql = (
@@ -972,6 +1070,8 @@ def list_assets_by_score(
     )
     params.extend([limit, offset])
     rows = conn.execute(sql, params).fetchall()
+    if reverse:
+        rows.reverse()
     return [(_row_to_asset(row), row["score_value"]) for row in rows]
 
 

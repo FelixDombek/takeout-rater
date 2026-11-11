@@ -4,7 +4,7 @@
      data-lb-id="{{ asset.id }}"
      data-lb-src="/image/{{ asset.id }}"
      data-lb-title="{{ asset.title or asset.filename }}"
-     data-ts="{{ asset.taken_at or '' }}"
+     data-ts="{{ asset.taken_at or '' }}"{% if asset.id in score_map %} data-score="{{ score_map[asset.id] }}"{% endif %}
      data-page="{{ page }}">
   <a href="/assets/{{ asset.id }}" aria-label="{{ asset.title or asset.filename }}">
     <img

@@ -1535,3 +1535,40 @@ def test_browse_thumbnails_use_versioned_cacheable_urls(tmp_path: Path) -> None:
     assert "immutable" in cached.headers["cache-control"]
     assert client.get(f"/thumbs/{asset_id}").headers["cache-control"] == "no-cache"
     assert client.get(f"/thumbs/{asset_id}?v=stale").headers["cache-control"] == "no-cache"
+
+
+def test_browse_partial_cursor_returns_same_page_as_offset(tmp_path: Path) -> None:
+    """?cursor_dir=after&cursor_key=<ts>&cursor_id=<id> yields the offset page."""
+    import re
+
+    from takeout_rater.api.assets import _PAGE_SIZE
+
+    conn = _make_db()
+    for i in range(_PAGE_SIZE * 2 + 5):
+        _add_asset(conn, f"Photos/img{i}.jpg")
+    conn.execute("UPDATE assets SET taken_at = 1700000000 - (id / 3)")
+    conn.commit()
+    app = create_app(tmp_path, conn, db_root=tmp_path)
+    client = TestClient(app, follow_redirects=True)
+
+    def ids(html: str) -> list[str]:
+        return re.findall(r'data-lb-id="(\d+)"', html)
+
+    page1 = client.get("/assets?partial=1&page=1").text
+    page2 = client.get("/assets?partial=1&page=2").text
+    last_id = ids(page1)[-1]
+    last_ts = re.findall(rf'data-lb-id="{last_id}"[^>]*?data-ts="(\d*)"', page1, re.S)[0]
+    by_cursor = client.get(
+        f"/assets?partial=1&page=2&cursor_dir=after&cursor_key={last_ts}&cursor_id={last_id}"
+    ).text
+    assert ids(by_cursor) == ids(page2)
+    assert 'data-has-more="1"' in by_cursor
+    first_id = ids(page2)[0]
+    first_ts = re.findall(rf'data-lb-id="{first_id}"[^>]*?data-ts="(\d*)"', page2, re.S)[0]
+    before = client.get(
+        f"/assets?partial=1&page=1&cursor_dir=before&cursor_key={first_ts}&cursor_id={first_id}"
+    ).text
+    assert ids(before) == ids(page1)
+    # Garbage cursor values fall back to the page number.
+    bad = client.get("/assets?partial=1&page=2&cursor_dir=after&cursor_key=nan&cursor_id=1").text
+    assert ids(bad) == ids(page2)
